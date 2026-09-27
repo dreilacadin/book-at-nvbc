@@ -52,6 +52,60 @@ export function rateFor(rates: SportRates, rateType: RateType): number {
   return rates[rateType] ?? rates.regular;
 }
 
+/**
+ * A sport's full price plan, set in /admin → Settings.
+ * - memberRates off: everyone pays one standard rate (member/coach are not offered).
+ * - weekendRates off: Saturdays and Sundays use the weekday prices.
+ */
+export type SportPricing = {
+  memberRates: boolean;
+  weekendRates: boolean;
+  weekday: SportRates;
+  weekend: SportRates;
+};
+
+/** Saturday or Sunday ("YYYY-MM-DD"). */
+export function isWeekend(date: string): boolean {
+  const day = new Date(date + "T00:00:00Z").getUTCDay();
+  return day === 0 || day === 6;
+}
+
+/** The prices that apply on a date. Without member rates, member/coach equal the standard rate. */
+export function ratesForDate(p: SportPricing, date: string): SportRates {
+  const r = p.weekendRates && isWeekend(date) ? p.weekend : p.weekday;
+  return p.memberRates ? { ...r } : { regular: r.regular, member: r.regular, coach: r.regular };
+}
+
+/** Rate types players can choose for a sport. */
+export function rateTypesFor(p: { memberRates: boolean }): RateType[] {
+  return p.memberRates ? RATE_TYPES.map((r) => r.id) : ["regular"];
+}
+
+const money = (v: unknown, fallback: number) => {
+  const n = Number(v);
+  return v === undefined || v === null || v === "" || !Number.isFinite(n) ? fallback : n;
+};
+
+function toRates(raw: unknown, fallback: SportRates): SportRates {
+  const src = (raw ?? {}) as Record<string, unknown>;
+  const regular = money(src.regular, fallback.regular);
+  // A new regular price with no member/coach price → same as regular; nothing stored → the fallback's.
+  const base = src.regular === undefined ? fallback : { regular, member: regular, coach: regular };
+  return { regular, member: money(src.member, base.member), coach: money(src.coach, base.coach) };
+}
+
+/** Reads a stored price plan, filling anything missing from `fallback` (the pre-v6 prices). */
+export function toSportPricing(raw: unknown, fallback: SportRates): SportPricing {
+  const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const weekday = toRates(src.weekday, fallback);
+  return {
+    memberRates: src.memberRates !== false,
+    weekendRates: src.weekendRates === true,
+    weekday,
+    weekend: toRates(src.weekend, weekday),
+  };
+}
+
 export type Price = {
   hourlyRate: number; // the rate actually charged
   regularRate: number;

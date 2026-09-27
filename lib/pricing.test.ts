@@ -9,9 +9,13 @@ import {
   isPaymentMethod,
   isPaymentStatus,
   isRateType,
+  isWeekend,
   paymentLabel,
   rateFor,
+  ratesForDate,
   rateTypeLabel,
+  rateTypesFor,
+  toSportPricing,
 } from "./pricing.ts";
 
 // computePrice(rateCharged, hours, regularRate = rateCharged)
@@ -105,4 +109,51 @@ test("labels fall back to the raw id when unknown", () => {
   assert.equal(paymentLabel("mystery"), "mystery");
   assert.equal(bookingStatusLabel("pending"), "Pending");
   assert.equal(bookingStatusLabel("mystery"), "mystery");
+});
+
+test("isWeekend: Saturday and Sunday only", () => {
+  assert.ok(isWeekend("2026-09-26")); // Saturday
+  assert.ok(isWeekend("2026-09-27")); // Sunday
+  assert.ok(!isWeekend("2026-09-28")); // Monday
+  assert.ok(!isWeekend("2026-10-02")); // Friday
+});
+
+test("ratesForDate: weekend prices apply on weekends only when switched on", () => {
+  const plan = {
+    memberRates: true,
+    weekendRates: true,
+    weekday: { regular: 250, member: 200, coach: 150 },
+    weekend: { regular: 300, member: 240, coach: 180 },
+  };
+  assert.deepEqual(ratesForDate(plan, "2026-09-28"), plan.weekday);
+  assert.deepEqual(ratesForDate(plan, "2026-09-27"), plan.weekend);
+  assert.deepEqual(ratesForDate({ ...plan, weekendRates: false }, "2026-09-27"), plan.weekday);
+});
+
+test("ratesForDate: without member rates everyone pays the standard rate", () => {
+  const plan = {
+    memberRates: false,
+    weekendRates: true,
+    weekday: { regular: 200, member: 150, coach: 120 },
+    weekend: { regular: 260, member: 150, coach: 120 },
+  };
+  assert.deepEqual(ratesForDate(plan, "2026-09-28"), { regular: 200, member: 200, coach: 200 });
+  assert.deepEqual(ratesForDate(plan, "2026-09-26"), { regular: 260, member: 260, coach: 260 });
+  assert.deepEqual(rateTypesFor(plan), ["regular"]);
+  assert.deepEqual(rateTypesFor({ memberRates: true }), ["regular", "member", "coach"]);
+});
+
+test("toSportPricing: fills a missing plan from the older prices", () => {
+  const legacy = { regular: 250, member: 180, coach: 150 };
+  assert.deepEqual(toSportPricing(undefined, legacy), {
+    memberRates: true,
+    weekendRates: false,
+    weekday: legacy,
+    weekend: legacy,
+  });
+  const p = toSportPricing({ memberRates: false, weekendRates: true, weekday: { regular: "300" } }, legacy);
+  assert.equal(p.memberRates, false);
+  assert.equal(p.weekendRates, true);
+  assert.deepEqual(p.weekday, { regular: 300, member: 300, coach: 300 });
+  assert.deepEqual(p.weekend, p.weekday); // no weekend prices stored yet → copy weekday
 });

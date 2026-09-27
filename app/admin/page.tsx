@@ -14,6 +14,7 @@ import {
   type PaymentMethod,
   type PaymentStatus,
   type RateType,
+  type SportPricing,
 } from "@/lib/pricing";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 
@@ -49,9 +50,7 @@ type Settings = {
   max_hours_per_day: number;
   booking_window_days: number;
   announcement: string;
-  hourly_rates: Record<string, number>;
-  member_rates: Record<string, number>;
-  coach_rates: Record<string, number>;
+  rate_plans: Record<string, SportPricing>;
   member_code: string;
   coach_code: string;
   payment_methods: PaymentMethod[];
@@ -735,45 +734,64 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
     >
       <fieldset>
         <legend>Prices</legend>
-        <p className="hint" style={{ margin: "0 0 10px" }}>₱ per court per hour.</p>
-        <div className="table-wrap">
-          <table className="list price-grid">
-            <thead>
-              <tr>
-                <th>Sport</th>
-                <th>Regular</th>
-                <th>Member</th>
-                <th>Coach</th>
-              </tr>
-            </thead>
-            <tbody>
-              {SPORTS.map((sp) => (
-                <tr key={sp.id}>
-                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{sp.emoji} {sp.label}</td>
-                  {(
-                    [
-                      ["hourly_rates", "Regular"],
-                      ["member_rates", "Member"],
-                      ["coach_rates", "Coach"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <td key={key}>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        required
-                        aria-label={`${sp.label} ${label} price per hour`}
-                        value={s[key]?.[sp.id] ?? ""}
-                        onChange={(e) => set(key, { ...s[key], [sp.id]: e.target.value === "" ? ("" as unknown as number) : Number(e.target.value) })}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <p className="hint" style={{ margin: "0 0 10px" }}>₱ per court per hour. Weekend = Saturday and Sunday.</p>
+        {SPORTS.map((sp) => {
+          const plan = s.rate_plans[sp.id];
+          const setPlan = (next: Partial<SportPricing>) => set("rate_plans", { ...s.rate_plans, [sp.id]: { ...plan, ...next } });
+          const types = plan.memberRates ? RATE_TYPES : ([{ id: "regular", label: "Standard" }] as const);
+          const days = plan.weekendRates
+            ? ([["weekday", "Weekdays"], ["weekend", "Weekends"]] as const)
+            : ([["weekday", "Every day"]] as const);
+          return (
+            <div key={sp.id} className="price-plan">
+              <div className="price-plan-head">
+                <strong>{sp.emoji} {sp.label}</strong>
+                <label>
+                  <input type="checkbox" checked={plan.memberRates} onChange={(e) => setPlan({ memberRates: e.target.checked })} />
+                  Member &amp; coach prices
+                </label>
+                <label>
+                  <input type="checkbox" checked={plan.weekendRates} onChange={(e) => setPlan({ weekendRates: e.target.checked })} />
+                  Separate weekend prices
+                </label>
+              </div>
+              <div className="table-wrap">
+                <table className="list price-grid">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      {types.map((t) => <th key={t.id}>{t.id === "regular" && plan.memberRates ? "Non-member" : t.label}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {days.map(([day, dayLabel]) => (
+                      <tr key={day}>
+                        <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{dayLabel}</td>
+                        {types.map((t) => (
+                          <td key={t.id}>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              required
+                              aria-label={`${sp.label} ${dayLabel} ${t.label} price per hour`}
+                              value={plan[day][t.id] ?? ""}
+                              onChange={(e) =>
+                                setPlan({
+                                  [day]: { ...plan[day], [t.id]: e.target.value === "" ? ("" as unknown as number) : Number(e.target.value) },
+                                })
+                              }
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
         <div className="row field">
           <div>
             <label htmlFor="mc">Member code <span className="hint">(optional)</span></label>

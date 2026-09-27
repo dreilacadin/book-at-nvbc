@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdmin, unauthorized } from "@/lib/admin-auth";
 import { db, getSettings } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
-import { isPaymentMethod } from "@/lib/pricing";
+import { isPaymentMethod, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
 import { SPORTS } from "@/lib/sports";
 
 export const dynamic = "force-dynamic";
@@ -52,25 +52,40 @@ export async function POST(req: NextRequest) {
       return bad("Hour limits are out of range.");
     if (s.booking_window_days < 0 || s.booking_window_days > 90) return bad("Booking window must be 0–90 days.");
 
-    // Hourly prices per sport: regular, member and coach (₱ per court per hour)
-    const readRates = (input: unknown, label: string): Record<string, number> | string => {
-      const src = (input ?? {}) as Record<string, unknown>;
-      const out: Record<string, number> = {};
-      for (const sp of SPORTS) {
-        const raw = src[sp.id];
+    // Price plan per sport (₱ per court per hour). Prices that are switched off are still
+    // kept (or copied from the ones in use), so switching back on restores them.
+    const plansIn = (b.rate_plans ?? {}) as Record<string, Record<string, unknown>>;
+    const rate_plans: Record<string, SportPricing> = {};
+    for (const sp of SPORTS) {
+      const src = plansIn[sp.id] ?? {};
+      const memberRates = src.memberRates === true;
+      const weekendRates = src.weekendRates === true;
+      // A valid price, the fallback (for a price that is switched off), or an error message.
+      const price = (day: "weekday" | "weekend", type: RateType, fallback?: number): number | string => {
+        const raw = ((src[day] ?? {}) as Record<string, unknown>)[type];
         const r = Number(raw);
-        if (raw === "" || raw === null || raw === undefined || !Number.isFinite(r) || r < 0 || r > 100_000)
-          return `Enter a valid ${label} price for ${sp.label}.`;
-        out[sp.id] = Math.round(r * 100) / 100;
-      }
-      return out;
-    };
-    const hourly_rates = readRates(b.hourly_rates, "regular");
-    if (typeof hourly_rates === "string") return bad(hourly_rates);
-    const member_rates = readRates(b.member_rates, "member");
-    if (typeof member_rates === "string") return bad(member_rates);
-    const coach_rates = readRates(b.coach_rates, "coach");
-    if (typeof coach_rates === "string") return bad(coach_rates);
+        if (raw === "" || raw === null || raw === undefined || !Number.isFinite(r) || r < 0 || r > 100_000) {
+          if (fallback !== undefined) return fallback;
+          const who = memberRates ? `${rateTypeLabel(type).toLowerCase()} ` : "";
+          return `Enter a valid ${day} ${who}price for ${sp.label}.`;
+        }
+        return Math.round(r * 100) / 100;
+      };
+      const readDay = (day: "weekday" | "weekend", off?: SportRates): SportRates | string => {
+        const regular = price(day, "regular", off?.regular);
+        if (typeof regular === "string") return regular;
+        const member = price(day, "member", memberRates && !off ? undefined : off?.member ?? regular);
+        if (typeof member === "string") return member;
+        const coach = price(day, "coach", memberRates && !off ? undefined : off?.coach ?? regular);
+        if (typeof coach === "string") return coach;
+        return { regular, member, coach };
+      };
+      const weekday = readDay("weekday");
+      if (typeof weekday === "string") return bad(weekday);
+      const weekend = readDay("weekend", weekendRates ? undefined : weekday);
+      if (typeof weekend === "string") return bad(weekend);
+      rate_plans[sp.id] = { memberRates, weekendRates, weekday, weekend };
+    }
 
     // Payment methods
     const methods = Array.isArray(b.payment_methods) ? b.payment_methods.filter(isPaymentMethod) : [];
@@ -87,14 +102,14 @@ export async function POST(req: NextRequest) {
       `UPDATE settings SET
          open_hour = $1, close_hour = $2, max_hours_per_booking = $3, max_hours_per_day = $4,
          booking_window_days = $5, announcement = $6,
-         hourly_rates = $7::jsonb, member_rates = $8::jsonb, coach_rates = $9::jsonb,
-         member_code = $10, coach_code = $11, payment_methods = $12::text[],
-         gcash_name = $13, gcash_number = $14, bpi_account_name = $15, bpi_account_number = $16,
-         qrph_image = $17, payment_note = $18
+         rate_plans = $7::jsonb,
+         member_code = $8, coach_code = $9, payment_methods = $10::text[],
+         gcash_name = $11, gcash_number = $12, bpi_account_name = $13, bpi_account_number = $14,
+         qrph_image = $15, payment_note = $16
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
-        JSON.stringify(hourly_rates), JSON.stringify(member_rates), JSON.stringify(coach_rates), s.member_code, s.coach_code,
+        JSON.stringify(rate_plans), s.member_code, s.coach_code,
         `{${payment_methods.join(",")}}`,
         s.gcash_name, s.gcash_number, s.bpi_account_name, s.bpi_account_number, s.qrph_image, s.payment_note,
       ]

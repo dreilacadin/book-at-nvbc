@@ -1,4 +1,6 @@
 import { Pool, types } from "pg";
+import { toSportPricing, type SportPricing } from "./pricing";
+import { SPORTS } from "./sports";
 
 // Return DATE columns as plain "YYYY-MM-DD" strings instead of JS Dates,
 // so dates never shift because of server timezones.
@@ -60,9 +62,10 @@ export type Settings = {
   max_hours_per_day: number;
   booking_window_days: number;
   announcement: string;
-  hourly_rates: Record<string, number>; // regular price per court per hour, by sport
-  member_rates: Record<string, number>; // member price per court per hour, by sport
-  coach_rates: Record<string, number>; // coach price per court per hour, by sport
+  rate_plans: Record<string, SportPricing>; // price plan per sport (always has every sport)
+  hourly_rates: Record<string, number>; // pre-v6 prices, only used to fill a missing rate plan
+  member_rates: Record<string, number>;
+  coach_rates: Record<string, number>;
   member_code: string; // staff-only
   coach_code: string; // staff-only
   payment_methods: string[];
@@ -75,13 +78,22 @@ export type Settings = {
 };
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
-  booking_window_days, announcement, hourly_rates, member_rates, coach_rates,
+  booking_window_days, announcement, rate_plans, hourly_rates, member_rates, coach_rates,
   member_code, coach_code, payment_methods, gcash_name, gcash_number, bpi_account_name,
   bpi_account_number, qrph_image, payment_note`;
 
 /** Full settings, including staff-only values. Never send this object to the public as-is. */
 export async function getSettings(): Promise<Settings> {
   const { rows } = await db().query<Settings>(`SELECT ${SETTINGS_COLUMNS} FROM settings WHERE id = 1`);
-  if (!rows[0]) throw new Error("Settings row missing. Run `npm run db:setup`.");
-  return rows[0];
+  const s = rows[0];
+  if (!s) throw new Error("Settings row missing. Run `npm run db:setup`.");
+  const num = (v: unknown, fallback: number) => (Number.isFinite(Number(v)) && v !== null ? Number(v) : fallback);
+  s.rate_plans = Object.fromEntries(
+    SPORTS.map((sp) => {
+      const regular = num(s.hourly_rates?.[sp.id], 0);
+      const legacy = { regular, member: num(s.member_rates?.[sp.id], regular), coach: num(s.coach_rates?.[sp.id], regular) };
+      return [sp.id, toSportPricing(s.rate_plans?.[sp.id], legacy)];
+    })
+  );
+  return s;
 }

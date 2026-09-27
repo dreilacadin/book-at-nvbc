@@ -33,7 +33,9 @@ type Availability = {
   lastBookableDate: string;
   announcement: string;
   pricing: {
-    rates: SportRates; // ₱ per court per hour: regular / member / coach
+    rates: SportRates; // ₱ per court per hour on this date: regular / member / coach
+    rateTypes: RateType[]; // just ["regular"] when the sport has one standard rate
+    weekend: boolean; // this date uses the sport's weekend prices
     memberCodeRequired: boolean;
     coachCodeRequired: boolean;
   };
@@ -301,6 +303,8 @@ function BookingDialog({
   const p = data.pricing;
   const price = computePrice(rateFor(p.rates, rateType), hours, p.rates.regular);
   const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
+  const standardOnly = p.rateTypes.length === 1;
+  const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
 
   useEffect(() => {
@@ -361,7 +365,7 @@ function BookingDialog({
     }
   }
 
-  const rateOptions = RATE_TYPES.map((r) => ({ ...r, rate: rateFor(p.rates, r.id) }));
+  const rateOptions = RATE_TYPES.filter((r) => p.rateTypes.includes(r.id)).map((r) => ({ ...r, rate: rateFor(p.rates, r.id) }));
 
   return (
     <div className="backdrop" onClick={onClose}>
@@ -437,40 +441,44 @@ function BookingDialog({
               </select>
             </div>
 
-            <div className="field">
-              <label id="rate-label">Booking as</label>
-              <div className="segmented" role="radiogroup" aria-labelledby="rate-label">
-                {rateOptions.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={rateType === r.id}
-                    onClick={() => setRateType(r.id)}
-                  >
-                    {r.label}
-                    {hasPrices && <small>{formatPeso(r.rate)}/hr</small>}
-                  </button>
-                ))}
+            {!standardOnly && (
+              <div className="field">
+                <label id="rate-label">
+                  Booking as{p.weekend && hasPrices && <span className="hint"> — weekend prices</span>}
+                </label>
+                <div className="segmented" role="radiogroup" aria-labelledby="rate-label">
+                  {rateOptions.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={rateType === r.id}
+                      onClick={() => setRateType(r.id)}
+                    >
+                      {r.label}
+                      {hasPrices && <small>{formatPeso(r.rate)}/hr</small>}
+                    </button>
+                  ))}
+                </div>
+                {codeRequired && (
+                  <input
+                    type="text"
+                    aria-label={`${rateTypeLabel(rateType)} code`}
+                    placeholder={`${rateTypeLabel(rateType)} code (ask the front desk)`}
+                    required
+                    autoComplete="off"
+                    value={rateCode}
+                    onChange={(e) => setRateCode(e.target.value)}
+                    style={{ marginTop: 8 }}
+                  />
+                )}
+                {rateType !== "regular" && !codeRequired && (
+                  <p className="hint" style={{ margin: "6px 0 0" }}>
+                    Staff may ask you to show proof that you&apos;re a {rateType}.
+                  </p>
+                )}
               </div>
-              {codeRequired && (
-                <input
-                  type="text"
-                  aria-label={`${rateTypeLabel(rateType)} code`}
-                  placeholder={`${rateTypeLabel(rateType)} code (ask the front desk)`}
-                  required
-                  autoComplete="off"
-                  value={rateCode}
-                  onChange={(e) => setRateCode(e.target.value)}
-                  style={{ marginTop: 8 }}
-                />
-              )}
-              {rateType !== "regular" && !codeRequired && (
-                <p className="hint" style={{ margin: "6px 0 0" }}>
-                  Staff may ask you to show proof that you&apos;re a {rateType}.
-                </p>
-              )}
-            </div>
+            )}
 
             <div className="field">
               <label htmlFor="name">
@@ -517,7 +525,7 @@ function BookingDialog({
                 <div className="price-box" aria-live="polite">
                   <div className="pay-row">
                     <span>
-                      {rateTypeLabel(rateType)} rate {formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}
+                      {p.weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}
                     </span>
                     <span>{formatPeso(price.total)}</span>
                   </div>

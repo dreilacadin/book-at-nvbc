@@ -5,8 +5,10 @@ import {
   computePrice,
   isPaymentMethod,
   type BookingStatus,
+  isWeekend,
   rateFor,
-  type SportRates,
+  ratesForDate,
+  rateTypesFor,
   isPaymentStatus,
   isRateType,
   PAYMENT_METHODS,
@@ -15,7 +17,7 @@ import {
   type PaymentStatus,
   type RateType,
 } from "./pricing";
-import { SPORTS, type Sport } from "./sports";
+import { SPORTS, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
 export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
@@ -78,7 +80,9 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     announcement: settings.announcement,
     // Public pricing info. The member/coach codes themselves are never sent.
     pricing: {
-      rates: sportRates(settings, sport),
+      rates: ratesForDate(settings.rate_plans[sport], date),
+      rateTypes: rateTypesFor(settings.rate_plans[sport]),
+      weekend: settings.rate_plans[sport].weekendRates && isWeekend(date),
       memberCodeRequired: settings.member_code.trim() !== "",
       coachCodeRequired: settings.coach_code.trim() !== "",
     },
@@ -95,13 +99,6 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
  * filled in (a GCash method with no GCash number would just confuse people).
  * Kept in the standard order: Cash, GCash, QR Ph, BPI.
  */
-/** Regular, member and coach hourly prices for a sport. Missing member/coach prices fall back to regular. */
-export function sportRates(s: Settings, sport: string): SportRates {
-  const regular = Number(s.hourly_rates?.[sport] ?? 0);
-  const pick = (v: unknown) => (v === undefined || v === null || v === "" || !Number.isFinite(Number(v)) ? regular : Number(v));
-  return { regular, member: pick(s.member_rates?.[sport]), coach: pick(s.coach_rates?.[sport]) };
-}
-
 function enabledMethods(s: Settings): PaymentMethod[] {
   const on = s.payment_methods ?? [];
   const ready: Record<PaymentMethod, boolean> = {
@@ -195,7 +192,7 @@ export async function createBooking(
     return fail(400, "Please enter a mobile number or email so we can reach you.");
   if (notes.length > 200) return fail(400, "Notes must be 200 characters or fewer.");
 
-  const rateType: RateType = input.rateType === undefined || input.rateType === "" ? "regular" : (input.rateType as RateType);
+  let rateType: RateType = input.rateType === undefined || input.rateType === "" ? "regular" : (input.rateType as RateType);
   if (!isRateType(rateType)) return fail(400, "Please choose Regular, Member or Coach.");
   const paymentMethod: PaymentMethod =
     input.paymentMethod === undefined || input.paymentMethod === "" ? "cash" : (input.paymentMethod as PaymentMethod);
@@ -248,7 +245,15 @@ export async function createBooking(
     }
 
     const sport = court.rows[0].sport;
-    const rates = sportRates(settings, sport);
+    const plan = settings.rate_plans[sport];
+    if (!rateTypesFor(plan).includes(rateType)) {
+      if (!admin) {
+        await client.query("ROLLBACK");
+        return fail(400, `${sportLabel(sport)} has one standard rate. Please book at the standard rate.`);
+      }
+      rateType = "regular"; // staff picked member/coach for a sport without them: charge the standard rate
+    }
+    const rates = ratesForDate(plan, date);
     const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
     let paymentStatus: PaymentStatus = paymentRef && paymentMethod !== "cash" ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";

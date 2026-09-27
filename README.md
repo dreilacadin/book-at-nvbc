@@ -8,7 +8,7 @@ A simple booking site for NV Badminton Center's badminton and pickleball courts.
 - **Staff** log in at `/admin` to see every booking with names/contacts, cancel bookings, add walk-in/phone bookings, block courts for tournaments or maintenance, and change opening hours, limits and the announcement banner.
 - **Court counts on the fly**: in /admin → Courts, set how many badminton and pickleball courts are bookable with the − / + buttons. Lowering a number hides the last courts in the list; raising it brings hidden courts back first, then creates new ones. You can also switch a single court between badminton and pickleball (e.g. when a floor is re-lined), rename it, or reorder it. Bookings are never deleted — staff get a warning if a hidden or switched court still has upcoming bookings.
 - Direct links to a sport work: `/?sport=badminton` or `/?sport=pickleball`.
-- **Prices**: each sport has its own **Regular**, **Member** and **Coach** price per court per hour, set in /admin → Settings. Players pick which one they're booking as and see the total (and how much they save vs. regular) before they confirm.
+- **Prices**: each sport has its own **Regular** (non-member), **Member** and **Coach** price per court per hour, set in /admin → Settings — optionally with different weekend (Sat–Sun) prices. A sport can also turn member & coach prices off and use one standard rate for everyone. Players pick which one they're booking as and see the total (and how much they save vs. regular) before they confirm.
 - **Payments**: players choose **Cash**, **GCash**, **QR Ph** or **BPI transfer**. After booking they see the amount and how to pay (your GCash number, your QR Ph code, or your BPI account), then enter their payment reference number. Staff see it in /admin → Bookings marked **For verification**, check it against the GCash/bank app, and switch it to **Paid**.
 
 Built with Next.js (App Router) + PostgreSQL. No other services needed.
@@ -73,7 +73,7 @@ The app also accepts `POSTGRES_URL` and prefixed names like `STORAGE_DATABASE_UR
 
 Open /admin → **Settings**:
 
-1. **Prices** — set the Regular, Member and Coach price per court per hour for badminton and pickleball (they start as placeholders).
+1. **Prices** — set the Non-member, Member and Coach price per court per hour for badminton and pickleball (they start as placeholders). Tick **Separate weekend prices** to charge different prices on Saturdays and Sundays, or untick **Member & coach prices** to use one standard rate for that sport.
 2. **Member code / Coach code (optional)** — if you fill these in, players must type the code to get the member/coach price. Give the code only to your members/coaches and change it if it spreads. If you leave them blank, anyone can choose Member/Coach and staff check at the desk (the booking list shows who booked at which rate).
 3. **Payment methods** — tick the ones you accept and fill in your GCash number, BPI account, and upload your QR Ph code (a screenshot from your bank/GCash merchant app is fine). A method stays hidden from players until its details are filled in.
 4. **Payment note (optional)** — e.g. "Please pay within 2 hours of booking."

@@ -148,3 +148,23 @@ ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK (status IN ('pen
 UPDATE bookings SET status = 'pending'
  WHERE status = 'confirmed' AND payment_method <> 'cash' AND amount > 0
    AND payment_status IN ('unpaid', 'for_verification');
+
+-- v6: weekday/weekend prices and optional member & coach prices ------------------
+-- One price plan per sport:
+--   {"memberRates": true, "weekendRates": false,
+--    "weekday": {"regular": 200, "member": 180, "coach": 160}, "weekend": {...}}
+-- memberRates = false → one standard rate for everyone; weekendRates = false → weekends
+-- use weekday prices. On upgrade, the v4 prices become the weekday (and weekend) prices.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS rate_plans JSONB;
+UPDATE settings SET rate_plans = COALESCE(
+  (SELECT jsonb_object_agg(sp, jsonb_build_object(
+            'memberRates', true, 'weekendRates', false, 'weekday', r, 'weekend', r))
+     FROM (SELECT key AS sp, jsonb_build_object(
+                    'regular', value::numeric,
+                    'member',  COALESCE((member_rates ->> key)::numeric, value::numeric),
+                    'coach',   COALESCE((coach_rates  ->> key)::numeric, value::numeric)) AS r
+             FROM jsonb_each_text(hourly_rates)) t), '{}'::jsonb)
+ WHERE rate_plans IS NULL;
+ALTER TABLE settings ALTER COLUMN rate_plans SET DEFAULT '{}'::jsonb;
+ALTER TABLE settings ALTER COLUMN rate_plans SET NOT NULL;
+-- hourly_rates / member_rates / coach_rates are no longer read (kept so older data stays readable).
