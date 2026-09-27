@@ -30,6 +30,21 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]["id"];
 export const isPaymentStatus = (v: unknown): v is PaymentStatus => PAYMENT_STATUSES.some((s) => s.id === v);
 export const paymentStatusLabel = (id: string) => PAYMENT_STATUSES.find((s) => s.id === id)?.label ?? id;
 
+export type BookingStatus = "pending" | "confirmed" | "cancelled";
+
+/**
+ * An active booking paid online (GCash, QR Ph, BPI) is "pending" until staff verify the
+ * payment (Paid or No charge). Cash bookings are "confirmed" right away and paid at the desk.
+ */
+export function activeBookingStatus(method: PaymentMethod, paymentStatus: PaymentStatus, amount: number): "pending" | "confirmed" {
+  return method !== "cash" && amount > 0 && (paymentStatus === "unpaid" || paymentStatus === "for_verification")
+    ? "pending"
+    : "confirmed";
+}
+
+export const bookingStatusLabel = (s: string) =>
+  s === "pending" ? "Pending" : s === "confirmed" ? "Confirmed" : s === "cancelled" ? "Cancelled" : s;
+
 /** Hourly prices for one sport: regular, member and coach (₱ per court per hour). */
 export type SportRates = { regular: number; member: number; coach: number };
 

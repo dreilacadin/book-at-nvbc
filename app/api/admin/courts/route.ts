@@ -13,7 +13,7 @@ async function listCourts() {
   const { rows } = await db().query(
     `SELECT c.id, c.name, c.sport, c.is_active, c.sort_order,
             (SELECT count(*)::int FROM bookings b
-              WHERE b.court_id = c.id AND b.status = 'confirmed' AND b.booking_date >= $1) AS upcoming
+              WHERE b.court_id = c.id AND b.status <> 'cancelled' AND b.booking_date >= $1) AS upcoming
        FROM courts c ORDER BY c.sort_order, c.id`,
     [nowAtFacility().date]
   );
@@ -24,7 +24,7 @@ async function upcomingOn(ids: number[]): Promise<number> {
   if (ids.length === 0) return 0;
   const { rows } = await db().query<{ n: number }>(
     `SELECT count(*)::int AS n FROM bookings
-      WHERE status = 'confirmed' AND booking_date >= $1 AND court_id = ANY($2::int[])`,
+      WHERE status <> 'cancelled' AND booking_date >= $1 AND court_id = ANY($2::int[])`,
     [nowAtFacility().date, `{${ids.join(",")}}`]
   );
   return rows[0].n;

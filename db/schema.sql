@@ -139,3 +139,12 @@ ALTER TABLE settings ALTER COLUMN coach_rates  SET DEFAULT '{}'::jsonb;
 ALTER TABLE settings ALTER COLUMN coach_rates  SET NOT NULL;
 -- member_discount_pct / coach_discount_pct are no longer used (kept so older data stays readable).
 -- bookings.discount_pct is kept for bookings made before v4; new bookings store 0 there.
+
+-- v5: "pending" bookings ---------------------------------------------------------
+-- A booking paid by GCash / QR Ph / BPI stays "pending" (the slot is held) until staff
+-- mark the payment Paid; then it becomes "confirmed". Cash bookings are confirmed at once.
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK (status IN ('pending', 'confirmed', 'cancelled'));
+UPDATE bookings SET status = 'pending'
+ WHERE status = 'confirmed' AND payment_method <> 'cash' AND amount > 0
+   AND payment_status IN ('unpaid', 'for_verification');

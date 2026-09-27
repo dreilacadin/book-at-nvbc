@@ -1,8 +1,10 @@
 import { randomInt } from "node:crypto";
 import { db, getSettings, type Settings } from "./db";
 import {
+  activeBookingStatus,
   computePrice,
   isPaymentMethod,
+  type BookingStatus,
   rateFor,
   type SportRates,
   isPaymentStatus,
@@ -170,6 +172,7 @@ export async function createBooking(
     paymentMethod: PaymentMethod;
     paymentStatus: PaymentStatus;
     paymentRef: string;
+    status: "pending" | "confirmed";
   }>
 > {
   const admin = !!opts.admin;
@@ -250,12 +253,13 @@ export async function createBooking(
     let paymentStatus: PaymentStatus = paymentRef && paymentMethod !== "cash" ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
+    const status = activeBookingStatus(paymentMethod, paymentStatus, price.total);
 
     // Fair-use limit per person per day (matched on their contact number/email).
     const used = await client.query<{ total: number }>(
       `SELECT COALESCE(SUM(end_hour - start_hour), 0)::int AS total
          FROM bookings
-        WHERE status = 'confirmed' AND booking_date = $1
+        WHERE status <> 'cancelled' AND booking_date = $1
           AND lower(regexp_replace(contact, '[^a-zA-Z0-9@.]', '', 'g'))
             = lower(regexp_replace($2,      '[^a-zA-Z0-9@.]', '', 'g'))`,
       [date, contact]
@@ -279,12 +283,12 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at)
+                                 payment_ref, paid_at, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   CASE WHEN $14 = 'paid' THEN now() END) RETURNING id`,
+                   CASE WHEN $14 = 'paid' THEN now() END, $16) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
-            rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef,
+            rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
           ]
         );
         bookingId = ins.rows[0].id;
@@ -311,7 +315,7 @@ export async function createBooking(
       data: {
         code, courtName: court.rows[0].name, sport, date, startHour, endHour,
         rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: price.total,
-        paymentMethod, paymentStatus, paymentRef,
+        paymentMethod, paymentStatus, paymentRef, status,
       },
     };
   } catch (e: unknown) {
@@ -333,7 +337,7 @@ export type BookingView = {
   startHour: number;
   endHour: number;
   name: string;
-  status: "confirmed" | "cancelled";
+  status: BookingStatus;
   rateType: RateType;
   hourlyRate: number;
   discountPct: number;
@@ -376,7 +380,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       paymentMethod: r.payment_method,
       paymentStatus: r.payment_status,
       paymentRef: r.payment_ref,
-      canCancel: r.status === "confirmed" && !isPastSlot(r.booking_date, r.start_hour),
+      canCancel: r.status !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
     },
   };
 }
@@ -445,8 +449,9 @@ export async function submitPayment(
     return fail(400, "That payment method isn't available right now.");
 
   const { rows } = await db().query<{ payment_status: PaymentStatus }>(
-    `UPDATE bookings SET payment_method = $2, payment_ref = $3, payment_status = 'for_verification'
-      WHERE cancel_code = $1 AND status = 'confirmed' AND payment_status IN ('unpaid', 'for_verification')
+    `UPDATE bookings SET payment_method = $2, payment_ref = $3, payment_status = 'for_verification',
+            status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
+      WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification')
       RETURNING payment_status`,
     [code, method, paymentRef]
   );
@@ -465,7 +470,7 @@ export async function setPaymentStatus(
   status: unknown,
   method?: unknown,
   ref?: unknown
-): Promise<Result<{ id: string }>> {
+): Promise<Result<{ id: string; status: BookingStatus }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   if (!isPaymentStatus(status)) return fail(400, "Unknown payment status.");
   if (method !== undefined && !isPaymentMethod(method)) return fail(400, "Unknown payment method.");
@@ -474,10 +479,15 @@ export async function setPaymentStatus(
         payment_status = $2,
         payment_method = COALESCE($3, payment_method),
         payment_ref    = COALESCE($4, payment_ref),
-        paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END
-      WHERE id = $1 RETURNING id`,
+        paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END,
+        -- Pending ⇄ confirmed follows the payment (see activeBookingStatus); cancelled stays cancelled.
+        status = CASE
+          WHEN status = 'cancelled' THEN status
+          WHEN COALESCE($3, payment_method) <> 'cash' AND amount > 0 AND $2 IN ('unpaid', 'for_verification') THEN 'pending'
+          ELSE 'confirmed' END
+      WHERE id = $1 RETURNING id, status`,
     [id, status, method ?? null, ref === undefined ? null : cleanRef(ref)]
   );
   if (!rows[0]) return fail(404, "Booking not found.");
-  return { ok: true, data: { id } };
+  return { ok: true, data: { id, status: rows[0].status as BookingStatus } };
 }

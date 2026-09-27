@@ -7,8 +7,10 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   paymentLabel,
+  bookingStatusLabel,
   RATE_TYPES,
   rateTypeLabel,
+  type BookingStatus,
   type PaymentMethod,
   type PaymentStatus,
   type RateType,
@@ -27,7 +29,7 @@ type AdminBooking = {
   name: string;
   contact: string;
   notes: string;
-  status: "confirmed" | "cancelled";
+  status: BookingStatus;
   cancelled_by: string | null;
   created_at: string;
   rate_type: RateType;
@@ -200,15 +202,17 @@ function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
 
   async function setPayment(b: AdminBooking, status: PaymentStatus) {
     try {
-      await api("/api/admin/bookings", { action: "payment", id: b.id, status });
-      setBookings((list) => list.map((x) => (x.id === b.id ? { ...x, payment_status: status } : x)));
+      const r = await api<{ status: BookingStatus }>("/api/admin/bookings", { action: "payment", id: b.id, status });
+      // Marking an online payment Paid turns a Pending booking into Confirmed (and back if undone).
+      setBookings((list) => list.map((x) => (x.id === b.id ? { ...x, payment_status: status, status: r.status } : x)));
     } catch (e) {
       onAuthError(e);
       setError(e instanceof Error ? e.message : "Update failed");
     }
   }
 
-  const confirmed = bookings.filter((b) => b.status === "confirmed");
+  const confirmed = bookings.filter((b) => b.status !== "cancelled"); // pending + confirmed
+  const pendingCount = bookings.filter((b) => b.status === "pending").length;
   const hoursBooked = confirmed.reduce((s, b) => s + b.end_hour - b.start_hour, 0);
   const billed = confirmed.filter((b) => b.payment_status !== "waived").reduce((s, b) => s + b.amount, 0);
   const collected = bookings.filter((b) => b.payment_status === "paid").reduce((s, b) => s + b.amount, 0);
@@ -243,7 +247,7 @@ function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
 
       <p className="muted" style={{ margin: 0 }}>{formatDateLong(date)}</p>
       <div className="stats">
-        <div className="stat"><div className="n">{confirmed.length}</div><div className="l">bookings · {hoursBooked} court-hour{hoursBooked === 1 ? "" : "s"}</div></div>
+        <div className="stat"><div className="n">{confirmed.length}</div><div className="l">bookings · {hoursBooked} court-hour{hoursBooked === 1 ? "" : "s"}{pendingCount ? ` · ${pendingCount} pending` : ""}</div></div>
         <div className="stat"><div className="n">{formatPeso(billed)}</div><div className="l">billed</div></div>
         <div className="stat"><div className="n">{formatPeso(collected)}</div><div className="l">collected (paid)</div></div>
         <div className="stat"><div className="n">{formatPeso(unpaid)}</div><div className="l">still unpaid</div></div>
@@ -330,8 +334,14 @@ function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                   </td>
                   <td style={{ fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>{b.code}</td>
                   <td>
-                    {b.status === "confirmed" ? (
-                      <button className="btn small secondary" onClick={() => cancel(b)}>Cancel</button>
+                    {b.status !== "cancelled" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                        <span className={`badge ${b.status === "pending" ? "pending" : ""}`}
+                          title={b.status === "pending" ? "Waiting for the online payment to be verified — mark it Paid to confirm" : undefined}>
+                          {bookingStatusLabel(b.status)}
+                        </span>
+                        <button className="btn small secondary" onClick={() => cancel(b)}>Cancel</button>
+                      </div>
                     ) : (
                       <span className="badge grey">Cancelled{b.cancelled_by ? ` by ${b.cancelled_by}` : ""}</span>
                     )}

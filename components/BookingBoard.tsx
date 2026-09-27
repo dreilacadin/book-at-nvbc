@@ -6,6 +6,7 @@ import { formatDateLong, formatDateShort, formatHour, formatRange } from "@/lib/
 import {
   computePrice,
   formatPeso,
+  paymentLabel,
   rateFor,
   type SportRates,
   PAYMENT_METHODS,
@@ -54,6 +55,7 @@ type Confirmed = {
   amount: number;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  status: "pending" | "confirmed";
 };
 
 // The sport is already shown in the tab, so "Badminton Court 1" → "Court 1" in the grid header.
@@ -372,7 +374,17 @@ function BookingDialog({
       >
         {done ? (
           <div>
-            <h2 id="dlg-title">You&apos;re booked! 🎉</h2>
+            {done.status === "pending" ? (
+              <>
+                <h2 id="dlg-title">Slot held — pending payment</h2>
+                <p className="notice" style={{ marginTop: 0 }}>
+                  Your booking is <strong>Pending</strong> until staff verify your {paymentLabel(done.paymentMethod)} payment.
+                  Pay below and enter the reference number; it becomes <strong>Confirmed</strong> once verified.
+                </p>
+              </>
+            ) : (
+              <h2 id="dlg-title">You&apos;re booked! 🎉</h2>
+            )}
             <div className="summary">
               <strong>{sportLabel(done.sport)} · {done.courtName}</strong>
               {formatDateLong(done.date)}

@@ -80,6 +80,8 @@ Open /admin → **Settings**:
 
 ### How payment verification works
 
+**Booking status:** Cash bookings are **Confirmed** immediately. Bookings paid by GCash, QR Ph or BPI transfer are **Pending** — the slot is held so nobody else can take it — until staff set the payment to **Paid** (or **No charge**), which makes the booking **Confirmed**. Setting the payment back to Unpaid/For verification returns it to Pending. Staff can cancel pending bookings that never get paid.
+
 | Status | Meaning |
 |---|---|
 | **Unpaid** | Booked, no payment yet (cash players pay at the desk) |

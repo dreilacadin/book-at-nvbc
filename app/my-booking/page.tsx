@@ -9,6 +9,8 @@ import {
   formatPeso,
   paymentLabel,
   rateTypeLabel,
+  bookingStatusLabel,
+  type BookingStatus,
   type PaymentMethod,
   type PaymentStatus,
 } from "@/lib/pricing";
@@ -21,7 +23,7 @@ type Booking = {
   startHour: number;
   endHour: number;
   name: string;
-  status: "confirmed" | "cancelled";
+  status: BookingStatus;
   canCancel: boolean;
   rateType: string;
   hourlyRate: number;
@@ -135,8 +137,8 @@ export default function MyBookingPage() {
               {booking.courtName}
               <span className="muted" style={{ display: "block", fontSize: 14, fontWeight: 400 }}>{sportLabel(booking.sport)}</span>
             </h2>
-            <span className={booking.status === "confirmed" ? "badge" : "badge grey"}>
-              {booking.status === "confirmed" ? "Confirmed" : "Cancelled"}
+            <span className={`badge ${booking.status === "pending" ? "pending" : booking.status === "cancelled" ? "grey" : ""}`}>
+              {bookingStatusLabel(booking.status)}
             </span>
           </div>
           <p style={{ margin: "8px 0 0" }}>
@@ -161,7 +163,15 @@ export default function MyBookingPage() {
             )}
           </p>
 
-          {booking.status === "confirmed" && booking.amount > 0 && (
+          {booking.status === "pending" && (
+            <div className="notice" style={{ marginTop: 12 }}>
+              Your slot is held, but the booking stays <strong>Pending</strong> until staff verify your{" "}
+              {paymentLabel(booking.paymentMethod)} payment.{" "}
+              {booking.paymentStatus === "unpaid" ? "Please pay and enter your reference number below." : "We'll confirm it shortly."}
+            </div>
+          )}
+
+          {booking.status !== "cancelled" && booking.amount > 0 && (
             <PaymentPanel
               key={booking.code}
               code={booking.code}
@@ -169,7 +179,7 @@ export default function MyBookingPage() {
               method={booking.paymentMethod}
               status={booking.paymentStatus}
               reference={booking.paymentRef}
-              onUpdated={(u) => setBooking({ ...booking, ...u })}
+              onUpdated={(u) => setBooking({ ...booking, ...u, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
             />
           )}
           {booking.status === "cancelled" && booking.paymentStatus === "paid" && (
@@ -190,7 +200,7 @@ export default function MyBookingPage() {
               <button className="btn danger" onClick={cancel} disabled={busy}>Yes, cancel</button>
             </div>
           )}
-          {booking.status === "confirmed" && !booking.canCancel && (
+          {booking.status !== "cancelled" && !booking.canCancel && (
             <p className="muted" style={{ fontSize: 14, marginBottom: 0 }}>
               This booking has already started. Please talk to the front desk for changes.
             </p>
