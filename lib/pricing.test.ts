@@ -6,6 +6,8 @@ import {
   bookingStatusLabel,
   computePrice,
   formatPeso,
+  hasPaymentProof,
+  isProofImage,
   isPaymentMethod,
   isPaymentStatus,
   isRateType,
@@ -156,4 +158,20 @@ test("toSportPricing: fills a missing plan from the older prices", () => {
   assert.equal(p.weekendRates, true);
   assert.deepEqual(p.weekday, { regular: 300, member: 300, coach: 300 });
   assert.deepEqual(p.weekend, p.weekday); // no weekend prices stored yet → copy weekday
+});
+
+test("isProofImage: accepts small image data URLs only", () => {
+  assert.ok(isProofImage("data:image/png;base64,iVBORw0KGgo="));
+  assert.ok(isProofImage("data:image/jpeg;base64,/9j/4AAQ"));
+  assert.ok(!isProofImage("data:image/svg+xml;base64,PHN2Zz4="));
+  assert.ok(!isProofImage("data:text/html;base64,PGh0bWw+"));
+  assert.ok(!isProofImage("https://example.com/receipt.png"));
+  assert.ok(!isProofImage("data:image/png;base64," + "A".repeat(1_000_000)));
+  assert.ok(!isProofImage(undefined));
+});
+
+test("hasPaymentProof: a reference number or a screenshot is enough", () => {
+  assert.ok(hasPaymentProof("1234 5678", ""));
+  assert.ok(hasPaymentProof("", "data:image/png;base64,iVBORw0KGgo="));
+  assert.ok(!hasPaymentProof("   ", ""));
 });

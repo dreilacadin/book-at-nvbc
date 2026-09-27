@@ -9,10 +9,148 @@ import {
   type PaymentMethod,
   type PaymentStatus,
 } from "@/lib/pricing";
+import { imageToDataUrl } from "@/lib/image";
+
+/** Public payment details (GCash number, BPI account, QR Ph image). */
+export function usePaymentInfo() {
+  const [info, setInfo] = useState<PaymentInfo | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    fetch("/api/payment-info", { cache: "no-store" })
+      .then((r) => r.json())
+      .then(setInfo)
+      .catch(() => setError("Could not load payment details."));
+  }, []);
+  return { info, error };
+}
+
+/** Where to send an online payment: the GCash number, BPI account or QR Ph code. */
+export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; method: PaymentMethod; amount: number }) {
+  const [copied, setCopied] = useState("");
+  const copy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value.replace(/\s/g, ""));
+      setCopied(label);
+    } catch {
+      /* clipboard blocked */
+    }
+  };
+
+  if (method === "gcash")
+    return (
+      <div className="pay-detail">
+        <p style={{ margin: 0 }}>Send <strong>{formatPeso(amount)}</strong> via GCash to:</p>
+        <div className="acct">
+          <div>
+            <strong>{info.gcashNumber}</strong>
+            {info.gcashName && <div className="muted">{info.gcashName}</div>}
+          </div>
+          <button type="button" className="btn small secondary" onClick={() => copy("gcash", info.gcashNumber)}>
+            {copied === "gcash" ? "Copied ✓" : "Copy"}
+          </button>
+        </div>
+      </div>
+    );
+
+  if (method === "bpi")
+    return (
+      <div className="pay-detail">
+        <p style={{ margin: 0 }}>Transfer <strong>{formatPeso(amount)}</strong> to our BPI account:</p>
+        <div className="acct">
+          <div>
+            <strong>{info.bpiAccountNumber}</strong>
+            {info.bpiAccountName && <div className="muted">{info.bpiAccountName}</div>}
+          </div>
+          <button type="button" className="btn small secondary" onClick={() => copy("bpi", info.bpiAccountNumber)}>
+            {copied === "bpi" ? "Copied ✓" : "Copy"}
+          </button>
+        </div>
+      </div>
+    );
+
+  if (method === "qrph" && info.qrphImage)
+    return (
+      <div className="pay-detail" style={{ textAlign: "center" }}>
+        <p style={{ margin: 0, textAlign: "left" }}>
+          Scan with GCash, Maya or any bank app and pay <strong>{formatPeso(amount)}</strong>:
+        </p>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={info.qrphImage} alt="NVBC QR Ph payment code" className="qr" />
+        <div>
+          <a href={info.qrphImage} download="NVBC-QRPh.png" className="btn small secondary">Save QR image</a>
+        </div>
+      </div>
+    );
+
+  return null;
+}
+
+/** Reference number and/or receipt screenshot — at least one is needed for an online payment. */
+export function ProofFields({
+  reference,
+  onReference,
+  proof,
+  onProof,
+  hasProof = false,
+}: {
+  reference: string;
+  onReference: (v: string) => void;
+  proof: string;
+  onProof: (v: string) => void;
+  hasProof?: boolean; // a screenshot was already sent earlier
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <div className="proof-fields">
+      <input
+        type="text"
+        aria-label="Reference number"
+        placeholder="Reference no."
+        value={reference}
+        maxLength={60}
+        onChange={(e) => onReference(e.target.value)}
+      />
+      <div className="proof-or">and / or</div>
+      <label className="btn small secondary proof-upload">
+        {busy ? "Reading…" : proof ? "Change screenshot" : hasProof ? "Replace screenshot" : "📷 Upload screenshot"}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (!f) return;
+            setBusy(true);
+            setError("");
+            try {
+              onProof(await imageToDataUrl(f, 1400, "That screenshot is too large. Please crop it and try again."));
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Could not read that image.");
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      </label>
+      {proof ? (
+        <div className="proof-preview">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={proof} alt="Your payment screenshot" />
+          <button type="button" className="btn small secondary" onClick={() => onProof("")}>Remove</button>
+        </div>
+      ) : hasProof ? (
+        <p className="hint" style={{ margin: "6px 0 0" }}>Screenshot received ✓</p>
+      ) : null}
+      {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
 
 /**
- * Shows how to pay for a booking and lets the player send their reference number.
- * Used on the booking confirmation and on the My booking page.
+ * Shows how to pay for a booking and lets the player send their reference number and/or
+ * a screenshot of the receipt. Used on the booking confirmation and on the My booking page.
  */
 export default function PaymentPanel({
   code,
@@ -20,6 +158,7 @@ export default function PaymentPanel({
   method: initialMethod,
   status: initialStatus,
   reference: initialRef = "",
+  hasProof: initialHasProof = false,
   onUpdated,
 }: {
   code: string;
@@ -27,22 +166,17 @@ export default function PaymentPanel({
   method: PaymentMethod;
   status: PaymentStatus;
   reference?: string;
-  onUpdated?: (p: { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; paymentRef: string }) => void;
+  hasProof?: boolean;
+  onUpdated?: (p: { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; paymentRef: string; hasProof: boolean }) => void;
 }) {
-  const [info, setInfo] = useState<PaymentInfo | null>(null);
+  const { info, error: infoError } = usePaymentInfo();
   const [method, setMethod] = useState<PaymentMethod>(initialMethod);
   const [status, setStatus] = useState<PaymentStatus>(initialStatus);
   const [reference, setReference] = useState(initialRef);
+  const [proof, setProof] = useState("");
+  const [hasProof, setHasProof] = useState(initialHasProof);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState("");
-
-  useEffect(() => {
-    fetch("/api/payment-info", { cache: "no-store" })
-      .then((r) => r.json())
-      .then(setInfo)
-      .catch(() => setError("Could not load payment details."));
-  }, []);
 
   if (status === "paid" || status === "waived" || status === "refunded") {
     return (
@@ -57,28 +191,25 @@ export default function PaymentPanel({
   }
 
   const eMethods = (info?.methods ?? []).filter((m) => m !== "cash");
-  const copy = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value.replace(/\s/g, ""));
-      setCopied(label);
-    } catch {
-      /* clipboard blocked */
-    }
-  };
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!reference.trim() && !proof && !hasProof)
+      return setError("Enter the reference number or upload a screenshot of your receipt.");
     setBusy(true);
     setError("");
     try {
       const res = await fetch("/api/bookings/payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, method, reference }),
+        body: JSON.stringify({ code, method, reference, proof }),
       });
       const json = await res.json();
-      if (!res.ok) return setError(json.error || "Could not save your reference number.");
+      if (!res.ok) return setError(json.error || "Could not save your payment details.");
       setStatus(json.paymentStatus);
+      setReference(json.paymentRef);
+      setHasProof(json.hasProof);
+      setProof("");
       onUpdated?.(json);
     } catch {
       setError("Network error. Please try again.");
@@ -117,72 +248,22 @@ export default function PaymentPanel({
         </p>
       )}
 
-      {info && method === "gcash" && (
-        <div className="pay-detail">
-          <p style={{ margin: 0 }}>Send <strong>{formatPeso(amount)}</strong> via GCash to:</p>
-          <div className="acct">
-            <div>
-              <strong>{info.gcashNumber}</strong>
-              {info.gcashName && <div className="muted">{info.gcashName}</div>}
-            </div>
-            <button type="button" className="btn small secondary" onClick={() => copy("gcash", info.gcashNumber)}>
-              {copied === "gcash" ? "Copied ✓" : "Copy"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {info && method === "bpi" && (
-        <div className="pay-detail">
-          <p style={{ margin: 0 }}>Transfer <strong>{formatPeso(amount)}</strong> to our BPI account:</p>
-          <div className="acct">
-            <div>
-              <strong>{info.bpiAccountNumber}</strong>
-              {info.bpiAccountName && <div className="muted">{info.bpiAccountName}</div>}
-            </div>
-            <button type="button" className="btn small secondary" onClick={() => copy("bpi", info.bpiAccountNumber)}>
-              {copied === "bpi" ? "Copied ✓" : "Copy"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {info && method === "qrph" && info.qrphImage && (
-        <div className="pay-detail" style={{ textAlign: "center" }}>
-          <p style={{ margin: 0, textAlign: "left" }}>
-            Scan with GCash, Maya or any bank app and pay <strong>{formatPeso(amount)}</strong>:
-          </p>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={info.qrphImage} alt="NVBC QR Ph payment code" className="qr" />
-          <div>
-            <a href={info.qrphImage} download="NVBC-QRPh.png" className="btn small secondary">Save QR image</a>
-          </div>
-        </div>
-      )}
+      {info && <PaymentDetails info={info} method={method} amount={amount} />}
 
       {method !== "cash" && (
         <>
           <p className="muted" style={{ fontSize: 14, margin: "10px 0 0" }}>
             Put <strong>{code}</strong> in the message/notes if your app allows. After paying, enter the reference
-            number below so staff can confirm it.
+            number or upload a screenshot of the receipt so staff can confirm it.
           </p>
           {status === "for_verification" && (
             <div className="success" style={{ marginTop: 10 }}>
-              Reference received. Staff will confirm your
-              payment shortly. You can correct it below if needed.
+              Payment details received. Staff will confirm your payment shortly. You can correct them below if needed.
             </div>
           )}
-          <form onSubmit={submit} style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <input
-              type="text"
-              aria-label="Reference number"
-              placeholder="Reference no."
-              value={reference}
-              maxLength={60}
-              required
-              onChange={(e) => setReference(e.target.value)}
-            />
-            <button className="btn" disabled={busy} style={{ whiteSpace: "nowrap" }}>
+          <form onSubmit={submit} style={{ marginTop: 10 }}>
+            <ProofFields reference={reference} onReference={setReference} proof={proof} onProof={setProof} hasProof={hasProof} />
+            <button className="btn" disabled={busy} style={{ marginTop: 10 }}>
               {busy ? "Sending…" : status === "for_verification" ? "Update" : "I've paid"}
             </button>
           </form>
@@ -190,7 +271,7 @@ export default function PaymentPanel({
       )}
 
       {info?.note && <p className="muted" style={{ fontSize: 14, margin: "10px 0 0", whiteSpace: "pre-wrap" }}>{info.note}</p>}
-      {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
+      {(error || infoError) && <div className="error" style={{ marginTop: 10 }}>{error || infoError}</div>}
     </div>
   );
 }

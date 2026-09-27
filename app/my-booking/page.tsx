@@ -32,6 +32,7 @@ type Booking = {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   paymentRef: string;
+  hasProof: boolean;
 };
 
 export default function MyBookingPage() {
@@ -179,6 +180,7 @@ export default function MyBookingPage() {
               method={booking.paymentMethod}
               status={booking.paymentStatus}
               reference={booking.paymentRef}
+              hasProof={booking.hasProof}
               onUpdated={(u) => setBooking({ ...booking, ...u, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
             />
           )}

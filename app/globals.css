@@ -272,3 +272,10 @@ legend { font-weight: 700; padding: 0 6px; }
 .price-plan-head label { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; margin: 0; font-size: 14px; }
 .badge.pending { background: #fff4d6; color: #7a4b00; }
 @media (prefers-color-scheme: dark) { .badge.pending { background: #3a2e12; color: #ffd98a; } }
+
+/* Payment proof: reference number and/or receipt screenshot */
+.proof-fields { display: grid; gap: 6px; }
+.proof-or { font-size: 12px; color: var(--muted); text-align: center; }
+.proof-upload { justify-self: start; cursor: pointer; }
+.proof-preview { display: flex; gap: 10px; align-items: flex-end; margin-top: 4px; }
+.proof-preview img { max-width: 140px; max-height: 200px; border-radius: 8px; border: 1px solid var(--border); object-fit: contain; background: #fff; }

@@ -17,7 +17,7 @@ import {
   type RateType,
 } from "@/lib/pricing";
 import { saveCode } from "@/lib/saved-codes";
-import PaymentPanel from "./PaymentPanel";
+import PaymentPanel, { PaymentDetails, ProofFields, usePaymentInfo } from "./PaymentPanel";
 import { isSport, sportLabel, type Sport } from "@/lib/sports";
 
 type Availability = {
@@ -57,6 +57,8 @@ type Confirmed = {
   amount: number;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  paymentRef: string;
+  hasProof: boolean;
   status: "pending" | "confirmed";
 };
 
@@ -291,6 +293,9 @@ function BookingDialog({
   const [rateType, setRateType] = useState<RateType>("regular");
   const [rateCode, setRateCode] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(data.paymentMethods[0] ?? "cash");
+  const [paymentRef, setPaymentRef] = useState("");
+  const [paymentProof, setPaymentProof] = useState("");
+  const { info: payInfo } = usePaymentInfo();
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
   const [notes, setNotes] = useState("");
@@ -305,6 +310,8 @@ function BookingDialog({
   const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
   const standardOnly = p.rateTypes.length === 1;
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
+  // Online payments are paid before booking; the booking goes through only with proof.
+  const payFirst = hasPrices && paymentMethod !== "cash" && price.total > 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
 
   useEffect(() => {
@@ -315,6 +322,8 @@ function BookingDialog({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (payFirst && !paymentRef.trim() && !paymentProof)
+      return setError(`Please pay by ${paymentLabel(paymentMethod)}, then enter the reference number or upload a screenshot of the receipt.`);
     setBusy(true);
     setError("");
     try {
@@ -333,6 +342,8 @@ function BookingDialog({
           rateType,
           rateCode: codeRequired ? rateCode : "",
           paymentMethod,
+          paymentRef: payFirst ? paymentRef : "",
+          paymentProof: payFirst ? paymentProof : "",
         }),
       });
       const json = await res.json();
@@ -380,10 +391,10 @@ function BookingDialog({
           <div>
             {done.status === "pending" ? (
               <>
-                <h2 id="dlg-title">Slot held — pending payment</h2>
+                <h2 id="dlg-title">Slot held — verifying payment</h2>
                 <p className="notice" style={{ marginTop: 0 }}>
                   Your booking is <strong>Pending</strong> until staff verify your {paymentLabel(done.paymentMethod)} payment.
-                  Pay below and enter the reference number; it becomes <strong>Confirmed</strong> once verified.
+                  It becomes <strong>Confirmed</strong> once verified.
                 </p>
               </>
             ) : (
@@ -413,6 +424,8 @@ function BookingDialog({
                 amount={done.amount}
                 method={done.paymentMethod}
                 status={done.paymentStatus}
+                reference={done.paymentRef}
+                hasProof={done.hasProof}
               />
             )}
             <div className="actions">
@@ -540,6 +553,18 @@ function BookingDialog({
                     <span>{formatPeso(price.total)}</span>
                   </div>
                 </div>
+
+                {payFirst && (
+                  <div className="pay-box">
+                    <strong>Pay now to book</strong>
+                    {payInfo && <PaymentDetails info={payInfo} method={paymentMethod} amount={price.total} />}
+                    <p className="muted" style={{ fontSize: 14, margin: "10px 0 8px" }}>
+                      After paying, enter the reference number or upload a screenshot of the receipt. Staff confirm
+                      your booking once they verify the payment.
+                    </p>
+                    <ProofFields reference={paymentRef} onReference={setPaymentRef} proof={paymentProof} onProof={setPaymentProof} />
+                  </div>
+                )}
               </>
             )}
 

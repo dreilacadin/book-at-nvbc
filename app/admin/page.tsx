@@ -16,6 +16,7 @@ import {
   type RateType,
   type SportPricing,
 } from "@/lib/pricing";
+import { imageToDataUrl } from "@/lib/image";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 
 type AdminBooking = {
@@ -40,6 +41,7 @@ type AdminBooking = {
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
   payment_ref: string;
+  has_proof: boolean;
   ref_reused: number;
 };
 type Court = { id: number; name: string; sport: Sport; is_active: boolean; sort_order: number; upcoming: number };
@@ -318,6 +320,14 @@ function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                               ⚠ used {b.ref_reused + 1}×
                             </span>
                           )}
+                        </>
+                      )}
+                      {b.has_proof && (
+                        <>
+                          {" · "}
+                          <a href={`/api/admin/bookings/proof?id=${b.id}`} target="_blank" rel="noopener noreferrer">
+                            📷 Screenshot
+                          </a>
                         </>
                       )}
                     </div>
@@ -664,33 +674,6 @@ function CourtRow({ court, onSave }: { court: Court; onSave: (p: Partial<Court>)
   );
 }
 
-/** Shrink an uploaded QR image so it stays small in the database but still scans. */
-async function fileToDataUrl(file: File): Promise<string> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error("That file isn't an image."));
-      i.src = url;
-    });
-    const scale = Math.min(1, 700 / Math.max(img.width, img.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(img.width * scale);
-    canvas.height = Math.round(img.height * scale);
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    let out = canvas.toDataURL("image/png");
-    if (out.length > 650_000) out = canvas.toDataURL("image/jpeg", 0.92);
-    if (out.length > 650_000) throw new Error("That image is too large. Please use a smaller screenshot of the QR code.");
-    return out;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
   const [s, setS] = useState<Settings | null>(null);
   const [error, setError] = useState("");
@@ -867,7 +850,7 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                     const f = e.target.files?.[0];
                     if (!f) return;
                     try {
-                      set("qrph_image", await fileToDataUrl(f));
+                      set("qrph_image", await imageToDataUrl(f, 700, "That image is too large. Please use a smaller screenshot of the QR code."));
                       setError("");
                     } catch (err) {
                       setError(err instanceof Error ? err.message : "Could not read that image.");

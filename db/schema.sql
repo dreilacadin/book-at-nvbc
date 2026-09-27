@@ -168,3 +168,8 @@ UPDATE settings SET rate_plans = COALESCE(
 ALTER TABLE settings ALTER COLUMN rate_plans SET DEFAULT '{}'::jsonb;
 ALTER TABLE settings ALTER COLUMN rate_plans SET NOT NULL;
 -- hourly_rates / member_rates / coach_rates are no longer read (kept so older data stays readable).
+
+-- v7: payment screenshots ---------------------------------------------------------
+-- Players paying by GCash / QR Ph / BPI must give a reference number, a screenshot of
+-- the receipt, or both. The screenshot is stored as a data: URL (shrunk by the browser).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_proof TEXT NOT NULL DEFAULT '';

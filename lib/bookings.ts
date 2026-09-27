@@ -3,7 +3,9 @@ import { db, getSettings, type Settings } from "./db";
 import {
   activeBookingStatus,
   computePrice,
+  hasPaymentProof,
   isPaymentMethod,
+  isProofImage,
   type BookingStatus,
   isWeekend,
   rateFor,
@@ -12,6 +14,7 @@ import {
   isPaymentStatus,
   isRateType,
   PAYMENT_METHODS,
+  paymentLabel,
   type PaymentInfo,
   type PaymentMethod,
   type PaymentStatus,
@@ -136,6 +139,7 @@ export type NewBookingInput = {
   rateCode?: unknown; // member/coach code, if the center requires one
   paymentMethod?: unknown; // cash | gcash | qrph | bpi
   paymentRef?: unknown; // reference number, if already paid by e-wallet/bank
+  paymentProof?: unknown; // screenshot of the receipt (image data: URL)
   paymentStatus?: unknown; // staff only
   noCharge?: unknown; // staff only: tournaments, maintenance blocks
   courtId?: unknown;
@@ -169,6 +173,7 @@ export async function createBooking(
     paymentMethod: PaymentMethod;
     paymentStatus: PaymentStatus;
     paymentRef: string;
+    hasProof: boolean;
     status: "pending" | "confirmed";
   }>
 > {
@@ -198,6 +203,9 @@ export async function createBooking(
     input.paymentMethod === undefined || input.paymentMethod === "" ? "cash" : (input.paymentMethod as PaymentMethod);
   if (!isPaymentMethod(paymentMethod)) return fail(400, "Please choose a payment method.");
   const paymentRef = cleanRef(input.paymentRef);
+  const paymentProof = input.paymentProof === undefined || input.paymentProof === "" ? "" : input.paymentProof;
+  if (paymentProof !== "" && !isProofImage(paymentProof))
+    return fail(400, "The payment screenshot must be a PNG, JPG or WebP image under 700 KB.");
 
   const settings = await getSettings();
 
@@ -255,7 +263,16 @@ export async function createBooking(
     }
     const rates = ratesForDate(plan, date);
     const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
-    let paymentStatus: PaymentStatus = paymentRef && paymentMethod !== "cash" ? "for_verification" : "unpaid";
+    // Players paying online must pay first and show it: a reference number, a screenshot, or both.
+    const proven = paymentMethod !== "cash" && hasPaymentProof(paymentRef, paymentProof);
+    if (!admin && !noCharge && paymentMethod !== "cash" && price.total > 0 && !proven) {
+      await client.query("ROLLBACK");
+      return fail(
+        400,
+        `Please pay by ${paymentLabel(paymentMethod)} first, then enter the reference number or upload a screenshot of the receipt.`
+      );
+    }
+    let paymentStatus: PaymentStatus = proven ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
     const status = activeBookingStatus(paymentMethod, paymentStatus, price.total);
@@ -288,12 +305,13 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status)
+                                 payment_ref, paid_at, status, payment_proof)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   CASE WHEN $14 = 'paid' THEN now() END, $16) RETURNING id`,
+                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
             rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
+            paymentMethod === "cash" ? "" : paymentProof,
           ]
         );
         bookingId = ins.rows[0].id;
@@ -320,7 +338,7 @@ export async function createBooking(
       data: {
         code, courtName: court.rows[0].name, sport, date, startHour, endHour,
         rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: price.total,
-        paymentMethod, paymentStatus, paymentRef, status,
+        paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status,
       },
     };
   } catch (e: unknown) {
@@ -350,6 +368,7 @@ export type BookingView = {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   paymentRef: string;
+  hasProof: boolean; // a payment screenshot was uploaded
   canCancel: boolean;
 };
 
@@ -360,7 +379,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
   const { rows } = await db().query(
     `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
             b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
-            b.payment_method, b.payment_status, b.payment_ref
+            b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof
        FROM bookings b JOIN courts c ON c.id = b.court_id
       WHERE b.cancel_code = $1`,
     [code]
@@ -385,6 +404,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       paymentMethod: r.payment_method,
       paymentStatus: r.payment_status,
       paymentRef: r.payment_ref,
+      hasProof: r.has_proof,
       canCancel: r.status !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
     },
   };
@@ -437,28 +457,40 @@ export async function cancelById(id: string): Promise<Result<{ id: string }>> {
   return cancelWhere("id = $1", id, "admin", true);
 }
 
-/** Player tells us they paid by GCash / QR Ph / BPI: store the reference number for staff to verify. */
+/**
+ * Player tells us they paid by GCash / QR Ph / BPI: store the reference number and/or receipt
+ * screenshot for staff to verify. Sending only one keeps the other from an earlier submission.
+ */
 export async function submitPayment(
   rawCode: unknown,
   method: unknown,
-  ref: unknown
-): Promise<Result<{ paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; paymentRef: string }>> {
+  ref: unknown,
+  proof?: unknown
+): Promise<Result<{ paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; paymentRef: string; hasProof: boolean }>> {
   const code = normalizeCode(rawCode);
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
   if (!isPaymentMethod(method) || method === "cash") return fail(400, "Choose GCash, QR Ph or BPI transfer.");
   const paymentRef = cleanRef(ref);
-  if (!/^[A-Za-z0-9][A-Za-z0-9 \-]{3,}$/.test(paymentRef))
+  const paymentProof = proof === undefined || proof === null || proof === "" ? "" : proof;
+  if (paymentProof !== "" && !isProofImage(paymentProof))
+    return fail(400, "The payment screenshot must be a PNG, JPG or WebP image under 700 KB.");
+  if (!hasPaymentProof(paymentRef, paymentProof))
+    return fail(400, "Enter the reference number or upload a screenshot of your payment receipt.");
+  if (paymentRef && !/^[A-Za-z0-9][A-Za-z0-9 \-]{3,}$/.test(paymentRef))
     return fail(400, "Please enter the reference number from your payment receipt.");
   const settings = await getSettings();
   if (!enabledMethods(settings).includes(method))
     return fail(400, "That payment method isn't available right now.");
 
-  const { rows } = await db().query<{ payment_status: PaymentStatus }>(
-    `UPDATE bookings SET payment_method = $2, payment_ref = $3, payment_status = 'for_verification',
+  const { rows } = await db().query<{ payment_ref: string; has_proof: boolean }>(
+    `UPDATE bookings SET payment_method = $2,
+            payment_ref   = CASE WHEN $3 = '' THEN payment_ref ELSE $3 END,
+            payment_proof = CASE WHEN $4 = '' THEN payment_proof ELSE $4 END,
+            payment_status = 'for_verification',
             status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
       WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification')
-      RETURNING payment_status`,
-    [code, method, paymentRef]
+      RETURNING payment_ref, (payment_proof <> '') AS has_proof`,
+    [code, method, paymentRef, paymentProof]
   );
   if (!rows[0]) {
     const b = await findByCode(code);
@@ -466,7 +498,10 @@ export async function submitPayment(
     if (b.data.status === "cancelled") return fail(400, "This booking was cancelled.");
     return fail(400, `This booking is already marked "${b.data.paymentStatus === "paid" ? "paid" : b.data.paymentStatus}".`);
   }
-  return { ok: true, data: { paymentStatus: "for_verification", paymentMethod: method, paymentRef } };
+  return {
+    ok: true,
+    data: { paymentStatus: "for_verification", paymentMethod: method, paymentRef: rows[0].payment_ref, hasProof: rows[0].has_proof },
+  };
 }
 
 /** Staff: mark a booking paid / unpaid / no charge / refunded (optionally correcting method or reference). */

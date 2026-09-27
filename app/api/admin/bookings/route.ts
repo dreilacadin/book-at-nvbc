@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
       `SELECT b.id, b.cancel_code AS code, c.name AS court_name, c.sport, b.court_id, b.booking_date AS date,
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
-              b.payment_method, b.payment_status, b.payment_ref, b.paid_at,
+              b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof,
               -- Same reference number used on another booking? Worth a second look.
               CASE WHEN b.payment_ref = '' THEN 0 ELSE
                 (SELECT count(*)::int FROM bookings o WHERE o.payment_ref = b.payment_ref AND o.id <> b.id) END

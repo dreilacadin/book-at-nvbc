@@ -125,6 +125,21 @@ export function formatPeso(n: number): string {
   return "₱" + n.toLocaleString("en-PH", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 }
 
+/** Largest payment screenshot accepted (as a data: URL). The browser shrinks uploads well below this. */
+export const MAX_PROOF_CHARS = 1_000_000; // ~700 KB image
+
+/** A payment screenshot: a PNG/JPEG/WebP data: URL under the size limit. */
+export function isProofImage(v: unknown): v is string {
+  return (
+    typeof v === "string" &&
+    v.length <= MAX_PROOF_CHARS &&
+    /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(v)
+  );
+}
+
+/** Online payments need proof: a reference number, a screenshot, or both. */
+export const hasPaymentProof = (ref: string, proof: string) => ref.trim() !== "" || proof !== "";
+
 /** What players see about payments (no staff-only data). */
 export type PaymentInfo = {
   methods: PaymentMethod[];
