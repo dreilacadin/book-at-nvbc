@@ -8,15 +8,34 @@ types.setTypeParser(1700, (v: string) => parseFloat(v));
 
 const globalForDb = globalThis as unknown as { __nvbcPool?: Pool };
 
+/**
+ * Vercel's database integrations don't all use the same variable name:
+ * Neon sets DATABASE_URL, Supabase and older "Vercel Postgres" set POSTGRES_URL.
+ * The first one that is set wins.
+ */
+export const DB_ENV_VARS = ["DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL"] as const;
+
+export function connectionInfo(): { name: string; value: string } | null {
+  for (const name of DB_ENV_VARS) {
+    const value = process.env[name]?.trim();
+    if (value) return { name, value };
+  }
+  return null;
+}
+
 function createPool() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL is not set. Copy .env.example to .env.local and fill it in.");
+  const info = connectionInfo();
+  if (!info) {
+    throw new Error(
+      "No database connection string found. Set DATABASE_URL (locally in .env.local, on Vercel under " +
+        "Project → Settings → Environment Variables) and redeploy."
+    );
   }
   return new Pool({
-    connectionString,
+    connectionString: info.value,
     max: 5,
     idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000, // fail fast instead of hanging until Vercel's function timeout
   });
 }
 

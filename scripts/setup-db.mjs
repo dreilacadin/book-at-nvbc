@@ -3,10 +3,24 @@
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 
-const url = process.env.DATABASE_URL;
+const url =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRISMA_URL;
 if (!url) {
   console.error(
     "DATABASE_URL is not set. Put it in .env.local first (see .env.example).",
+  );
+  process.exit(1);
+}
+try {
+  const u = new URL(url);
+  console.log(
+    `Connecting to ${u.hostname} / database "${u.pathname.slice(1)}" as ${decodeURIComponent(u.username)}…`,
+  );
+} catch {
+  console.error(
+    "DATABASE_URL doesn't look like a valid postgresql:// connection string.",
   );
   process.exit(1);
 }
