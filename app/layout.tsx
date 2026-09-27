@@ -4,7 +4,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "NVBC — Court Reservations",
-  description: "Check court availability and reserve a badminton or pickleball court at NV Badminton Center. No account needed.",
+  description:
+    "Check court availability and reserve a badminton or pickleball court at NV Badminton Center. No account needed.",
 };
 
 export const viewport: Viewport = {
@@ -13,7 +14,11 @@ export const viewport: Viewport = {
   themeColor: "#0d4f30",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body>
@@ -23,7 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="logo-ball" aria-hidden="true" />
               <span>
                 NVBC Courts
-                <small>Badminton &amp; pickleball reservations</small>
+                <small>Badminton &amp; pickleball court reservations</small>
               </span>
             </Link>
             <nav className="nav">

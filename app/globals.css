@@ -263,3 +263,6 @@ tr.cancelled td:last-child { text-decoration: none; }
 .stat .l { font-size: 13px; color: var(--muted); }
 fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 0 0 16px; }
 legend { font-weight: 700; padding: 0 6px; }
+
+.price-grid td { padding: 6px 6px; }
+.price-grid input { min-width: 90px; }

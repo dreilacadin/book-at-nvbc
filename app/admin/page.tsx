@@ -48,8 +48,8 @@ type Settings = {
   booking_window_days: number;
   announcement: string;
   hourly_rates: Record<string, number>;
-  member_discount_pct: number;
-  coach_discount_pct: number;
+  member_rates: Record<string, number>;
+  coach_rates: Record<string, number>;
   member_code: string;
   coach_code: string;
   payment_methods: PaymentMethod[];
@@ -296,7 +296,11 @@ function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                   </td>
                   <td>
                     {rateTypeLabel(b.rate_type)}
-                    {b.discount_pct > 0 && <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>}
+                    {b.discount_pct > 0 ? (
+                      <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>
+                    ) : b.hourly_rate > 0 ? (
+                      <div className="muted" style={{ fontSize: 13 }}>{formatPeso(b.hourly_rate)}/hr</div>
+                    ) : null}
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>{formatPeso(b.amount)}</td>
                   <td style={{ minWidth: 170 }}>
@@ -720,28 +724,45 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
       }}
     >
       <fieldset>
-        <legend>Prices &amp; discounts</legend>
-        <div className="row field">
-          {SPORTS.map((sp) => (
-            <div key={sp.id}>
-              <label htmlFor={`rate-${sp.id}`}>{sp.emoji} {sp.label} — ₱ per court per hour</label>
-              <input id={`rate-${sp.id}`} type="number" min={0} step="0.01" required
-                value={s.hourly_rates?.[sp.id] ?? 0}
-                onChange={(e) => set("hourly_rates", { ...s.hourly_rates, [sp.id]: Number(e.target.value) })} />
-            </div>
-          ))}
-        </div>
-        <div className="row field">
-          <div>
-            <label htmlFor="md">Member discount (%)</label>
-            <input id="md" type="number" min={0} max={100} step="0.5" value={s.member_discount_pct}
-              onChange={(e) => set("member_discount_pct", Number(e.target.value))} />
-          </div>
-          <div>
-            <label htmlFor="cd">Coach discount (%)</label>
-            <input id="cd" type="number" min={0} max={100} step="0.5" value={s.coach_discount_pct}
-              onChange={(e) => set("coach_discount_pct", Number(e.target.value))} />
-          </div>
+        <legend>Prices</legend>
+        <p className="hint" style={{ margin: "0 0 10px" }}>₱ per court per hour.</p>
+        <div className="table-wrap">
+          <table className="list price-grid">
+            <thead>
+              <tr>
+                <th>Sport</th>
+                <th>Regular</th>
+                <th>Member</th>
+                <th>Coach</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SPORTS.map((sp) => (
+                <tr key={sp.id}>
+                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{sp.emoji} {sp.label}</td>
+                  {(
+                    [
+                      ["hourly_rates", "Regular"],
+                      ["member_rates", "Member"],
+                      ["coach_rates", "Coach"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <td key={key}>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        required
+                        aria-label={`${sp.label} ${label} price per hour`}
+                        value={s[key]?.[sp.id] ?? ""}
+                        onChange={(e) => set(key, { ...s[key], [sp.id]: e.target.value === "" ? ("" as unknown as number) : Number(e.target.value) })}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
         <div className="row field">
           <div>
@@ -756,7 +777,7 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
           </div>
         </div>
         <p className="hint" style={{ margin: "8px 0 0" }}>
-          If you set a code, players must type it to get that discount — share it only with your members or
+          If you set a code, players must type it to get the member/coach price — share it only with your members or
           coaches, and change it if it leaks. New prices apply to new bookings only.
         </p>
       </fieldset>

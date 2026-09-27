@@ -150,7 +150,12 @@ export default function MyBookingPage() {
                 <br />
                 <span className="muted">
                   {formatPeso(booking.amount)} · {rateTypeLabel(booking.rateType)} rate
-                  {booking.discountPct > 0 ? ` (${booking.discountPct}% off)` : ""} · {paymentLabel(booking.paymentMethod)}
+                  {booking.discountPct > 0
+                    ? ` (${booking.discountPct}% off)` /* bookings made before fixed prices */
+                    : booking.hourlyRate > 0
+                      ? ` (${formatPeso(booking.hourlyRate)}/hr)`
+                      : ""}{" "}
+                  · {paymentLabel(booking.paymentMethod)}
                 </span>
               </>
             )}

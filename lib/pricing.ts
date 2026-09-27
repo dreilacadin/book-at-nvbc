@@ -30,13 +30,26 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]["id"];
 export const isPaymentStatus = (v: unknown): v is PaymentStatus => PAYMENT_STATUSES.some((s) => s.id === v);
 export const paymentStatusLabel = (id: string) => PAYMENT_STATUSES.find((s) => s.id === id)?.label ?? id;
 
-export type Price = { hourlyRate: number; hours: number; subtotal: number; discountPct: number; discount: number; total: number };
+/** Hourly prices for one sport: regular, member and coach (₱ per court per hour). */
+export type SportRates = { regular: number; member: number; coach: number };
+
+export function rateFor(rates: SportRates, rateType: RateType): number {
+  return rates[rateType] ?? rates.regular;
+}
+
+export type Price = {
+  hourlyRate: number; // the rate actually charged
+  regularRate: number;
+  hours: number;
+  total: number;
+  savings: number; // vs. the regular rate (0 if none)
+};
 
 /** Price in pesos, rounded to the centavo. */
-export function computePrice(hourlyRate: number, hours: number, discountPct: number): Price {
-  const subtotal = Math.round(hourlyRate * hours * 100) / 100;
-  const total = Math.round(subtotal * (100 - discountPct)) / 100;
-  return { hourlyRate, hours, subtotal, discountPct, discount: Math.round((subtotal - total) * 100) / 100, total };
+export function computePrice(hourlyRate: number, hours: number, regularRate = hourlyRate): Price {
+  const total = Math.round(hourlyRate * hours * 100) / 100;
+  const regularTotal = Math.round(regularRate * hours * 100) / 100;
+  return { hourlyRate, regularRate, hours, total, savings: Math.max(0, Math.round((regularTotal - total) * 100) / 100) };
 }
 
 export function formatPeso(n: number): string {

@@ -3,6 +3,8 @@ import { db, getSettings, type Settings } from "./db";
 import {
   computePrice,
   isPaymentMethod,
+  rateFor,
+  type SportRates,
   isPaymentStatus,
   isRateType,
   PAYMENT_METHODS,
@@ -74,9 +76,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     announcement: settings.announcement,
     // Public pricing info. The member/coach codes themselves are never sent.
     pricing: {
-      hourlyRate: Number(settings.hourly_rates?.[sport] ?? 0),
-      memberDiscountPct: settings.member_discount_pct,
-      coachDiscountPct: settings.coach_discount_pct,
+      rates: sportRates(settings, sport),
       memberCodeRequired: settings.member_code.trim() !== "",
       coachCodeRequired: settings.coach_code.trim() !== "",
     },
@@ -93,6 +93,13 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
  * filled in (a GCash method with no GCash number would just confuse people).
  * Kept in the standard order: Cash, GCash, QR Ph, BPI.
  */
+/** Regular, member and coach hourly prices for a sport. Missing member/coach prices fall back to regular. */
+export function sportRates(s: Settings, sport: string): SportRates {
+  const regular = Number(s.hourly_rates?.[sport] ?? 0);
+  const pick = (v: unknown) => (v === undefined || v === null || v === "" || !Number.isFinite(Number(v)) ? regular : Number(v));
+  return { regular, member: pick(s.member_rates?.[sport]), coach: pick(s.coach_rates?.[sport]) };
+}
+
 function enabledMethods(s: Settings): PaymentMethod[] {
   const on = s.payment_methods ?? [];
   const ready: Record<PaymentMethod, boolean> = {
@@ -157,8 +164,8 @@ export async function createBooking(
     endHour: number;
     rateType: RateType;
     hourlyRate: number;
-    discountPct: number;
-    subtotal: number;
+    regularRate: number;
+    savings: number;
     amount: number;
     paymentMethod: PaymentMethod;
     paymentStatus: PaymentStatus;
@@ -207,8 +214,6 @@ export async function createBooking(
   }
 
   const noCharge = admin && input.noCharge === true;
-  const discountPct =
-    rateType === "member" ? settings.member_discount_pct : rateType === "coach" ? settings.coach_discount_pct : 0;
 
   const endHour = startHour + hours;
   const today = nowAtFacility().date;
@@ -240,7 +245,8 @@ export async function createBooking(
     }
 
     const sport = court.rows[0].sport;
-    const price = computePrice(noCharge ? 0 : Number(settings.hourly_rates?.[sport] ?? 0), hours, discountPct);
+    const rates = sportRates(settings, sport);
+    const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
     let paymentStatus: PaymentStatus = paymentRef && paymentMethod !== "cash" ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
@@ -278,7 +284,7 @@ export async function createBooking(
                    CASE WHEN $14 = 'paid' THEN now() END) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
-            rateType, price.hourlyRate, discountPct, price.total, paymentMethod, paymentStatus, paymentRef,
+            rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef,
           ]
         );
         bookingId = ins.rows[0].id;
@@ -304,7 +310,7 @@ export async function createBooking(
       ok: true,
       data: {
         code, courtName: court.rows[0].name, sport, date, startHour, endHour,
-        rateType, hourlyRate: price.hourlyRate, discountPct, subtotal: price.subtotal, amount: price.total,
+        rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: price.total,
         paymentMethod, paymentStatus, paymentRef,
       },
     };

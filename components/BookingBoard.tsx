@@ -6,6 +6,8 @@ import { formatDateLong, formatDateShort, formatHour, formatRange } from "@/lib/
 import {
   computePrice,
   formatPeso,
+  rateFor,
+  type SportRates,
   PAYMENT_METHODS,
   RATE_TYPES,
   rateTypeLabel,
@@ -30,9 +32,7 @@ type Availability = {
   lastBookableDate: string;
   announcement: string;
   pricing: {
-    hourlyRate: number;
-    memberDiscountPct: number;
-    coachDiscountPct: number;
+    rates: SportRates; // ₱ per court per hour: regular / member / coach
     memberCodeRequired: boolean;
     coachCodeRequired: boolean;
   };
@@ -50,7 +50,7 @@ type Confirmed = {
   startHour: number;
   endHour: number;
   rateType: RateType;
-  discountPct: number;
+  hourlyRate: number;
   amount: number;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
@@ -297,8 +297,8 @@ function BookingDialog({
   const [copied, setCopied] = useState(false);
 
   const p = data.pricing;
-  const discountPct = rateType === "member" ? p.memberDiscountPct : rateType === "coach" ? p.coachDiscountPct : 0;
-  const price = computePrice(p.hourlyRate, hours, discountPct);
+  const price = computePrice(rateFor(p.rates, rateType), hours, p.rates.regular);
+  const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
 
   useEffect(() => {
@@ -359,10 +359,7 @@ function BookingDialog({
     }
   }
 
-  const rateOptions = RATE_TYPES.map((r) => {
-    const pct = r.id === "member" ? p.memberDiscountPct : r.id === "coach" ? p.coachDiscountPct : 0;
-    return { ...r, pct };
-  });
+  const rateOptions = RATE_TYPES.map((r) => ({ ...r, rate: rateFor(p.rates, r.id) }));
 
   return (
     <div className="backdrop" onClick={onClose}>
@@ -384,7 +381,7 @@ function BookingDialog({
               {done.rateType !== "regular" && (
                 <>
                   <br />
-                  <span className="muted">{rateTypeLabel(done.rateType)} rate ({done.discountPct}% off)</span>
+                  <span className="muted">{rateTypeLabel(done.rateType)} rate · {formatPeso(done.hourlyRate)}/hour</span>
                 </>
               )}
             </div>
@@ -440,7 +437,7 @@ function BookingDialog({
                     onClick={() => setRateType(r.id)}
                   >
                     {r.label}
-                    {r.pct > 0 && <small>−{r.pct}%</small>}
+                    {hasPrices && <small>{formatPeso(r.rate)}/hr</small>}
                   </button>
                 ))}
               </div>
@@ -485,7 +482,7 @@ function BookingDialog({
                 value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
 
-            {p.hourlyRate > 0 && (
+            {hasPrices && (
               <>
                 <div className="field">
                   <label id="pay-label">How will you pay?</label>
@@ -507,13 +504,15 @@ function BookingDialog({
 
                 <div className="price-box" aria-live="polite">
                   <div className="pay-row">
-                    <span>{formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}</span>
-                    <span>{formatPeso(price.subtotal)}</span>
+                    <span>
+                      {rateTypeLabel(rateType)} rate {formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}
+                    </span>
+                    <span>{formatPeso(price.total)}</span>
                   </div>
-                  {price.discount > 0 && (
-                    <div className="pay-row" style={{ color: "var(--brand)" }}>
-                      <span>{rateTypeLabel(rateType)} discount ({discountPct}%)</span>
-                      <span>−{formatPeso(price.discount)}</span>
+                  {price.savings > 0 && (
+                    <div className="pay-row" style={{ color: "var(--brand)", fontSize: 14 }}>
+                      <span>You save vs. regular ({formatPeso(price.regularRate)}/hr)</span>
+                      <span>{formatPeso(price.savings)}</span>
                     </div>
                   )}
                   <div className="pay-row total">
@@ -536,7 +535,7 @@ function BookingDialog({
             <div className="actions">
               <button type="button" className="btn secondary" onClick={onClose}>Cancel</button>
               <button type="submit" className="btn" disabled={busy}>
-                {busy ? "Booking…" : p.hourlyRate > 0 ? `Confirm · ${formatPeso(price.total)}` : "Confirm booking"}
+                {busy ? "Booking…" : hasPrices ? `Confirm · ${formatPeso(price.total)}` : "Confirm booking"}
               </button>
             </div>
           </form>

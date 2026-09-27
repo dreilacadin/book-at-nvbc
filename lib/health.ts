@@ -73,10 +73,16 @@ export function explainDbError(e: unknown): { detail: string; fix: string } {
   if (code === "42P01")
     return {
       detail: "Connected, but the tables don't exist in this database.",
-      fix: "Run npm run db:setup on your computer with DATABASE_URL in .env.local set to exactly the same connection string as on Vercel.",
+      fix:
+        "Easiest with Neon: open your project in the Neon console → SQL Editor, make sure the branch shown matches the one " +
+        "in your Vercel DATABASE_URL (usually 'main' / production), paste the whole contents of db/schema.sql and click Run. " +
+        "Or run npm run db:setup on your computer with .env.local set to exactly the same connection string as on Vercel.",
     };
   if (code === "42703")
-    return { detail: "Connected, but the tables are from an older version of the app.", fix: "Run npm run db:setup again (with the production DATABASE_URL) to upgrade them. It keeps your data." };
+    return {
+      detail: "Connected, but the tables are from an older version of the app.",
+      fix: "Run db/schema.sql again (Neon console → SQL Editor → paste → Run, or npm run db:setup with the production DATABASE_URL). It keeps your data.",
+    };
   return { detail: `Database error${code ? ` (${code})` : ""}: ${msg}`, fix: "Check DATABASE_URL, then redeploy. If it still fails, look at Vercel → Logs for the full error." };
 }
 
@@ -119,12 +125,17 @@ export async function runHealthChecks(): Promise<{ ok: boolean; checks: Check[] 
         warnings.push("This is Supabase's direct address (IPv6-only); Vercel needs the Transaction pooler string (…pooler.supabase.com:6543).");
       if (host.endsWith(".neon.tech") && !host.includes("-pooler"))
         warnings.push("Tip: use Neon's pooled connection string (host contains -pooler) for serverless hosting.");
+      if (host.endsWith(".neon.tech") && process.env.VERCEL_ENV === "preview")
+        warnings.push(
+          "Tip: this is a Preview deployment. Neon's Vercel integration gives previews their own database branch, " +
+            "so bookings made here don't appear in production."
+        );
       const bad = warnings.some((w) => !w.startsWith("Tip"));
       checks.push({
         name: "Database connection string",
         ok: !bad,
         warn: warnings.length > 0 && !bad,
-        detail: `Using ${info.name} → ${maskHost(host)}${url.port ? ":" + url.port : ""}, database "${url.pathname.slice(1) || "?"}".` + (warnings.length ? " " + warnings.join(" ") : ""),
+        detail: `${process.env.VERCEL_ENV ? `[${process.env.VERCEL_ENV} deployment] ` : ""}Using ${info.name} → ${maskHost(host)}${url.port ? ":" + url.port : ""}, database "${url.pathname.slice(1) || "?"}".` + (warnings.length ? " " + warnings.join(" ") : ""),
         fix: bad ? "Replace DATABASE_URL with the provider's connection string. " + REDEPLOY : undefined,
       });
     }
@@ -155,7 +166,7 @@ export async function runHealthChecks(): Promise<{ ok: boolean; checks: Check[] 
           `SELECT count(*)::int AS courts, count(*) FILTER (WHERE is_active)::int AS active FROM courts`
         );
         // Touch the newest columns so an out-of-date schema is caught here, not on the first booking.
-        await db().query(`SELECT hourly_rates, payment_methods FROM settings WHERE id = 1`);
+        await db().query(`SELECT hourly_rates, member_rates, coach_rates, payment_methods FROM settings WHERE id = 1`);
         await db().query(`SELECT sport FROM courts LIMIT 1`);
         await db().query(`SELECT payment_status, amount FROM bookings LIMIT 1`);
         await db().query(`SELECT 1 FROM booking_slots LIMIT 1`);

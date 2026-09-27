@@ -1,0 +1,518 @@
+diff -ruN a/README.md b/README.md
+--- a/README.md	2026-09-27 13:57:22.002487288 +0800
++++ b/README.md	2026-09-27 13:59:24.498593590 +0800
+@@ -8,7 +8,7 @@
+ - **Staff** log in at `/admin` to see every booking with names/contacts, cancel bookings, add walk-in/phone bookings, block courts for tournaments or maintenance, and change opening hours, limits and the announcement banner.
+ - **Court counts on the fly**: in /admin → Courts, set how many badminton and pickleball courts are bookable with the − / + buttons. Lowering a number hides the last courts in the list; raising it brings hidden courts back first, then creates new ones. You can also switch a single court between badminton and pickleball (e.g. when a floor is re-lined), rename it, or reorder it. Bookings are never deleted — staff get a warning if a hidden or switched court still has upcoming bookings.
+ - Direct links to a sport work: `/?sport=badminton` or `/?sport=pickleball`.
+-- **Prices & discounts**: each sport has its own hourly rate. Players book as **Regular**, **Member** or **Coach**; members and coaches get the discount % you set in /admin → Settings. The price (with discount) is shown before they confirm.
++- **Prices**: each sport has its own **Regular**, **Member** and **Coach** price per court per hour, set in /admin → Settings. Players pick which one they're booking as and see the total (and how much they save vs. regular) before they confirm.
+ - **Payments**: players choose **Cash**, **GCash**, **QR Ph** or **BPI transfer**. After booking they see the amount and how to pay (your GCash number, your QR Ph code, or your BPI account), then enter their payment reference number. Staff see it in /admin → Bookings marked **For verification**, check it against the GCash/bank app, and switch it to **Paid**.
+ 
+ Built with Next.js (App Router) + PostgreSQL. No other services needed.
+@@ -73,8 +73,8 @@
+ 
+ Open /admin → **Settings**:
+ 
+-1. **Prices & discounts** — set the hourly rate per court for badminton and pickleball (they start at ₱200 as placeholders), and the member and coach discount %.
+-2. **Member code / Coach code (optional)** — if you fill these in, players must type the code to get the member/coach rate. Give the code only to your members/coaches and change it if it spreads. If you leave them blank, anyone can choose Member/Coach and staff check at the desk (the booking list shows who booked at which rate).
++1. **Prices** — set the Regular, Member and Coach price per court per hour for badminton and pickleball (they start as placeholders).
++2. **Member code / Coach code (optional)** — if you fill these in, players must type the code to get the member/coach price. Give the code only to your members/coaches and change it if it spreads. If you leave them blank, anyone can choose Member/Coach and staff check at the desk (the booking list shows who booked at which rate).
+ 3. **Payment methods** — tick the ones you accept and fill in your GCash number, BPI account, and upload your QR Ph code (a screenshot from your bank/GCash merchant app is fine). A method stays hidden from players until its details are filled in.
+ 4. **Payment note (optional)** — e.g. "Please pay within 2 hours of booking."
+ 
+diff -ruN a/app/admin/page.tsx b/app/admin/page.tsx
+--- a/app/admin/page.tsx	2026-09-27 13:57:22.003966630 +0800
++++ b/app/admin/page.tsx	2026-09-27 13:58:18.397116718 +0800
+@@ -48,8 +48,8 @@
+   booking_window_days: number;
+   announcement: string;
+   hourly_rates: Record<string, number>;
+-  member_discount_pct: number;
+-  coach_discount_pct: number;
++  member_rates: Record<string, number>;
++  coach_rates: Record<string, number>;
+   member_code: string;
+   coach_code: string;
+   payment_methods: PaymentMethod[];
+@@ -296,7 +296,11 @@
+                   </td>
+                   <td>
+                     {rateTypeLabel(b.rate_type)}
+-                    {b.discount_pct > 0 && <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>}
++                    {b.discount_pct > 0 ? (
++                      <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>
++                    ) : b.hourly_rate > 0 ? (
++                      <div className="muted" style={{ fontSize: 13 }}>{formatPeso(b.hourly_rate)}/hr</div>
++                    ) : null}
+                   </td>
+                   <td style={{ whiteSpace: "nowrap" }}>{formatPeso(b.amount)}</td>
+                   <td style={{ minWidth: 170 }}>
+@@ -720,28 +724,45 @@
+       }}
+     >
+       <fieldset>
+-        <legend>Prices &amp; discounts</legend>
+-        <div className="row field">
+-          {SPORTS.map((sp) => (
+-            <div key={sp.id}>
+-              <label htmlFor={`rate-${sp.id}`}>{sp.emoji} {sp.label} — ₱ per court per hour</label>
+-              <input id={`rate-${sp.id}`} type="number" min={0} step="0.01" required
+-                value={s.hourly_rates?.[sp.id] ?? 0}
+-                onChange={(e) => set("hourly_rates", { ...s.hourly_rates, [sp.id]: Number(e.target.value) })} />
+-            </div>
+-          ))}
+-        </div>
+-        <div className="row field">
+-          <div>
+-            <label htmlFor="md">Member discount (%)</label>
+-            <input id="md" type="number" min={0} max={100} step="0.5" value={s.member_discount_pct}
+-              onChange={(e) => set("member_discount_pct", Number(e.target.value))} />
+-          </div>
+-          <div>
+-            <label htmlFor="cd">Coach discount (%)</label>
+-            <input id="cd" type="number" min={0} max={100} step="0.5" value={s.coach_discount_pct}
+-              onChange={(e) => set("coach_discount_pct", Number(e.target.value))} />
+-          </div>
++        <legend>Prices</legend>
++        <p className="hint" style={{ margin: "0 0 10px" }}>₱ per court per hour.</p>
++        <div className="table-wrap">
++          <table className="list price-grid">
++            <thead>
++              <tr>
++                <th>Sport</th>
++                <th>Regular</th>
++                <th>Member</th>
++                <th>Coach</th>
++              </tr>
++            </thead>
++            <tbody>
++              {SPORTS.map((sp) => (
++                <tr key={sp.id}>
++                  <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{sp.emoji} {sp.label}</td>
++                  {(
++                    [
++                      ["hourly_rates", "Regular"],
++                      ["member_rates", "Member"],
++                      ["coach_rates", "Coach"],
++                    ] as const
++                  ).map(([key, label]) => (
++                    <td key={key}>
++                      <input
++                        type="number"
++                        min={0}
++                        step="0.01"
++                        required
++                        aria-label={`${sp.label} ${label} price per hour`}
++                        value={s[key]?.[sp.id] ?? ""}
++                        onChange={(e) => set(key, { ...s[key], [sp.id]: e.target.value === "" ? ("" as unknown as number) : Number(e.target.value) })}
++                      />
++                    </td>
++                  ))}
++                </tr>
++              ))}
++            </tbody>
++          </table>
+         </div>
+         <div className="row field">
+           <div>
+@@ -756,7 +777,7 @@
+           </div>
+         </div>
+         <p className="hint" style={{ margin: "8px 0 0" }}>
+-          If you set a code, players must type it to get that discount — share it only with your members or
++          If you set a code, players must type it to get the member/coach price — share it only with your members or
+           coaches, and change it if it leaks. New prices apply to new bookings only.
+         </p>
+       </fieldset>
+diff -ruN a/app/api/admin/settings/route.ts b/app/api/admin/settings/route.ts
+--- a/app/api/admin/settings/route.ts	2026-09-27 13:57:22.003850724 +0800
++++ b/app/api/admin/settings/route.ts	2026-09-27 13:57:47.070870770 +0800
+@@ -34,8 +34,6 @@
+       max_hours_per_day: n("max_hours_per_day"),
+       booking_window_days: n("booking_window_days"),
+       announcement: text(b.announcement, 300),
+-      member_discount_pct: n("member_discount_pct"),
+-      coach_discount_pct: n("coach_discount_pct"),
+       member_code: text(b.member_code, 40),
+       coach_code: text(b.coach_code, 40),
+       gcash_name: text(b.gcash_name, 80),
+@@ -54,17 +52,25 @@
+       return bad("Hour limits are out of range.");
+     if (s.booking_window_days < 0 || s.booking_window_days > 90) return bad("Booking window must be 0–90 days.");
+ 
+-    // Rates per sport
+-    const ratesIn = (b.hourly_rates ?? {}) as Record<string, unknown>;
+-    const hourly_rates: Record<string, number> = {};
+-    for (const sp of SPORTS) {
+-      const r = Number(ratesIn[sp.id]);
+-      if (!Number.isFinite(r) || r < 0 || r > 100_000) return bad(`Enter a valid hourly rate for ${sp.label}.`);
+-      hourly_rates[sp.id] = Math.round(r * 100) / 100;
+-    }
+-
+-    for (const [label, v] of [["Member", s.member_discount_pct], ["Coach", s.coach_discount_pct]] as const)
+-      if (!Number.isFinite(v) || v < 0 || v > 100) return bad(`${label} discount must be 0–100%.`);
++    // Hourly prices per sport: regular, member and coach (₱ per court per hour)
++    const readRates = (input: unknown, label: string): Record<string, number> | string => {
++      const src = (input ?? {}) as Record<string, unknown>;
++      const out: Record<string, number> = {};
++      for (const sp of SPORTS) {
++        const raw = src[sp.id];
++        const r = Number(raw);
++        if (raw === "" || raw === null || raw === undefined || !Number.isFinite(r) || r < 0 || r > 100_000)
++          return `Enter a valid ${label} price for ${sp.label}.`;
++        out[sp.id] = Math.round(r * 100) / 100;
++      }
++      return out;
++    };
++    const hourly_rates = readRates(b.hourly_rates, "regular");
++    if (typeof hourly_rates === "string") return bad(hourly_rates);
++    const member_rates = readRates(b.member_rates, "member");
++    if (typeof member_rates === "string") return bad(member_rates);
++    const coach_rates = readRates(b.coach_rates, "coach");
++    if (typeof coach_rates === "string") return bad(coach_rates);
+ 
+     // Payment methods
+     const methods = Array.isArray(b.payment_methods) ? b.payment_methods.filter(isPaymentMethod) : [];
+@@ -81,14 +87,14 @@
+       `UPDATE settings SET
+          open_hour = $1, close_hour = $2, max_hours_per_booking = $3, max_hours_per_day = $4,
+          booking_window_days = $5, announcement = $6,
+-         hourly_rates = $7::jsonb, member_discount_pct = $8, coach_discount_pct = $9,
++         hourly_rates = $7::jsonb, member_rates = $8::jsonb, coach_rates = $9::jsonb,
+          member_code = $10, coach_code = $11, payment_methods = $12::text[],
+          gcash_name = $13, gcash_number = $14, bpi_account_name = $15, bpi_account_number = $16,
+          qrph_image = $17, payment_note = $18
+        WHERE id = 1`,
+       [
+         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
+-        JSON.stringify(hourly_rates), s.member_discount_pct, s.coach_discount_pct, s.member_code, s.coach_code,
++        JSON.stringify(hourly_rates), JSON.stringify(member_rates), JSON.stringify(coach_rates), s.member_code, s.coach_code,
+         `{${payment_methods.join(",")}}`,
+         s.gcash_name, s.gcash_number, s.bpi_account_name, s.bpi_account_number, s.qrph_image, s.payment_note,
+       ]
+diff -ruN a/app/globals.css b/app/globals.css
+--- a/app/globals.css	2026-09-27 13:57:22.004017354 +0800
++++ b/app/globals.css	2026-09-27 13:58:18.397285247 +0800
+@@ -263,3 +263,6 @@
+ .stat .l { font-size: 13px; color: var(--muted); }
+ fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 0 0 16px; }
+ legend { font-weight: 700; padding: 0 6px; }
++
++.price-grid td { padding: 6px 6px; }
++.price-grid input { min-width: 90px; }
+diff -ruN a/app/my-booking/page.tsx b/app/my-booking/page.tsx
+--- a/app/my-booking/page.tsx	2026-09-27 13:57:22.003931421 +0800
++++ b/app/my-booking/page.tsx	2026-09-27 13:58:04.668175001 +0800
+@@ -150,7 +150,12 @@
+                 <br />
+                 <span className="muted">
+                   {formatPeso(booking.amount)} · {rateTypeLabel(booking.rateType)} rate
+-                  {booking.discountPct > 0 ? ` (${booking.discountPct}% off)` : ""} · {paymentLabel(booking.paymentMethod)}
++                  {booking.discountPct > 0
++                    ? ` (${booking.discountPct}% off)` /* bookings made before fixed prices */
++                    : booking.hourlyRate > 0
++                      ? ` (${formatPeso(booking.hourlyRate)}/hr)`
++                      : ""}{" "}
++                  · {paymentLabel(booking.paymentMethod)}
+                 </span>
+               </>
+             )}
+diff -ruN a/components/BookingBoard.tsx b/components/BookingBoard.tsx
+--- a/components/BookingBoard.tsx	2026-09-27 13:57:22.004108524 +0800
++++ b/components/BookingBoard.tsx	2026-09-27 13:58:04.667816968 +0800
+@@ -6,6 +6,8 @@
+ import {
+   computePrice,
+   formatPeso,
++  rateFor,
++  type SportRates,
+   PAYMENT_METHODS,
+   RATE_TYPES,
+   rateTypeLabel,
+@@ -30,9 +32,7 @@
+   lastBookableDate: string;
+   announcement: string;
+   pricing: {
+-    hourlyRate: number;
+-    memberDiscountPct: number;
+-    coachDiscountPct: number;
++    rates: SportRates; // ₱ per court per hour: regular / member / coach
+     memberCodeRequired: boolean;
+     coachCodeRequired: boolean;
+   };
+@@ -50,7 +50,7 @@
+   startHour: number;
+   endHour: number;
+   rateType: RateType;
+-  discountPct: number;
++  hourlyRate: number;
+   amount: number;
+   paymentMethod: PaymentMethod;
+   paymentStatus: PaymentStatus;
+@@ -297,8 +297,8 @@
+   const [copied, setCopied] = useState(false);
+ 
+   const p = data.pricing;
+-  const discountPct = rateType === "member" ? p.memberDiscountPct : rateType === "coach" ? p.coachDiscountPct : 0;
+-  const price = computePrice(p.hourlyRate, hours, discountPct);
++  const price = computePrice(rateFor(p.rates, rateType), hours, p.rates.regular);
++  const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
+   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
+ 
+   useEffect(() => {
+@@ -359,10 +359,7 @@
+     }
+   }
+ 
+-  const rateOptions = RATE_TYPES.map((r) => {
+-    const pct = r.id === "member" ? p.memberDiscountPct : r.id === "coach" ? p.coachDiscountPct : 0;
+-    return { ...r, pct };
+-  });
++  const rateOptions = RATE_TYPES.map((r) => ({ ...r, rate: rateFor(p.rates, r.id) }));
+ 
+   return (
+     <div className="backdrop" onClick={onClose}>
+@@ -384,7 +381,7 @@
+               {done.rateType !== "regular" && (
+                 <>
+                   <br />
+-                  <span className="muted">{rateTypeLabel(done.rateType)} rate ({done.discountPct}% off)</span>
++                  <span className="muted">{rateTypeLabel(done.rateType)} rate · {formatPeso(done.hourlyRate)}/hour</span>
+                 </>
+               )}
+             </div>
+@@ -440,7 +437,7 @@
+                     onClick={() => setRateType(r.id)}
+                   >
+                     {r.label}
+-                    {r.pct > 0 && <small>−{r.pct}%</small>}
++                    {hasPrices && <small>{formatPeso(r.rate)}/hr</small>}
+                   </button>
+                 ))}
+               </div>
+@@ -485,7 +482,7 @@
+                 value={notes} onChange={(e) => setNotes(e.target.value)} />
+             </div>
+ 
+-            {p.hourlyRate > 0 && (
++            {hasPrices && (
+               <>
+                 <div className="field">
+                   <label id="pay-label">How will you pay?</label>
+@@ -507,13 +504,15 @@
+ 
+                 <div className="price-box" aria-live="polite">
+                   <div className="pay-row">
+-                    <span>{formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}</span>
+-                    <span>{formatPeso(price.subtotal)}</span>
++                    <span>
++                      {rateTypeLabel(rateType)} rate {formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}
++                    </span>
++                    <span>{formatPeso(price.total)}</span>
+                   </div>
+-                  {price.discount > 0 && (
+-                    <div className="pay-row" style={{ color: "var(--brand)" }}>
+-                      <span>{rateTypeLabel(rateType)} discount ({discountPct}%)</span>
+-                      <span>−{formatPeso(price.discount)}</span>
++                  {price.savings > 0 && (
++                    <div className="pay-row" style={{ color: "var(--brand)", fontSize: 14 }}>
++                      <span>You save vs. regular ({formatPeso(price.regularRate)}/hr)</span>
++                      <span>{formatPeso(price.savings)}</span>
+                     </div>
+                   )}
+                   <div className="pay-row total">
+@@ -536,7 +535,7 @@
+             <div className="actions">
+               <button type="button" className="btn secondary" onClick={onClose}>Cancel</button>
+               <button type="submit" className="btn" disabled={busy}>
+-                {busy ? "Booking…" : p.hourlyRate > 0 ? `Confirm · ${formatPeso(price.total)}` : "Confirm booking"}
++                {busy ? "Booking…" : hasPrices ? `Confirm · ${formatPeso(price.total)}` : "Confirm booking"}
+               </button>
+             </div>
+           </form>
+diff -ruN a/db/schema.sql b/db/schema.sql
+--- a/db/schema.sql	2026-09-27 13:57:22.003007976 +0800
++++ b/db/schema.sql	2026-09-27 13:57:22.004130129 +0800
+@@ -118,3 +118,24 @@
+ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_ref TEXT NOT NULL DEFAULT '';
+ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+ CREATE INDEX IF NOT EXISTS bookings_payment_ref_idx ON bookings (payment_ref) WHERE payment_ref <> '';
++
++-- v4: fixed member & coach prices -----------------------------------------------
++-- Instead of a % discount, members and coaches have their own hourly price per sport.
++-- On upgrade, the old discount % is converted into prices so nothing changes until
++-- you edit them in /admin → Settings.
++ALTER TABLE settings ADD COLUMN IF NOT EXISTS member_rates JSONB;
++ALTER TABLE settings ADD COLUMN IF NOT EXISTS coach_rates  JSONB;
++UPDATE settings SET member_rates = COALESCE(
++  (SELECT jsonb_object_agg(key, round(value::numeric * (100 - member_discount_pct) / 100, 2))
++     FROM jsonb_each_text(hourly_rates)), '{}'::jsonb)
++ WHERE member_rates IS NULL;
++UPDATE settings SET coach_rates = COALESCE(
++  (SELECT jsonb_object_agg(key, round(value::numeric * (100 - coach_discount_pct) / 100, 2))
++     FROM jsonb_each_text(hourly_rates)), '{}'::jsonb)
++ WHERE coach_rates IS NULL;
++ALTER TABLE settings ALTER COLUMN member_rates SET DEFAULT '{}'::jsonb;
++ALTER TABLE settings ALTER COLUMN member_rates SET NOT NULL;
++ALTER TABLE settings ALTER COLUMN coach_rates  SET DEFAULT '{}'::jsonb;
++ALTER TABLE settings ALTER COLUMN coach_rates  SET NOT NULL;
++-- member_discount_pct / coach_discount_pct are no longer used (kept so older data stays readable).
++-- bookings.discount_pct is kept for bookings made before v4; new bookings store 0 there.
+diff -ruN a/lib/bookings.ts b/lib/bookings.ts
+--- a/lib/bookings.ts	2026-09-27 13:57:22.003361317 +0800
++++ b/lib/bookings.ts	2026-09-27 13:57:47.070269679 +0800
+@@ -3,6 +3,8 @@
+ import {
+   computePrice,
+   isPaymentMethod,
++  rateFor,
++  type SportRates,
+   isPaymentStatus,
+   isRateType,
+   PAYMENT_METHODS,
+@@ -74,9 +76,7 @@
+     announcement: settings.announcement,
+     // Public pricing info. The member/coach codes themselves are never sent.
+     pricing: {
+-      hourlyRate: Number(settings.hourly_rates?.[sport] ?? 0),
+-      memberDiscountPct: settings.member_discount_pct,
+-      coachDiscountPct: settings.coach_discount_pct,
++      rates: sportRates(settings, sport),
+       memberCodeRequired: settings.member_code.trim() !== "",
+       coachCodeRequired: settings.coach_code.trim() !== "",
+     },
+@@ -93,6 +93,13 @@
+  * filled in (a GCash method with no GCash number would just confuse people).
+  * Kept in the standard order: Cash, GCash, QR Ph, BPI.
+  */
++/** Regular, member and coach hourly prices for a sport. Missing member/coach prices fall back to regular. */
++export function sportRates(s: Settings, sport: string): SportRates {
++  const regular = Number(s.hourly_rates?.[sport] ?? 0);
++  const pick = (v: unknown) => (v === undefined || v === null || v === "" || !Number.isFinite(Number(v)) ? regular : Number(v));
++  return { regular, member: pick(s.member_rates?.[sport]), coach: pick(s.coach_rates?.[sport]) };
++}
++
+ function enabledMethods(s: Settings): PaymentMethod[] {
+   const on = s.payment_methods ?? [];
+   const ready: Record<PaymentMethod, boolean> = {
+@@ -157,8 +164,8 @@
+     endHour: number;
+     rateType: RateType;
+     hourlyRate: number;
+-    discountPct: number;
+-    subtotal: number;
++    regularRate: number;
++    savings: number;
+     amount: number;
+     paymentMethod: PaymentMethod;
+     paymentStatus: PaymentStatus;
+@@ -207,8 +214,6 @@
+   }
+ 
+   const noCharge = admin && input.noCharge === true;
+-  const discountPct =
+-    rateType === "member" ? settings.member_discount_pct : rateType === "coach" ? settings.coach_discount_pct : 0;
+ 
+   const endHour = startHour + hours;
+   const today = nowAtFacility().date;
+@@ -240,7 +245,8 @@
+     }
+ 
+     const sport = court.rows[0].sport;
+-    const price = computePrice(noCharge ? 0 : Number(settings.hourly_rates?.[sport] ?? 0), hours, discountPct);
++    const rates = sportRates(settings, sport);
++    const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
+     let paymentStatus: PaymentStatus = paymentRef && paymentMethod !== "cash" ? "for_verification" : "unpaid";
+     if (noCharge) paymentStatus = "waived";
+     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
+@@ -278,7 +284,7 @@
+                    CASE WHEN $14 = 'paid' THEN now() END) RETURNING id`,
+           [
+             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
+-            rateType, price.hourlyRate, discountPct, price.total, paymentMethod, paymentStatus, paymentRef,
++            rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef,
+           ]
+         );
+         bookingId = ins.rows[0].id;
+@@ -304,7 +310,7 @@
+       ok: true,
+       data: {
+         code, courtName: court.rows[0].name, sport, date, startHour, endHour,
+-        rateType, hourlyRate: price.hourlyRate, discountPct, subtotal: price.subtotal, amount: price.total,
++        rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: price.total,
+         paymentMethod, paymentStatus, paymentRef,
+       },
+     };
+diff -ruN a/lib/db.ts b/lib/db.ts
+--- a/lib/db.ts	2026-09-27 13:57:22.003078404 +0800
++++ b/lib/db.ts	2026-09-27 13:57:47.069790014 +0800
+@@ -60,9 +60,9 @@
+   max_hours_per_day: number;
+   booking_window_days: number;
+   announcement: string;
+-  hourly_rates: Record<string, number>;
+-  member_discount_pct: number;
+-  coach_discount_pct: number;
++  hourly_rates: Record<string, number>; // regular price per court per hour, by sport
++  member_rates: Record<string, number>; // member price per court per hour, by sport
++  coach_rates: Record<string, number>; // coach price per court per hour, by sport
+   member_code: string; // staff-only
+   coach_code: string; // staff-only
+   payment_methods: string[];
+@@ -75,7 +75,7 @@
+ };
+ 
+ export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
+-  booking_window_days, announcement, hourly_rates, member_discount_pct, coach_discount_pct,
++  booking_window_days, announcement, hourly_rates, member_rates, coach_rates,
+   member_code, coach_code, payment_methods, gcash_name, gcash_number, bpi_account_name,
+   bpi_account_number, qrph_image, payment_note`;
+ 
+diff -ruN a/lib/health.ts b/lib/health.ts
+--- a/lib/health.ts	2026-09-27 13:57:22.003463367 +0800
++++ b/lib/health.ts	2026-09-27 13:57:47.070364556 +0800
+@@ -166,7 +166,7 @@
+           `SELECT count(*)::int AS courts, count(*) FILTER (WHERE is_active)::int AS active FROM courts`
+         );
+         // Touch the newest columns so an out-of-date schema is caught here, not on the first booking.
+-        await db().query(`SELECT hourly_rates, payment_methods FROM settings WHERE id = 1`);
++        await db().query(`SELECT hourly_rates, member_rates, coach_rates, payment_methods FROM settings WHERE id = 1`);
+         await db().query(`SELECT sport FROM courts LIMIT 1`);
+         await db().query(`SELECT payment_status, amount FROM bookings LIMIT 1`);
+         await db().query(`SELECT 1 FROM booking_slots LIMIT 1`);
+diff -ruN a/lib/pricing.ts b/lib/pricing.ts
+--- a/lib/pricing.ts	2026-09-27 13:57:22.003486989 +0800
++++ b/lib/pricing.ts	2026-09-27 13:57:47.069946940 +0800
+@@ -30,13 +30,26 @@
+ export const isPaymentStatus = (v: unknown): v is PaymentStatus => PAYMENT_STATUSES.some((s) => s.id === v);
+ export const paymentStatusLabel = (id: string) => PAYMENT_STATUSES.find((s) => s.id === id)?.label ?? id;
+ 
+-export type Price = { hourlyRate: number; hours: number; subtotal: number; discountPct: number; discount: number; total: number };
++/** Hourly prices for one sport: regular, member and coach (₱ per court per hour). */
++export type SportRates = { regular: number; member: number; coach: number };
++
++export function rateFor(rates: SportRates, rateType: RateType): number {
++  return rates[rateType] ?? rates.regular;
++}
++
++export type Price = {
++  hourlyRate: number; // the rate actually charged
++  regularRate: number;
++  hours: number;
++  total: number;
++  savings: number; // vs. the regular rate (0 if none)
++};
+ 
+ /** Price in pesos, rounded to the centavo. */
+-export function computePrice(hourlyRate: number, hours: number, discountPct: number): Price {
+-  const subtotal = Math.round(hourlyRate * hours * 100) / 100;
+-  const total = Math.round(subtotal * (100 - discountPct)) / 100;
+-  return { hourlyRate, hours, subtotal, discountPct, discount: Math.round((subtotal - total) * 100) / 100, total };
++export function computePrice(hourlyRate: number, hours: number, regularRate = hourlyRate): Price {
++  const total = Math.round(hourlyRate * hours * 100) / 100;
++  const regularTotal = Math.round(regularRate * hours * 100) / 100;
++  return { hourlyRate, regularRate, hours, total, savings: Math.max(0, Math.round((regularTotal - total) * 100) / 100) };
+ }
+ 
+ export function formatPeso(n: number): string {

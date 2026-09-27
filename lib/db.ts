@@ -10,13 +10,22 @@ const globalForDb = globalThis as unknown as { __nvbcPool?: Pool };
 
 /**
  * Vercel's database integrations don't all use the same variable name:
- * Neon sets DATABASE_URL, Supabase and older "Vercel Postgres" set POSTGRES_URL.
- * The first one that is set wins.
+ * Neon sets DATABASE_URL, Supabase and older "Vercel Postgres" set POSTGRES_URL, and
+ * when a database is connected through Vercel → Storage with a custom prefix the names
+ * become e.g. STORAGE_DATABASE_URL or NEON_POSTGRES_URL. We accept all of these.
  */
 export const DB_ENV_VARS = ["DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL"] as const;
 
 export function connectionInfo(): { name: string; value: string } | null {
   for (const name of DB_ENV_VARS) {
+    const value = process.env[name]?.trim();
+    if (value) return { name, value };
+  }
+  // Prefixed names from Vercel's Storage integration (pooled connections only).
+  const prefixed = Object.keys(process.env)
+    .filter((k) => /_(DATABASE_URL|POSTGRES_URL)$/.test(k) && !/UNPOOLED|NON_POOLING|NO_SSL/.test(k))
+    .sort((a, b) => (a.endsWith("DATABASE_URL") ? 0 : 1) - (b.endsWith("DATABASE_URL") ? 0 : 1) || a.localeCompare(b));
+  for (const name of prefixed) {
     const value = process.env[name]?.trim();
     if (value) return { name, value };
   }
@@ -51,9 +60,9 @@ export type Settings = {
   max_hours_per_day: number;
   booking_window_days: number;
   announcement: string;
-  hourly_rates: Record<string, number>;
-  member_discount_pct: number;
-  coach_discount_pct: number;
+  hourly_rates: Record<string, number>; // regular price per court per hour, by sport
+  member_rates: Record<string, number>; // member price per court per hour, by sport
+  coach_rates: Record<string, number>; // coach price per court per hour, by sport
   member_code: string; // staff-only
   coach_code: string; // staff-only
   payment_methods: string[];
@@ -66,7 +75,7 @@ export type Settings = {
 };
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
-  booking_window_days, announcement, hourly_rates, member_discount_pct, coach_discount_pct,
+  booking_window_days, announcement, hourly_rates, member_rates, coach_rates,
   member_code, coach_code, payment_methods, gcash_name, gcash_number, bpi_account_name,
   bpi_account_number, qrph_image, payment_note`;
 

@@ -118,3 +118,24 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAU
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_ref TEXT NOT NULL DEFAULT '';
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS bookings_payment_ref_idx ON bookings (payment_ref) WHERE payment_ref <> '';
+
+-- v4: fixed member & coach prices -----------------------------------------------
+-- Instead of a % discount, members and coaches have their own hourly price per sport.
+-- On upgrade, the old discount % is converted into prices so nothing changes until
+-- you edit them in /admin → Settings.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS member_rates JSONB;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS coach_rates  JSONB;
+UPDATE settings SET member_rates = COALESCE(
+  (SELECT jsonb_object_agg(key, round(value::numeric * (100 - member_discount_pct) / 100, 2))
+     FROM jsonb_each_text(hourly_rates)), '{}'::jsonb)
+ WHERE member_rates IS NULL;
+UPDATE settings SET coach_rates = COALESCE(
+  (SELECT jsonb_object_agg(key, round(value::numeric * (100 - coach_discount_pct) / 100, 2))
+     FROM jsonb_each_text(hourly_rates)), '{}'::jsonb)
+ WHERE coach_rates IS NULL;
+ALTER TABLE settings ALTER COLUMN member_rates SET DEFAULT '{}'::jsonb;
+ALTER TABLE settings ALTER COLUMN member_rates SET NOT NULL;
+ALTER TABLE settings ALTER COLUMN coach_rates  SET DEFAULT '{}'::jsonb;
+ALTER TABLE settings ALTER COLUMN coach_rates  SET NOT NULL;
+-- member_discount_pct / coach_discount_pct are no longer used (kept so older data stays readable).
+-- bookings.discount_pct is kept for bookings made before v4; new bookings store 0 there.
