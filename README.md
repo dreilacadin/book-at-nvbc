@@ -5,7 +5,7 @@ A simple booking site for NV Badminton Center's badminton and pickleball courts.
 - **Players** choose a sport (Badminton or Pickleball), pick a date, tap an open slot, enter their name and mobile number, and get a booking code (e.g. `NV-7K3Q9P`). No account needed.
 - **Everyone** can see which slots are booked — but never *who* booked them. Names and numbers are only visible to staff.
 - **Players** can view or cancel their own booking with the code on the **My booking** page (codes are also remembered on the device they booked from).
-- **Staff** log in at `/admin` to see every booking with names/contacts, cancel bookings, add walk-in/phone bookings, block courts for tournaments or maintenance, and change opening hours, limits and the announcement banner.
+- **Staff** log in at `/admin` to see an overview of bookings by day, week or month, every booking with names/contacts, edit bookings (move court/date/time, fix names, change the rate or payment method), cancel bookings, add walk-in/phone bookings, block courts for tournaments or maintenance, and change opening hours, limits and the announcement banner.
 - **Court counts on the fly**: in /admin → Courts, set how many badminton and pickleball courts are bookable with the − / + buttons. Lowering a number hides the last courts in the list; raising it brings hidden courts back first, then creates new ones. You can also switch a single court between badminton and pickleball (e.g. when a floor is re-lined), rename it, or reorder it. Bookings are never deleted — staff get a warning if a hidden or switched court still has upcoming bookings.
 - Direct links to a sport work: `/?sport=badminton` or `/?sport=pickleball`.
 - **Prices**: each sport has its own **Regular** (non-member), **Member** and **Coach** price per court per hour, set in /admin → Settings — optionally with different weekend (Sat–Sun) prices. A sport can also turn member & coach prices off and use one standard rate for everyone. Players pick which one they're booking as and see the total (and how much they save vs. regular) before they confirm.
@@ -46,9 +46,11 @@ Open <http://localhost:3000>. Staff page: <http://localhost:3000/admin>.
 3. Under **Environment Variables** add `DATABASE_URL`, `ADMIN_PASSWORD`, and `FACILITY_TIMEZONE=Asia/Manila`.
 4. Click **Deploy**. Every time you push to GitHub, Vercel redeploys automatically.
 
-You only need to run `npm run db:setup` once (from your computer, pointing at the same database). Running it again is safe — it never deletes data.
+**The database updates itself on every deploy.** Vercel runs the `vercel-build` script, which builds the app and then applies `db/schema.sql` to the database in `DATABASE_URL` (creating tables the first time, adding new columns after an update). If the database step fails, the deployment fails and the previous version stays live — check the build log. Make sure `DATABASE_URL` is available to the environment you deploy (Production, and Preview if you use it). On other hosts, use `npm run vercel-build` as the build command.
 
-**Upgrading from an earlier version?** Just run `npm run db:setup` again. It adds the new columns and keeps all your existing courts and bookings. (From the pickleball-only version, existing courts become pickleball courts — set the badminton count in /admin → Courts. Existing bookings show ₱0 / Unpaid since they were made before prices existed.) Then set your prices and payment details in /admin → Settings.
+You can still run `npm run db:setup` by hand (from your computer, pointing at the same database). Running it again is safe — it never deletes data.
+
+**Upgrading from an earlier version?** Deploy, or run `npm run db:setup` again. It adds the new columns and keeps all your existing courts and bookings. (From the pickleball-only version, existing courts become pickleball courts — set the badminton count in /admin → Courts. Existing bookings show ₱0 / Unpaid since they were made before prices existed.) Then set your prices and payment details in /admin → Settings.
 
 ---
 

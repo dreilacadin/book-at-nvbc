@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "next build && node scripts/setup-db.mjs",
     "start": "next start",
     "db:start": "docker-compose up -d",
     "db:setup": "node --env-file-if-exists=.env.local scripts/setup-db.mjs",

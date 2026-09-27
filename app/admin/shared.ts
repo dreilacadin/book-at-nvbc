@@ -1,0 +1,63 @@
+// Types and helpers shared by the admin page and its parts.
+import type { BookingStatus, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
+import type { Sport } from "@/lib/sports";
+
+export type AdminBooking = {
+  id: string;
+  code: string;
+  court_name: string;
+  sport: Sport;
+  court_id: number;
+  date: string;
+  start_hour: number;
+  end_hour: number;
+  name: string;
+  contact: string;
+  notes: string;
+  status: BookingStatus;
+  cancelled_by: string | null;
+  created_at: string;
+  rate_type: RateType;
+  hourly_rate: number;
+  discount_pct: number;
+  amount: number;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  payment_ref: string;
+  has_proof: boolean;
+  ref_reused: number;
+};
+export type Court = { id: number; name: string; sport: Sport; is_active: boolean; sort_order: number; upcoming: number };
+export type Settings = {
+  open_hour: number;
+  close_hour: number;
+  max_hours_per_booking: number;
+  max_hours_per_day: number;
+  booking_window_days: number;
+  announcement: string;
+  rate_plans: Record<string, SportPricing>;
+  member_code: string;
+  coach_code: string;
+  payment_methods: PaymentMethod[];
+  gcash_name: string;
+  gcash_number: string;
+  bpi_account_name: string;
+  bpi_account_number: string;
+  qrph_image: string;
+  payment_note: string;
+};
+
+export async function api<T>(url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, body === undefined
+    ? { cache: "no-store" }
+    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new AuthError(json.error || "Please log in.");
+  if (!res.ok) throw new Error(json.error || "Request failed");
+  return json as T;
+}
+export class AuthError extends Error {}
+
+export function todayManila() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
+}

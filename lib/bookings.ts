@@ -531,3 +531,98 @@ export async function setPaymentStatus(
   if (!rows[0]) return fail(404, "Booking not found.");
   return { ok: true, data: { id, status: rows[0].status as BookingStatus } };
 }
+
+export type BookingEdit = {
+  courtId?: unknown;
+  date?: unknown;
+  startHour?: unknown;
+  endHour?: unknown;
+  name?: unknown;
+  contact?: unknown;
+  notes?: unknown;
+  rateType?: unknown;
+  hourlyRate?: unknown; // ₱ per hour; the amount becomes hourlyRate × hours
+  paymentMethod?: unknown;
+  paymentRef?: unknown;
+};
+
+/**
+ * Staff: change a booking's court, date, time, player details, rate or payment method.
+ * Moving it re-claims the hours in one transaction, so it can never overlap another booking.
+ * Staff edits ignore player limits (opening hours, booking window), like staff bookings do.
+ */
+export async function updateBooking(id: string, input: BookingEdit): Promise<Result<{ id: string; status: BookingStatus }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  const courtId = Number(input.courtId);
+  const startHour = Number(input.startHour);
+  const endHour = Number(input.endHour);
+  const date = input.date;
+  const name = str(input.name).replace(/\s+/g, " ");
+  const contact = str(input.contact);
+  const notes = str(input.notes);
+  const hourlyRate = Number(input.hourlyRate);
+  const paymentRef = cleanRef(input.paymentRef);
+
+  if (!Number.isInteger(courtId)) return fail(400, "Please choose a court.");
+  if (!isValidDate(date)) return fail(400, "Please choose a valid date.");
+  if (!Number.isInteger(startHour) || !Number.isInteger(endHour) || startHour < 0 || endHour > 24 || endHour <= startHour)
+    return fail(400, "The end time must be after the start time.");
+  if (name.length < 2 || name.length > 60) return fail(400, "Name must be 2–60 characters.");
+  if (contact.length > 60) return fail(400, "Contact must be 60 characters or fewer.");
+  if (notes.length > 200) return fail(400, "Notes must be 200 characters or fewer.");
+  if (!isRateType(input.rateType)) return fail(400, "Choose Regular, Member or Coach.");
+  if (!Number.isFinite(hourlyRate) || hourlyRate < 0 || hourlyRate > 100_000) return fail(400, "Enter a valid hourly rate.");
+  if (!isPaymentMethod(input.paymentMethod)) return fail(400, "Choose a payment method.");
+  const rateType = input.rateType;
+  const paymentMethod = input.paymentMethod;
+  const price = computePrice(Math.round(hourlyRate * 100) / 100, endHour - startHour);
+
+  const client = await db().connect();
+  try {
+    await client.query("BEGIN");
+    const cur = await client.query<{ status: BookingStatus; payment_status: PaymentStatus }>(
+      `SELECT status, payment_status FROM bookings WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const b = cur.rows[0];
+    if (!b) {
+      await client.query("ROLLBACK");
+      return fail(404, "Booking not found.");
+    }
+    if (b.status === "cancelled") {
+      await client.query("ROLLBACK");
+      return fail(400, "Cancelled bookings can't be edited.");
+    }
+    const court = await client.query(`SELECT 1 FROM courts WHERE id = $1`, [courtId]);
+    if (!court.rows[0]) {
+      await client.query("ROLLBACK");
+      return fail(400, "That court doesn't exist.");
+    }
+
+    const status = activeBookingStatus(paymentMethod, b.payment_status, price.total);
+    await client.query(
+      `UPDATE bookings SET court_id = $2, booking_date = $3, start_hour = $4, end_hour = $5,
+              player_name = $6, contact = $7, notes = $8, rate_type = $9, hourly_rate = $10,
+              discount_pct = 0, amount = $11, payment_method = $12, payment_ref = $13, status = $14
+        WHERE id = $1`,
+      [id, courtId, date, startHour, endHour, name, contact || "(admin)", notes, rateType, price.hourlyRate,
+        price.total, paymentMethod, paymentMethod === "cash" ? "" : paymentRef, status]
+    );
+    // Re-claim the hours. The primary key on booking_slots rejects any overlap with other bookings.
+    await client.query(`DELETE FROM booking_slots WHERE booking_id = $1`, [id]);
+    await client.query(
+      `INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
+       SELECT $1, $2, h, $3 FROM generate_series($4::int, $5::int - 1) AS h`,
+      [courtId, date, id, startHour, endHour]
+    );
+    await client.query("COMMIT");
+    return { ok: true, data: { id, status } };
+  } catch (e: unknown) {
+    await client.query("ROLLBACK").catch(() => {});
+    if ((e as { code?: string }).code === "23505")
+      return fail(409, "That court is already booked for part of that time. Choose another court or time.");
+    throw e;
+  } finally {
+    client.release();
+  }
+}

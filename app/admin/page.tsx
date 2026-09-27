@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatDateLong, formatHour, formatRange } from "@/lib/format";
 import {
   formatPeso,
@@ -17,71 +17,15 @@ import {
   type SportPricing,
 } from "@/lib/pricing";
 import { imageToDataUrl } from "@/lib/image";
+import EditBooking from "./EditBooking";
+import Overview from "./Overview";
+import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
-
-type AdminBooking = {
-  id: string;
-  code: string;
-  court_name: string;
-  sport: Sport;
-  court_id: number;
-  date: string;
-  start_hour: number;
-  end_hour: number;
-  name: string;
-  contact: string;
-  notes: string;
-  status: BookingStatus;
-  cancelled_by: string | null;
-  created_at: string;
-  rate_type: RateType;
-  hourly_rate: number;
-  discount_pct: number;
-  amount: number;
-  payment_method: PaymentMethod;
-  payment_status: PaymentStatus;
-  payment_ref: string;
-  has_proof: boolean;
-  ref_reused: number;
-};
-type Court = { id: number; name: string; sport: Sport; is_active: boolean; sort_order: number; upcoming: number };
-type Settings = {
-  open_hour: number;
-  close_hour: number;
-  max_hours_per_booking: number;
-  max_hours_per_day: number;
-  booking_window_days: number;
-  announcement: string;
-  rate_plans: Record<string, SportPricing>;
-  member_code: string;
-  coach_code: string;
-  payment_methods: PaymentMethod[];
-  gcash_name: string;
-  gcash_number: string;
-  bpi_account_name: string;
-  bpi_account_number: string;
-  qrph_image: string;
-  payment_note: string;
-};
-
-async function api<T>(url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, body === undefined
-    ? { cache: "no-store" }
-    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const json = await res.json().catch(() => ({}));
-  if (res.status === 401) throw new AuthError(json.error || "Please log in.");
-  if (!res.ok) throw new Error(json.error || "Request failed");
-  return json as T;
-}
-class AuthError extends Error {}
-
-function todayManila() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
-}
 
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"bookings" | "courts" | "settings">("bookings");
+  const [tab, setTab] = useState<"overview" | "bookings" | "courts" | "settings">("overview");
+  const [bookingsDate, setBookingsDate] = useState(todayManila);
 
   useEffect(() => {
     api<{ loggedIn: boolean }>("/api/admin/login").then((r) => setLoggedIn(r.loggedIn)).catch(() => setLoggedIn(false));
@@ -109,13 +53,22 @@ export default function AdminPage() {
         </button>
       </div>
       <div className="tabs" role="tablist">
-        {(["bookings", "courts", "settings"] as const).map((t) => (
+        {(["overview", "bookings", "courts", "settings"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
-      {tab === "bookings" && <BookingsTab onAuthError={onAuthError} />}
+      {tab === "overview" && (
+        <Overview
+          onOpenDay={(d) => {
+            setBookingsDate(d);
+            setTab("bookings");
+          }}
+          onAuthError={onAuthError}
+        />
+      )}
+      {tab === "bookings" && <BookingsTab initialDate={bookingsDate} onDateChange={setBookingsDate} onAuthError={onAuthError} />}
       {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
       {tab === "settings" && <SettingsTab onAuthError={onAuthError} />}
     </>
@@ -158,13 +111,26 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
-  const [date, setDate] = useState(todayManila());
+function BookingsTab({
+  initialDate,
+  onDateChange,
+  onAuthError,
+}: {
+  initialDate: string;
+  onDateChange: (date: string) => void; // remembered while switching tabs
+  onAuthError: (e: unknown) => void;
+}) {
+  const [date, setDateState] = useState(initialDate);
+  const setDate = (d: string) => {
+    setDateState(d);
+    onDateChange(d);
+  };
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
   const [courts, setCourts] = useState<Court[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | PaymentStatus>("all");
 
   const load = useCallback(async () => {
@@ -289,73 +255,96 @@ function BookingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
             </thead>
             <tbody>
               {shown.map((b) => (
-                <tr key={b.id} className={b.status === "cancelled" ? "cancelled" : ""}>
-                  <td style={{ whiteSpace: "nowrap" }}>{formatRange(b.start_hour, b.end_hour)}</td>
-                  <td>{sportEmoji(b.sport)} {b.court_name}</td>
-                  <td>
-                    {b.name}
-                    <div style={{ fontSize: 13 }}>
-                      {b.contact.startsWith("+") || /^\d/.test(b.contact) ? <a href={`tel:${b.contact}`}>{b.contact}</a> : <span className="muted">{b.contact}</span>}
-                    </div>
-                    {b.notes && <div className="muted" style={{ fontSize: 13 }}>{b.notes}</div>}
-                  </td>
-                  <td>
-                    {rateTypeLabel(b.rate_type)}
-                    {b.discount_pct > 0 ? (
-                      <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>
-                    ) : b.hourly_rate > 0 ? (
-                      <div className="muted" style={{ fontSize: 13 }}>{formatPeso(b.hourly_rate)}/hr</div>
-                    ) : null}
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>{formatPeso(b.amount)}</td>
-                  <td style={{ minWidth: 170 }}>
-                    <div style={{ fontSize: 13, marginBottom: 4 }}>
-                      {paymentLabel(b.payment_method)}
-                      {b.payment_ref && (
-                        <>
-                          {" · "}
-                          <span style={{ fontFamily: "ui-monospace, monospace" }}>{b.payment_ref}</span>
-                          {b.ref_reused > 0 && (
-                            <span className="pay-status unpaid" title={`This reference number is also on ${b.ref_reused} other booking(s)`} style={{ marginLeft: 4 }}>
-                              ⚠ used {b.ref_reused + 1}×
-                            </span>
-                          )}
-                        </>
-                      )}
-                      {b.has_proof && (
-                        <>
-                          {" · "}
-                          <a href={`/api/admin/bookings/proof?id=${b.id}`} target="_blank" rel="noopener noreferrer">
-                            📷 Screenshot
-                          </a>
-                        </>
-                      )}
-                    </div>
-                    <select
-                      aria-label="Payment status"
-                      className={`pay-status ${b.payment_status}`}
-                      value={b.payment_status}
-                      onChange={(e) => setPayment(b, e.target.value as PaymentStatus)}
-                      style={{ width: "auto", border: 0, fontSize: 13, padding: "4px 8px" }}
-                    >
-                      {PAYMENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                    </select>
-                  </td>
-                  <td style={{ fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>{b.code}</td>
-                  <td>
-                    {b.status !== "cancelled" ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-                        <span className={`badge ${b.status === "pending" ? "pending" : ""}`}
-                          title={b.status === "pending" ? "Waiting for the online payment to be verified — mark it Paid to confirm" : undefined}>
-                          {bookingStatusLabel(b.status)}
-                        </span>
-                        <button className="btn small secondary" onClick={() => cancel(b)}>Cancel</button>
+                <Fragment key={b.id}>
+                  <tr className={b.status === "cancelled" ? "cancelled" : ""}>
+                    <td style={{ whiteSpace: "nowrap" }}>{formatRange(b.start_hour, b.end_hour)}</td>
+                    <td>{sportEmoji(b.sport)} {b.court_name}</td>
+                    <td>
+                      {b.name}
+                      <div style={{ fontSize: 13 }}>
+                        {b.contact.startsWith("+") || /^\d/.test(b.contact) ? <a href={`tel:${b.contact}`}>{b.contact}</a> : <span className="muted">{b.contact}</span>}
                       </div>
-                    ) : (
-                      <span className="badge grey">Cancelled{b.cancelled_by ? ` by ${b.cancelled_by}` : ""}</span>
-                    )}
-                  </td>
-                </tr>
+                      {b.notes && <div className="muted" style={{ fontSize: 13 }}>{b.notes}</div>}
+                    </td>
+                    <td>
+                      {rateTypeLabel(b.rate_type)}
+                      {b.discount_pct > 0 ? (
+                        <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>
+                      ) : b.hourly_rate > 0 ? (
+                        <div className="muted" style={{ fontSize: 13 }}>{formatPeso(b.hourly_rate)}/hr</div>
+                      ) : null}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>{formatPeso(b.amount)}</td>
+                    <td style={{ minWidth: 170 }}>
+                      <div style={{ fontSize: 13, marginBottom: 4 }}>
+                        {paymentLabel(b.payment_method)}
+                        {b.payment_ref && (
+                          <>
+                            {" · "}
+                            <span style={{ fontFamily: "ui-monospace, monospace" }}>{b.payment_ref}</span>
+                            {b.ref_reused > 0 && (
+                              <span className="pay-status unpaid" title={`This reference number is also on ${b.ref_reused} other booking(s)`} style={{ marginLeft: 4 }}>
+                                ⚠ used {b.ref_reused + 1}×
+                              </span>
+                            )}
+                          </>
+                        )}
+                        {b.has_proof && (
+                          <>
+                            {" · "}
+                            <a href={`/api/admin/bookings/proof?id=${b.id}`} target="_blank" rel="noopener noreferrer">
+                              📷 Screenshot
+                            </a>
+                          </>
+                        )}
+                      </div>
+                      <select
+                        aria-label="Payment status"
+                        className={`pay-status ${b.payment_status}`}
+                        value={b.payment_status}
+                        onChange={(e) => setPayment(b, e.target.value as PaymentStatus)}
+                        style={{ width: "auto", border: 0, fontSize: 13, padding: "4px 8px" }}
+                      >
+                        {PAYMENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>{b.code}</td>
+                    <td>
+                      {b.status !== "cancelled" ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                          <span className={`badge ${b.status === "pending" ? "pending" : ""}`}
+                            title={b.status === "pending" ? "Waiting for the online payment to be verified — mark it Paid to confirm" : undefined}>
+                            {bookingStatusLabel(b.status)}
+                          </span>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button className="btn small secondary" onClick={() => setEditing(editing === b.id ? null : b.id)}>
+                              Edit
+                            </button>
+                            <button className="btn small secondary" onClick={() => cancel(b)}>Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="badge grey">Cancelled{b.cancelled_by ? ` by ${b.cancelled_by}` : ""}</span>
+                      )}
+                    </td>
+                  </tr>
+                  {editing === b.id && (
+                    <tr className="edit-row">
+                      <td colSpan={8}>
+                        <EditBooking
+                          booking={b}
+                          courts={courts}
+                          onClose={() => setEditing(null)}
+                          onSaved={() => {
+                            setEditing(null);
+                            load();
+                          }}
+                          onAuthError={onAuthError}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
