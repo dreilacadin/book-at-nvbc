@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin, unauthorized } from "@/lib/admin-auth";
-import { cancelById, createBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { cancelById, createBooking, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
 import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
 
 // Admin only: { action: "cancel", id } | { action: "create", ...booking fields }
 //           | { action: "payment", id, status, method?, reference? }
+//           | { action: "delete", id }   (cancelled bookings only)
 //           | { action: "update", id, courtId, date, startHour, endHour, name, contact, notes,
 //               rateType, hourlyRate, paymentMethod, paymentRef }
 export async function POST(req: NextRequest) {
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
     if (body.action === "cancel") return respond(await cancelById(String(body.id ?? "")));
     if (body.action === "payment")
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference));
+    if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? "")));
     if (body.action === "update") return respond(await updateBooking(String(body.id ?? ""), body));
     if (body.action === "create") return respond(await createBooking(body, { admin: true }), 201);
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

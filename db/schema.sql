@@ -173,3 +173,22 @@ ALTER TABLE settings ALTER COLUMN rate_plans SET NOT NULL;
 -- Players paying by GCash / QR Ph / BPI must give a reference number, a screenshot of
 -- the receipt, or both. The screenshot is stored as a data: URL (shrunk by the browser).
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_proof TEXT NOT NULL DEFAULT '';
+
+-- v8: reserved times -----------------------------------------------------------------
+-- Courts taken out of public booking at set times (Open Play, Queueing, Reserved, …).
+-- One-off: weekdays = '{}' and end_date = start_date. Weekly: weekdays lists the days
+-- (0 = Sunday … 6 = Saturday) it repeats on, from start_date until end_date (NULL = no end).
+CREATE TABLE IF NOT EXISTS court_blocks (
+  id          SERIAL PRIMARY KEY,
+  label       TEXT  NOT NULL,
+  court_ids   INT[] NOT NULL,
+  weekdays    INT[] NOT NULL DEFAULT '{}',
+  start_date  DATE  NOT NULL,
+  end_date    DATE,
+  start_hour  INT   NOT NULL CHECK (start_hour BETWEEN 0 AND 23),
+  end_hour    INT   NOT NULL CHECK (end_hour BETWEEN 1 AND 24),
+  notes       TEXT  NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (end_hour > start_hour),
+  CHECK (end_date IS NULL OR end_date >= start_date)
+);

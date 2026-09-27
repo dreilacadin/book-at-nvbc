@@ -128,6 +128,8 @@ h2 { font-size: 20px; margin: 0 0 12px; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border); display: inline-block; }
 .swatch.open { background: var(--brand-soft); border-color: var(--brand); }
 .swatch.booked { background: var(--booked); }
+.swatch.reserved { background: #efe9fb; }
+@media (prefers-color-scheme: dark) { .swatch.reserved { background: #2a2440; } }
 .swatch.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 3px, transparent 3px, transparent 6px); }
 
 /* Grid */
@@ -151,6 +153,8 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-widt
 .slot.open { background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand) 40%, transparent); color: var(--brand-dark); cursor: pointer; }
 .slot.open:hover, .slot.open:focus-visible { background: var(--brand); color: #fff; outline: none; }
 .slot.booked { background: var(--booked); color: var(--booked-text); }
+.slot.reserved { background: #efe9fb; color: #4b3a78; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { .slot.reserved { background: #2a2440; color: #cfc2f5; } }
 .slot.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 4px, transparent 4px, transparent 8px); color: var(--booked-text); font-weight: 400; }
 
 /* Forms */
@@ -334,3 +338,13 @@ legend { font-weight: 700; padding: 0 6px; }
   .month-stat, .month-flag { display: none; }
   .month-sub { font-size: 11px; }
 }
+.btn.secondary.danger-text { color: var(--danger); }
+.btn.secondary.danger-text:hover { background: var(--danger-soft); }
+
+/* Admin: reserved times */
+.badge.reserved { background: #efe9fb; color: #4b3a78; }
+@media (prefers-color-scheme: dark) { .badge.reserved { background: #2a2440; color: #cfc2f5; } }
+label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+.day-schedule td.day-reserved { background: #efe9fb; color: #4b3a78; font-size: 12px; padding: 0 8px; }
+@media (prefers-color-scheme: dark) { .day-schedule td.day-reserved { background: #2a2440; color: #cfc2f5; } }
+.export-links { display: flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; font-size: 14px; }

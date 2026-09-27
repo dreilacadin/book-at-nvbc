@@ -20,6 +20,8 @@ import {
   type PaymentStatus,
   type RateType,
 } from "./pricing";
+import { blockedSlots, findBlockConflict } from "./blocks";
+import { blocksOn } from "./court-blocks";
 import { SPORTS, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
@@ -50,7 +52,7 @@ export function normalizeCode(code: unknown): string | null {
 export async function getAvailability(date: string, requestedSport?: Sport) {
   const settings = await getSettings();
   const today = nowAtFacility();
-  const [allCourts, slots] = await Promise.all([
+  const [allCourts, slots, blocks] = await Promise.all([
     db().query<{ id: number; name: string; sport: Sport }>(
       `SELECT id, name, sport FROM courts WHERE is_active ORDER BY sort_order, id`
     ),
@@ -58,6 +60,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
       `SELECT court_id, slot_hour FROM booking_slots WHERE slot_date = $1`,
       [date]
     ),
+    blocksOn(date),
   ]);
   const sports = SPORTS.map((s) => ({
     ...s,
@@ -94,6 +97,13 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     booked: slots.rows
       .filter((r) => courtIds.has(r.court_id))
       .map((r) => ({ courtId: r.court_id, hour: r.slot_hour })),
+    // Reserved times (Open Play, Queueing, …) with their label, so players see why.
+    blocked: [...blockedSlots(blocks, date)]
+      .map(([key, label]) => {
+        const [courtId, hour] = key.split(":").map(Number);
+        return { courtId, hour, label };
+      })
+      .filter((b) => courtIds.has(b.courtId)),
   };
 }
 
@@ -253,6 +263,14 @@ export async function createBooking(
     }
 
     const sport = court.rows[0].sport;
+    if (!admin) {
+      // Staff may book over reserved times (e.g. to sell a slot); players may not.
+      const block = findBlockConflict(await blocksOn(date), courtId, date, startHour, endHour);
+      if (block) {
+        await client.query("ROLLBACK");
+        return fail(409, `That time is reserved for ${block.label}. Please pick another time or court.`);
+      }
+    }
     const plan = settings.rate_plans[sport];
     if (!rateTypesFor(plan).includes(rateType)) {
       if (!admin) {
@@ -625,4 +643,18 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
   } finally {
     client.release();
   }
+}
+
+/** Staff: permanently delete a booking. Only cancelled bookings can be deleted. */
+export async function deleteCancelledBooking(id: string): Promise<Result<{ id: string }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  const { rows } = await db().query<{ status: BookingStatus }>(
+    `WITH gone AS (DELETE FROM bookings WHERE id = $1 AND status = 'cancelled' RETURNING id)
+     SELECT (SELECT count(*) FROM gone)::int AS deleted, (SELECT status FROM bookings WHERE id = $1) AS status`,
+    [id]
+  );
+  const r = rows[0] as unknown as { deleted: number; status: BookingStatus | null };
+  if (r.deleted) return { ok: true, data: { id } };
+  if (!r.status) return fail(404, "Booking not found.");
+  return fail(400, "Cancel the booking first. Only cancelled bookings can be deleted.");
 }

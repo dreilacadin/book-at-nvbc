@@ -42,6 +42,7 @@ type Availability = {
   paymentMethods: PaymentMethod[];
   courts: { id: number; name: string }[];
   booked: { courtId: number; hour: number }[];
+  blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
 };
 
 type Selection = { courtId: number; courtName: string; hour: number };
@@ -126,6 +127,10 @@ export default function BookingBoard() {
     () => new Set((data?.booked ?? []).map((b) => `${b.courtId}:${b.hour}`)),
     [data]
   );
+  const blockedMap = useMemo(
+    () => new Map((data?.blocked ?? []).map((b) => [`${b.courtId}:${b.hour}`, b.label])),
+    [data]
+  );
 
   const dates = useMemo(() => {
     if (!data) return [];
@@ -142,7 +147,9 @@ export default function BookingBoard() {
   for (let h = data.openHour; h < data.closeHour; h++) hours.push(h);
 
   const isPast = (h: number) => data.date < data.today || (data.date === data.today && h <= data.currentHour);
-  const isBooked = (courtId: number, h: number) => bookedSet.has(`${courtId}:${h}`);
+  const reservedFor = (courtId: number, h: number) => blockedMap.get(`${courtId}:${h}`);
+  // Taken = booked or reserved; either way it can't be part of a new booking.
+  const isBooked = (courtId: number, h: number) => bookedSet.has(`${courtId}:${h}`) || blockedMap.has(`${courtId}:${h}`);
 
   return (
     <>
@@ -196,6 +203,7 @@ export default function BookingBoard() {
         <div className="legend">
           <span><i className="swatch open" /> Open</span>
           <span><i className="swatch booked" /> Booked</span>
+          {data.blocked.length > 0 && <span><i className="swatch reserved" /> Reserved</span>}
           <span><i className="swatch past" /> Past</span>
         </div>
       </div>
@@ -220,6 +228,15 @@ export default function BookingBoard() {
                 <tr key={h}>
                   <th className="time" scope="row">{formatHour(h)}</th>
                   {data.courts.map((c) => {
+                    const reserved = reservedFor(c.id, h);
+                    if (reserved)
+                      return (
+                        <td key={c.id}>
+                          <div className="slot reserved" title={reserved} aria-label={`${c.name} ${formatHour(h)} reserved for ${reserved}`}>
+                            {reserved}
+                          </div>
+                        </td>
+                      );
                     if (isBooked(c.id, h))
                       return (
                         <td key={c.id}>

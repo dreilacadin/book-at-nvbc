@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDateLong, formatHour } from "@/lib/format";
 import { bookingStatusLabel, formatPeso } from "@/lib/pricing";
 import { SPORTS, sportEmoji, type Sport } from "@/lib/sports";
+import { blockedSlots, type CourtBlock } from "@/lib/blocks";
 import { api, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 
 type View = "day" | "week" | "month";
@@ -66,12 +67,13 @@ export default function Overview({
   onOpenDay: (date: string) => void; // open the Bookings tab on that date
   onAuthError: (e: unknown) => void;
 }) {
-  const [view, setView] = useState<View>("week");
+  const [view, setView] = useState<View>("month");
   const [anchor, setAnchor] = useState(todayManila());
   const [sport, setSport] = useState<Sport | "all">("all");
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
   const [courts, setCourts] = useState<Court[]>([]);
   const [hours, setHours] = useState({ open: 6, close: 22 });
+  const [blocks, setBlocks] = useState<CourtBlock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -79,10 +81,15 @@ export default function Overview({
   const range = rangeFor(view, anchor);
 
   useEffect(() => {
-    Promise.all([api<{ courts: Court[] }>("/api/admin/courts"), api<Settings>("/api/admin/settings")])
-      .then(([c, s]) => {
+    Promise.all([
+      api<{ courts: Court[] }>("/api/admin/courts"),
+      api<Settings>("/api/admin/settings"),
+      api<{ blocks: CourtBlock[] }>("/api/admin/blocks"),
+    ])
+      .then(([c, s, b]) => {
         setCourts(c.courts);
         setHours({ open: s.open_hour, close: s.close_hour });
+        setBlocks(b.blocks);
       })
       .catch(onAuthError);
   }, [onAuthError]);
@@ -113,6 +120,8 @@ export default function Overview({
   }, [shown]);
   const t = summarize(shown);
 
+  const exportUrl = (format: "xlsx" | "csv") =>
+    `/api/admin/export?${new URLSearchParams({ from: range.from, to: range.to, format, ...(sport === "all" ? {} : { sport }) })}`;
   const step = (n: number) =>
     setAnchor(view === "day" ? addDays(anchor, n) : view === "week" ? addDays(anchor, 7 * n) : shiftMonth(anchor, n));
   const showDay = (date: string) => {
@@ -140,11 +149,15 @@ export default function Overview({
           <option value="all">All sports</option>
           {SPORTS.map((s) => <option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}
         </select>
+        <div className="export-links" title={`Download this ${view}'s bookings — opens in Excel, Numbers or Google Sheets`}>
+          <span className="muted">Export {view}:</span>
+          <a className="btn small secondary" href={exportUrl("xlsx")} download>Excel (.xlsx)</a>
+          <a className="btn small secondary" href={exportUrl("csv")} download>CSV</a>
+        </div>
       </div>
 
       <div className="stats">
         <div className="stat"><div className="n">{t.bookings}</div><div className="l">bookings{t.pending ? ` · ${t.pending} pending` : ""}</div></div>
-        <div className="stat"><div className="n">{t.hours}</div><div className="l">court-hours booked</div></div>
         <div className="stat"><div className="n">{formatPeso(t.billed)}</div><div className="l">billed</div></div>
         <div className="stat"><div className="n">{formatPeso(t.collected)}</div><div className="l">collected (paid)</div></div>
         <div className="stat"><div className="n">{formatPeso(t.unpaid)}</div><div className="l">still unpaid</div></div>
@@ -164,6 +177,7 @@ export default function Overview({
           date={anchor}
           bookings={byDate.get(anchor) ?? []}
           courts={courts.filter((c) => (sport === "all" || c.sport === sport) && (c.is_active || byDate.get(anchor)?.some((b) => b.court_id === c.id)))}
+          reserved={blockedSlots(blocks, anchor)}
           open={hours.open}
           close={hours.close}
           onOpen={() => onOpenDay(anchor)}
@@ -272,6 +286,7 @@ function DaySchedule({
   date,
   bookings,
   courts,
+  reserved,
   open,
   close,
   onOpen,
@@ -279,6 +294,7 @@ function DaySchedule({
   date: string;
   bookings: AdminBooking[];
   courts: Court[];
+  reserved: Map<string, string>; // "courtId:hour" → label (Open Play, …)
   open: number;
   close: number;
   onOpen: () => void;
@@ -311,7 +327,10 @@ function DaySchedule({
                 <th scope="row">{formatHour(h)}</th>
                 {courts.map((c) => {
                   const b = at(c.id, h);
-                  if (!b) return <td key={c.id} />;
+                  if (!b) {
+                    const label = reserved.get(`${c.id}:${h}`);
+                    return label ? <td key={c.id} className="day-reserved">{label}</td> : <td key={c.id} />;
+                  }
                   if (b.start_hour !== h) return null; // covered by the rowSpan above
                   const span = b.end_hour - h;
                   return (

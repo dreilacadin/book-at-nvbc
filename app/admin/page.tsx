@@ -19,6 +19,7 @@ import {
 import { imageToDataUrl } from "@/lib/image";
 import EditBooking from "./EditBooking";
 import Overview from "./Overview";
+import ReservedTimes from "./ReservedTimes";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 
@@ -164,6 +165,17 @@ function BookingsTab({
     } catch (e) {
       onAuthError(e);
       setError(e instanceof Error ? e.message : "Cancel failed");
+    }
+  }
+
+  async function remove(b: AdminBooking) {
+    if (!window.confirm(`Permanently delete ${b.name}'s cancelled booking (${b.code})? This can't be undone.`)) return;
+    try {
+      await api("/api/admin/bookings", { action: "delete", id: b.id });
+      setBookings((list) => list.filter((x) => x.id !== b.id));
+    } catch (e) {
+      onAuthError(e);
+      setError(e instanceof Error ? e.message : "Delete failed");
     }
   }
 
@@ -324,7 +336,10 @@ function BookingsTab({
                           </div>
                         </div>
                       ) : (
-                        <span className="badge grey">Cancelled{b.cancelled_by ? ` by ${b.cancelled_by}` : ""}</span>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                          <span className="badge grey">Cancelled{b.cancelled_by ? ` by ${b.cancelled_by}` : ""}</span>
+                          <button className="btn small secondary danger-text" onClick={() => remove(b)}>Delete</button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -565,6 +580,7 @@ function CourtsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
           run={run}
         />
       ))}
+      <ReservedTimes courts={courts} onAuthError={onAuthError} />
     </div>
   );
 }
