@@ -25,6 +25,7 @@ import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
+import FullScreenLoader from "@/components/FullScreenLoader";
 
 const shortDate = (d: string | null) =>
   d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
@@ -42,7 +43,7 @@ export default function AdminPage() {
     if (e instanceof AuthError) setLoggedIn(false);
   }, []);
 
-  if (loggedIn === null) return <p className="muted">Loading…</p>;
+  if (loggedIn === null) return <FullScreenLoader />;
   if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
 
   return (
@@ -266,9 +267,8 @@ function BookingsTab({
       </div>
 
       <div className="card table-wrap" style={{ padding: 0 }}>
-        {loading ? (
-          <p className="muted" style={{ padding: 16 }}>Loading…</p>
-        ) : shown.length === 0 ? (
+        {loading && <FullScreenLoader label="Loading bookings…" />}
+        {loading && bookings.length === 0 ? null : shown.length === 0 ? (
           <p className="muted" style={{ padding: 16 }}>No bookings{filter === "all" ? " on this date" : " with this payment status"}.</p>
         ) : (
           <table className="list">
@@ -734,7 +734,7 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
     });
   }, [onAuthError]);
 
-  if (!s) return error ? <div className="error">{error}</div> : <p className="muted">Loading…</p>;
+  if (!s) return error ? <div className="error">{error}</div> : <FullScreenLoader label="Loading settings…" />;
 
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => {
     setSaved(false);

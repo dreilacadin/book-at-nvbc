@@ -7,6 +7,9 @@ export const SPORTS = [
 
 export type Sport = (typeof SPORTS)[number]["id"];
 
+/** The "Book a court" page opens on this sport, and shows its tab first. */
+export const BOOKING_DEFAULT_SPORT: Sport = "pickleball";
+
 export function isSport(v: unknown): v is Sport {
   return SPORTS.some((s) => s.id === v);
 }

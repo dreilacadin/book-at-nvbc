@@ -6,6 +6,7 @@ import { PaymentDetails, ProofFields, usePaymentInfo } from "@/components/Paymen
 import { memberTypeLabel, type MemberType } from "@/lib/membership";
 import { formatPeso, paymentLabel, type PaymentMethod, type PaymentStatus } from "@/lib/pricing";
 import { loadMembership, saveMembership } from "@/lib/saved-membership";
+import FullScreenLoader from "@/components/FullScreenLoader";
 
 type View = {
   state: "pending" | "active" | "expired" | "rejected" | "forfeited";
@@ -57,7 +58,7 @@ export default function MembershipStatus({ token }: { token: string }) {
     return () => clearInterval(t);
   }, [v?.state, load]);
 
-  if (!v) return error ? <div className="error">{error}</div> : <p className="muted">Loading…</p>;
+  if (!v) return error ? <div className="error">{error}</div> : <FullScreenLoader label="Loading your membership…" />;
 
   const firstName = v.fullName.split(" ")[0];
 

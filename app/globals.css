@@ -467,3 +467,13 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .lookup-result.booking-confirmed { border-color: var(--brand); }
 .lookup-result.booking-confirmed .lookup-icon { background: var(--brand); }
 .lookup-result.booking-cancelled .lookup-icon, .lookup-result.booking-released .lookup-icon { background: var(--muted); }
+
+/* Full-screen loader */
+.fs-loader { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(2px); color: var(--muted);
+  font-size: 15px; font-weight: 600; animation: fs-fade .15s ease-out both; }
+.fs-spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid var(--border); border-top-color: var(--brand);
+  animation: fs-spin .8s linear infinite; }
+@keyframes fs-spin { to { transform: rotate(360deg); } }
+@keyframes fs-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fs-spinner { animation-duration: 2.4s; } }

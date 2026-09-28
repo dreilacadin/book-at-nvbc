@@ -9,6 +9,7 @@ import EditMember from "./EditMember";
 import ImportMembers from "./ImportMembers";
 import QrScanner from "./QrScanner";
 import { api, todayManila, type AdminMember } from "./shared";
+import FullScreenLoader from "@/components/FullScreenLoader";
 
 type Filter = "action" | "active" | "expired" | "forfeited" | "rejected" | "all";
 type Act = (body: Record<string, unknown>, confirmText?: string) => Promise<boolean>;
@@ -168,9 +169,8 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
       )}
 
       <div className="card table-wrap" style={{ padding: 0 }}>
-        {loading ? (
-          <p className="muted" style={{ padding: 16 }}>Loading…</p>
-        ) : shown.length === 0 ? (
+        {loading && <FullScreenLoader label="Loading members…" />}
+        {loading ? null : shown.length === 0 ? (
           <p className="muted" style={{ padding: 16 }}>Nobody here.</p>
         ) : (
           <table className="list">

@@ -6,6 +6,7 @@ import { bookingStatusLabel, formatPeso } from "@/lib/pricing";
 import { SPORTS, sportEmoji, type Sport } from "@/lib/sports";
 import { blockedSlots, type CourtBlock } from "@/lib/blocks";
 import { api, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
+import FullScreenLoader from "@/components/FullScreenLoader";
 
 type View = "day" | "week" | "month";
 
@@ -67,7 +68,7 @@ export default function Overview({
   onOpenDay: (date: string) => void; // open the Bookings tab on that date
   onAuthError: (e: unknown) => void;
 }) {
-  const [view, setView] = useState<View>("month");
+  const [view, setView] = useState<View>("week");
   const [anchor, setAnchor] = useState(todayManila());
   const [sport, setSport] = useState<Sport | "all">("all");
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
@@ -166,9 +167,8 @@ export default function Overview({
       </div>
 
       {error && <div className="error">{error}</div>}
-      {loading && bookings.length === 0 ? (
-        <p className="muted">Loading…</p>
-      ) : view === "month" ? (
+      {loading && <FullScreenLoader label="Loading bookings…" />}
+      {loading && bookings.length === 0 ? null : view === "month" ? (
         <MonthGrid from={range.from} to={range.to} today={today} byDate={byDate} onPick={showDay} />
       ) : view === "week" ? (
         <WeekColumns from={range.from} today={today} byDate={byDate} onPick={showDay} />

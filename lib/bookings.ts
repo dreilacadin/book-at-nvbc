@@ -25,7 +25,7 @@ import { minutesUntilStart, RELEASE_MINUTES } from "./booking-policy";
 import { formatDateLong, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
-import { SPORTS, sportLabel, type Sport } from "./sports";
+import { BOOKING_DEFAULT_SPORT, SPORTS, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
 export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
@@ -92,12 +92,16 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     ),
     blocksOn(date),
   ]);
-  const sports = SPORTS.map((s) => ({
-    ...s,
-    courtCount: allCourts.rows.filter((c) => c.sport === s.id).length,
-  }));
+  // Booking page tabs: the default sport first, then the rest in their usual order.
+  const sports = [...SPORTS]
+    .sort((a, b) => Number(b.id === BOOKING_DEFAULT_SPORT) - Number(a.id === BOOKING_DEFAULT_SPORT))
+    .map((s) => ({
+      ...s,
+      courtCount: allCourts.rows.filter((c) => c.sport === s.id).length,
+    }));
+  // Without ?sport=, open the default sport — or, if it has no courts, the first sport that does.
   const sport: Sport =
-    requestedSport ?? sports.find((s) => s.courtCount > 0)?.id ?? SPORTS[0].id;
+    requestedSport ?? sports.find((s) => s.courtCount > 0)?.id ?? BOOKING_DEFAULT_SPORT;
   const courts = allCourts.rows
     .filter((c) => c.sport === sport)
     .map(({ id, name }) => ({ id, name }));

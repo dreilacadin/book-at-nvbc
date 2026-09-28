@@ -32,6 +32,7 @@ import BookingPolicy, { payByLabel } from "./BookingPolicy";
 import BookingQr from "./BookingQr";
 import PaymentPanel, { PaymentDetails, ProofFields, usePaymentInfo } from "./PaymentPanel";
 import { isSport, sportLabel, type Sport } from "@/lib/sports";
+import FullScreenLoader from "./FullScreenLoader";
 
 type Availability = {
   sport: Sport;
@@ -166,7 +167,7 @@ export default function BookingBoard() {
   }, [data]);
 
   if (!data) {
-    return loadError ? <div className="error">{loadError}</div> : <p className="muted">Loading courts…</p>;
+    return loadError ? <div className="error">{loadError}</div> : <FullScreenLoader label="Loading courts…" />;
   }
 
   const slots = halfHours(data.openHour, data.closeHour - SLOT_HOURS);

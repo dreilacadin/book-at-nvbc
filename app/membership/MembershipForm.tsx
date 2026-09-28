@@ -6,6 +6,7 @@ import { GENDERS, MEMBER_TYPES, type MemberType } from "@/lib/membership";
 import { formatPeso } from "@/lib/pricing";
 import { forgetMembership, loadMembership, saveMembership } from "@/lib/saved-membership";
 import { SPORTS } from "@/lib/sports";
+import FullScreenLoader from "@/components/FullScreenLoader";
 
 export default function MembershipForm() {
   const router = useRouter();
@@ -80,7 +81,7 @@ export default function MembershipForm() {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  if (checking) return <p className="muted">Loading…</p>;
+  if (checking) return <FullScreenLoader />;
 
   return (
     <>
