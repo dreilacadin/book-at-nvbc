@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatDateLong, formatDateShort, formatHour, formatRange } from "@/lib/format";
+import {
+  formatDateLong,
+  formatDateShort,
+  formatDuration,
+  formatHour,
+  formatRange,
+  halfHours,
+  publicName,
+  SLOT_HOURS,
+} from "@/lib/format";
 import {
   computePrice,
   formatPeso,
@@ -25,7 +34,7 @@ type Availability = {
   sports: { id: Sport; label: string; emoji: string; courtCount: number }[];
   date: string;
   today: string;
-  currentHour: number;
+  currentHour: number; // time of day in hours, e.g. 10.75 at 10:45
   openHour: number;
   closeHour: number;
   maxHoursPerBooking: number;
@@ -41,9 +50,21 @@ type Availability = {
   };
   paymentMethods: PaymentMethod[];
   courts: { id: number; name: string }[];
-  booked: { courtId: number; hour: number }[];
+  // Booked times with the booker's first name and last initial ("Ana C.").
+  bookings: { courtId: number; start: number; end: number; name: string; status: "pending" | "confirmed" }[];
   blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
 };
+
+type GridCell = {
+  kind: "booking" | "reserved";
+  label: string; // "Ana C." or "Open Play"
+  status?: "pending" | "confirmed";
+  start: number;
+  end: number;
+  span: number; // rows (half hours) the cell covers
+};
+
+const ROW_PX = 45; // height of one half-hour row: slot min-height 36 + padding 8 + border 1
 
 type Selection = { courtId: number; courtName: string; hour: number };
 type Confirmed = {
@@ -123,10 +144,11 @@ export default function BookingBoard() {
     window.history.replaceState(null, "", url);
   }
 
-  const bookedSet = useMemo(
-    () => new Set((data?.booked ?? []).map((b) => `${b.courtId}:${b.hour}`)),
-    [data]
-  );
+  const bookedSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const b of data?.bookings ?? []) for (const h of halfHours(b.start, b.end - SLOT_HOURS)) set.add(`${b.courtId}:${h}`);
+    return set;
+  }, [data]);
   const blockedMap = useMemo(
     () => new Map((data?.blocked ?? []).map((b) => [`${b.courtId}:${b.hour}`, b.label])),
     [data]
@@ -143,11 +165,31 @@ export default function BookingBoard() {
     return loadError ? <div className="error">{loadError}</div> : <p className="muted">Loading courts…</p>;
   }
 
-  const hours: number[] = [];
-  for (let h = data.openHour; h < data.closeHour; h++) hours.push(h);
+  const slots = halfHours(data.openHour, data.closeHour - SLOT_HOURS);
 
   const isPast = (h: number) => data.date < data.today || (data.date === data.today && h <= data.currentHour);
   const reservedFor = (courtId: number, h: number) => blockedMap.get(`${courtId}:${h}`);
+  const first = slots[0];
+  const last = slots[slots.length - 1];
+  /**
+   * What fills a grid cell: a booking or a reserved run (merged over its rows, starting at its
+   * first visible row), "covered" for the rows under it, or null for a free slot.
+   */
+  const cellAt = (courtId: number, h: number): GridCell | "covered" | null => {
+    const b = data.bookings.find((x) => x.courtId === courtId && x.start <= h && h < x.end);
+    if (b) {
+      const top = Math.max(b.start, first);
+      if (h !== top) return "covered";
+      return { kind: "booking", label: b.name, status: b.status, start: b.start, end: b.end, span: (Math.min(b.end, last + SLOT_HOURS) - top) / SLOT_HOURS };
+    }
+    const label = reservedFor(courtId, h);
+    if (!label) return null;
+    const same = (t: number) => reservedFor(courtId, t) === label && !data.bookings.some((x) => x.courtId === courtId && x.start <= t && t < x.end);
+    if (h > first && same(h - SLOT_HOURS)) return "covered";
+    let end = h + SLOT_HOURS;
+    while (end <= last && same(end)) end += SLOT_HOURS;
+    return { kind: "reserved", label, start: h, end, span: (end - h) / SLOT_HOURS };
+  };
   // Taken = booked or reserved; either way it can't be part of a new booking.
   const isBooked = (courtId: number, h: number) => bookedSet.has(`${courtId}:${h}`) || blockedMap.has(`${courtId}:${h}`);
 
@@ -156,7 +198,7 @@ export default function BookingBoard() {
       <h1>Reserve a court</h1>
       <p className="lead">
         Choose a sport and date, tap an open slot, and you&apos;re set — no account needed. Booked slots
-        are shown without names.
+        show the booker&apos;s first name and last initial.
       </p>
 
       {data.announcement && <div className="announcement">{data.announcement}</div>}
@@ -202,7 +244,8 @@ export default function BookingBoard() {
         <strong>{formatDateLong(data.date)}</strong>
         <div className="legend">
           <span><i className="swatch open" /> Open</span>
-          <span><i className="swatch booked" /> Booked</span>
+          <span><i className="swatch confirmed" /> Booked</span>
+          <span><i className="swatch pending" /> Pending payment</span>
           {data.blocked.length > 0 && <span><i className="swatch reserved" /> Reserved</span>}
           <span><i className="swatch past" /> Past</span>
         </div>
@@ -224,25 +267,31 @@ export default function BookingBoard() {
               </tr>
             </thead>
             <tbody>
-              {hours.map((h) => (
-                <tr key={h}>
+              {slots.map((h) => (
+                <tr key={h} className={h % 1 ? "half" : undefined}>
                   <th className="time" scope="row">{formatHour(h)}</th>
                   {data.courts.map((c) => {
-                    const reserved = reservedFor(c.id, h);
-                    if (reserved)
-                      return (
-                        <td key={c.id}>
-                          <div className="slot reserved" title={reserved} aria-label={`${c.name} ${formatHour(h)} reserved for ${reserved}`}>
-                            {reserved}
+                    const cell = cellAt(c.id, h);
+                    if (cell === "covered") return null; // part of a merged cell above
+                    if (cell) {
+                      const style = { minHeight: cell.span * ROW_PX - 9 };
+                      return cell.kind === "booking" ? (
+                        <td key={c.id} rowSpan={cell.span}>
+                          <div className={`slot booked ${cell.status}`} style={style}
+                            aria-label={`${c.name} ${formatRange(cell.start, cell.end)} booked by ${cell.label}${cell.status === "pending" ? ", pending payment" : ""}`}>
+                            <span className="slot-name">{cell.label}</span>
+                            {cell.status === "pending" && <small>Pending</small>}
+                          </div>
+                        </td>
+                      ) : (
+                        <td key={c.id} rowSpan={cell.span}>
+                          <div className="slot reserved" style={style} title={cell.label}
+                            aria-label={`${c.name} ${formatRange(cell.start, cell.end)} reserved for ${cell.label}`}>
+                            {cell.label}
                           </div>
                         </td>
                       );
-                    if (isBooked(c.id, h))
-                      return (
-                        <td key={c.id}>
-                          <div className="slot booked" aria-label={`${c.name} ${formatHour(h)} booked`}>Booked</div>
-                        </td>
-                      );
+                    }
                     if (isPast(h))
                       return (
                         <td key={c.id}>
@@ -294,7 +343,7 @@ function BookingDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  // Longest run of consecutive free hours starting at the chosen slot, capped by the rules.
+  // Longest run of free half hours starting at the chosen slot, capped by the rules.
   const maxHours = useMemo(() => {
     let n = 0;
     while (
@@ -302,11 +351,11 @@ function BookingDialog({
       selection.hour + n < data.closeHour &&
       !isBooked(selection.courtId, selection.hour + n)
     )
-      n++;
-    return Math.max(n, 1);
+      n += SLOT_HOURS;
+    return Math.max(n, SLOT_HOURS);
   }, [data, selection, isBooked]);
 
-  const [hours, setHours] = useState(1);
+  const [hours, setHours] = useState(() => Math.min(1, maxHours));
   const [rateType, setRateType] = useState<RateType>("regular");
   const [rateCode, setRateCode] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(data.paymentMethods[0] ?? "cash");
@@ -463,9 +512,9 @@ function BookingDialog({
             <div className="field">
               <label htmlFor="hours">How long?</label>
               <select id="hours" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
-                {Array.from({ length: maxHours }, (_, i) => i + 1).map((n) => (
+                {halfHours(SLOT_HOURS, maxHours).map((n) => (
                   <option key={n} value={n}>
-                    {n} hour{n > 1 ? "s" : ""} (until {formatHour(selection.hour + n)})
+                    {formatDuration(n)} (until {formatHour(selection.hour + n)})
                   </option>
                 ))}
               </select>
@@ -512,7 +561,8 @@ function BookingDialog({
 
             <div className="field">
               <label htmlFor="name">
-                Your name <span className="hint">— only staff can see this</span>
+                Your name{" "}
+                <span className="hint">— the schedule shows {name.trim() ? `“${publicName(name)}”` : "your first name and last initial"}</span>
               </label>
               <input id="name" type="text" required minLength={2} maxLength={60} autoComplete="name"
                 value={name} onChange={(e) => setName(e.target.value)} />
@@ -555,7 +605,7 @@ function BookingDialog({
                 <div className="price-box" aria-live="polite">
                   <div className="pay-row">
                     <span>
-                      {p.weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)} × {hours} hour{hours > 1 ? "s" : ""}
+                      {p.weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)}/hr × {formatDuration(hours)}
                     </span>
                     <span>{formatPeso(price.total)}</span>
                   </div>

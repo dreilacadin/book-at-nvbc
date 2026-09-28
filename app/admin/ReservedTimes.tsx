@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { BLOCK_LABELS, describeRepeat, WEEKDAYS, type CourtBlock } from "@/lib/blocks";
-import { formatDateLong, formatRange, formatHour } from "@/lib/format";
+import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import { SPORTS } from "@/lib/sports";
 import { api, todayManila, type Court } from "./shared";
 
@@ -144,7 +144,7 @@ function AddReservedTime({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const hourOptions = Array.from({ length: 25 }, (_, h) => h);
+  const hourOptions = halfHours(0, 24);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -250,7 +250,7 @@ function AddReservedTime({
         <div>
           <label htmlFor="rt-s">From</label>
           <select id="rt-s" value={start} onChange={(e) => setStart(Number(e.target.value))}>
-            {hourOptions.slice(0, 24).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
+            {hourOptions.slice(0, -1).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
           </select>
         </div>
         <div>

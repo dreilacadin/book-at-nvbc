@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatHour } from "@/lib/format";
+import { formatDuration, formatHour, halfHours } from "@/lib/format";
 import {
   formatPeso,
   PAYMENT_METHODS,
@@ -54,7 +54,7 @@ export default function EditBooking({
   const plan = sport && plans?.[sport];
   const currentRate = plan ? rateFor(ratesForDate(plan, date), plan.memberRates ? rateType : "regular") : null;
   const amount = hours > 0 && hourlyRate !== "" ? Math.round(hourlyRate * hours * 100) / 100 : 0;
-  const hourOptions = Array.from({ length: 25 }, (_, h) => h);
+  const hourOptions = halfHours(0, 24);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -109,7 +109,7 @@ export default function EditBooking({
         <div>
           <label htmlFor="eb-s">From</label>
           <select id="eb-s" value={start} onChange={(e) => setStart(Number(e.target.value))}>
-            {hourOptions.slice(0, 24).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
+            {hourOptions.slice(0, -1).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
           </select>
         </div>
         <div>
@@ -163,7 +163,7 @@ export default function EditBooking({
         </div>
       </div>
       <p className="muted" style={{ margin: "4px 0 0", fontSize: 14 }}>
-        {hours > 0 ? `${hours} hour${hours > 1 ? "s" : ""} · amount ${formatPeso(amount)}` : "Choose a valid time."}
+        {hours > 0 ? `${formatDuration(hours)} · amount ${formatPeso(amount)}` : "Choose a valid time."}
         {amount !== booking.amount && hours > 0 && ` (was ${formatPeso(booking.amount)})`}
         {booking.payment_status === "paid" && amount > booking.amount && " — already paid, collect the difference."}
         {booking.payment_status === "paid" && amount < booking.amount && " — already paid, refund the difference."}

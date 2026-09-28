@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatDateLong, formatHour } from "@/lib/format";
+import { formatDateLong, formatHour, halfHours, SLOT_HOURS } from "@/lib/format";
 import { bookingStatusLabel, formatPeso } from "@/lib/pricing";
 import { SPORTS, sportEmoji, type Sport } from "@/lib/sports";
 import { blockedSlots, type CourtBlock } from "@/lib/blocks";
@@ -303,7 +303,7 @@ function DaySchedule({
   // Show opening hours, stretched to fit any staff bookings outside them.
   const first = Math.min(open, ...active.map((b) => b.start_hour));
   const last = Math.max(close, ...active.map((b) => b.end_hour));
-  const hours = Array.from({ length: last - first }, (_, i) => first + i);
+  const hours = halfHours(first, last - SLOT_HOURS);
   const at = (courtId: number, h: number) => active.find((b) => b.court_id === courtId && b.start_hour <= h && h < b.end_hour);
 
   if (courts.length === 0) return <p className="muted">No courts.</p>;
@@ -323,7 +323,7 @@ function DaySchedule({
           </thead>
           <tbody>
             {hours.map((h) => (
-              <tr key={h}>
+              <tr key={h} className={h % 1 ? "half" : undefined}>
                 <th scope="row">{formatHour(h)}</th>
                 {courts.map((c) => {
                   const b = at(c.id, h);
@@ -332,7 +332,7 @@ function DaySchedule({
                     return label ? <td key={c.id} className="day-reserved">{label}</td> : <td key={c.id} />;
                   }
                   if (b.start_hour !== h) return null; // covered by the rowSpan above
-                  const span = b.end_hour - h;
+                  const span = (b.end_hour - h) / SLOT_HOURS;
                   return (
                     <td key={c.id} rowSpan={span} className="day-cell">
                       <button type="button" className={`day-booking ${b.status}`} onClick={onOpen}

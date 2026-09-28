@@ -35,13 +35,13 @@ export function blockAppliesOn(b: Pick<CourtBlock, "weekdays" | "start_date" | "
   return b.weekdays.length === 0 || b.weekdays.includes(new Date(date + "T00:00:00Z").getUTCDay());
 }
 
-/** Every reserved court-hour on a date, keyed "courtId:hour" → label. */
+/** Every reserved half-hour slot on a date, keyed "courtId:hour" (e.g. "3:10.5") → label. */
 export function blockedSlots(blocks: CourtBlock[], date: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const b of blocks) {
     if (!blockAppliesOn(b, date)) continue;
     for (const courtId of b.court_ids)
-      for (let h = b.start_hour; h < b.end_hour; h++) if (!out.has(`${courtId}:${h}`)) out.set(`${courtId}:${h}`, b.label);
+      for (let h = b.start_hour; h < b.end_hour; h += 0.5) if (!out.has(`${courtId}:${h}`)) out.set(`${courtId}:${h}`, b.label);
   }
   return out;
 }

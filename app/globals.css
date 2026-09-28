@@ -127,14 +127,14 @@ h2 { font-size: 20px; margin: 0 0 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border); display: inline-block; }
 .swatch.open { background: var(--brand-soft); border-color: var(--brand); }
-.swatch.booked { background: var(--booked); }
 .swatch.reserved { background: #efe9fb; }
 @media (prefers-color-scheme: dark) { .swatch.reserved { background: #2a2440; } }
 .swatch.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 3px, transparent 3px, transparent 6px); }
 
 /* Grid */
 .grid-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 420px; }
+table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 420px; table-layout: fixed; }
+.grid thead th.time { width: 84px; }
 .grid th, .grid td { padding: 4px; border-bottom: 1px solid var(--border); text-align: center; }
 .grid thead th {
   position: sticky; top: 0; background: var(--surface); font-size: 14px; padding: 10px 6px; z-index: 1;
@@ -146,13 +146,24 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-widt
 }
 .grid tr:last-child td, .grid tr:last-child th { border-bottom: 0; }
 .slot {
-  width: 100%; min-height: 44px; border-radius: 8px; border: 1px solid transparent;
+  width: 100%; min-height: 36px; border-radius: 8px; border: 1px solid transparent;
   font-size: 13px; font-weight: 600; cursor: default; padding: 4px;
   display: flex; align-items: center; justify-content: center;
 }
 .slot.open { background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand) 40%, transparent); color: var(--brand-dark); cursor: pointer; }
 .slot.open:hover, .slot.open:focus-visible { background: var(--brand); color: #fff; outline: none; }
-.slot.booked { background: var(--booked); color: var(--booked-text); }
+.slot.booked { flex-direction: column; gap: 1px; overflow: hidden; }
+.slot.booked .slot-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot.booked small { font-size: 11px; font-weight: 500; }
+/* Booking status colors (confirmed = blue, pending payment = amber); pending also says "Pending". */
+.slot.booked.confirmed, .swatch.confirmed { background: #e3ecfb; color: #1d3f7a; border-color: #b9cdf0; }
+.slot.booked.pending, .swatch.pending { background: #fff4d6; color: #6b4200; border-color: #f0d58a; }
+@media (prefers-color-scheme: dark) {
+  .slot.booked.confirmed, .swatch.confirmed { background: #1b2a44; color: #b9cdf5; border-color: #2c4470; }
+  .slot.booked.pending, .swatch.pending { background: #3a2e12; color: #ffd98a; border-color: #5c4a1d; }
+}
+.grid tr.half th.time { font-size: 11px; opacity: .75; }
+.grid tr:not(.half) > th, .grid tr:not(.half) > td { border-bottom-style: dashed; } /* :00 → :30 */
 .slot.reserved { background: #efe9fb; color: #4b3a78; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-color-scheme: dark) { .slot.reserved { background: #2a2440; color: #cfc2f5; } }
 .slot.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 4px, transparent 4px, transparent 8px); color: var(--booked-text); font-weight: 400; }
@@ -348,3 +359,6 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .day-schedule td.day-reserved { background: #efe9fb; color: #4b3a78; font-size: 12px; padding: 0 8px; }
 @media (prefers-color-scheme: dark) { .day-schedule td.day-reserved { background: #2a2440; color: #cfc2f5; } }
 .export-links { display: flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; font-size: 14px; }
+.day-schedule th, .day-schedule td { height: 26px; }
+.day-schedule tr.half > th { font-size: 11px; opacity: .7; }
+.day-schedule tr:not(.half) > th, .day-schedule tr:not(.half) > td { border-bottom-style: dashed; }

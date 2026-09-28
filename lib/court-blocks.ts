@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { blockAppliesOn, BLOCK_LABELS, type CourtBlock } from "./blocks";
 import type { Result } from "./bookings";
+import { isHalfHour } from "./format";
 import { isValidDate } from "./time";
 
 const fail = (status: number, error: string) => ({ ok: false as const, status, error });
@@ -54,7 +55,7 @@ export async function createBlock(input: NewBlockInput): Promise<Result<{ block:
   if (courtIds.length === 0) return fail(400, "Choose at least one court.");
   if (!isValidDate(startDate)) return fail(400, "Choose a valid date.");
   if (endDate !== null && (!isValidDate(endDate) || endDate < startDate)) return fail(400, "The end date must be on or after the start date.");
-  if (!Number.isInteger(startHour) || !Number.isInteger(endHour) || startHour < 0 || endHour > 24 || endHour <= startHour)
+  if (!isHalfHour(startHour) || !isHalfHour(endHour) || endHour <= startHour)
     return fail(400, "The end time must be after the start time.");
 
   const known = await db().query(`SELECT id FROM courts WHERE id = ANY($1::int[])`, [courtIds]);

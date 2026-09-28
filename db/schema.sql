@@ -192,3 +192,33 @@ CREATE TABLE IF NOT EXISTS court_blocks (
   CHECK (end_hour > start_hour),
   CHECK (end_date IS NULL OR end_date >= start_date)
 );
+
+-- v9: half-hour slots ------------------------------------------------------------------
+-- Times are hours in half-hour steps (10.5 = 10:30 AM). booking_slots has one row per
+-- 30 minutes. Existing bookings get their missing :30 slots so they stay fully protected.
+ALTER TABLE bookings      DROP CONSTRAINT IF EXISTS bookings_start_hour_check;
+ALTER TABLE bookings      DROP CONSTRAINT IF EXISTS bookings_end_hour_check;
+ALTER TABLE booking_slots DROP CONSTRAINT IF EXISTS booking_slots_slot_hour_check;
+ALTER TABLE court_blocks  DROP CONSTRAINT IF EXISTS court_blocks_start_hour_check;
+ALTER TABLE court_blocks  DROP CONSTRAINT IF EXISTS court_blocks_end_hour_check;
+
+ALTER TABLE bookings      ALTER COLUMN start_hour TYPE NUMERIC(3,1), ALTER COLUMN end_hour TYPE NUMERIC(3,1);
+ALTER TABLE booking_slots ALTER COLUMN slot_hour  TYPE NUMERIC(3,1);
+ALTER TABLE court_blocks  ALTER COLUMN start_hour TYPE NUMERIC(3,1), ALTER COLUMN end_hour TYPE NUMERIC(3,1);
+
+ALTER TABLE bookings ADD CONSTRAINT bookings_start_hour_check
+  CHECK (start_hour BETWEEN 0 AND 23.5 AND start_hour * 2 = trunc(start_hour * 2));
+ALTER TABLE bookings ADD CONSTRAINT bookings_end_hour_check
+  CHECK (end_hour BETWEEN 0.5 AND 24 AND end_hour * 2 = trunc(end_hour * 2));
+ALTER TABLE booking_slots ADD CONSTRAINT booking_slots_slot_hour_check
+  CHECK (slot_hour BETWEEN 0 AND 23.5 AND slot_hour * 2 = trunc(slot_hour * 2));
+ALTER TABLE court_blocks ADD CONSTRAINT court_blocks_start_hour_check
+  CHECK (start_hour BETWEEN 0 AND 23.5 AND start_hour * 2 = trunc(start_hour * 2));
+ALTER TABLE court_blocks ADD CONSTRAINT court_blocks_end_hour_check
+  CHECK (end_hour BETWEEN 0.5 AND 24 AND end_hour * 2 = trunc(end_hour * 2));
+
+INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
+SELECT b.court_id, b.booking_date, h, b.id
+  FROM bookings b, generate_series(b.start_hour, b.end_hour - 0.5, 0.5) AS h
+ WHERE b.status <> 'cancelled'
+ON CONFLICT DO NOTHING;

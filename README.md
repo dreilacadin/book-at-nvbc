@@ -3,6 +3,7 @@
 A simple booking site for NV Badminton Center's badminton and pickleball courts.
 
 - **Players** choose a sport (Badminton or Pickleball), pick a date, tap an open slot, enter their name and mobile number, and get a booking code (e.g. `NV-7K3Q9P`). No account needed.
+- **Half-hour slots**: bookings start on the hour or half hour and can be 30 minutes, 1 hour, 1½ hours, … (priced as the hourly rate × hours). The schedule shows who booked each slot as first name and last initial ("Ana C."), blue when booked and amber while an online payment is pending.
 - **Everyone** can see which slots are booked — but never *who* booked them. Names and numbers are only visible to staff.
 - **Players** can view or cancel their own booking with the code on the **My booking** page (codes are also remembered on the device they booked from).
 - **Staff** log in at `/admin` to see an overview of bookings by day, week or month, every booking with names/contacts, edit bookings (move court/date/time, fix names, change the rate or payment method), cancel bookings, add walk-in/phone bookings, block courts for tournaments or maintenance, and change opening hours, limits and the announcement banner.

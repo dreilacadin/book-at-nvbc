@@ -21,6 +21,7 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
+import { isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { blocksOn } from "./court-blocks";
 import { SPORTS, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
@@ -52,12 +53,13 @@ export function normalizeCode(code: unknown): string | null {
 export async function getAvailability(date: string, requestedSport?: Sport) {
   const settings = await getSettings();
   const today = nowAtFacility();
-  const [allCourts, slots, blocks] = await Promise.all([
+  const [allCourts, taken, blocks] = await Promise.all([
     db().query<{ id: number; name: string; sport: Sport }>(
       `SELECT id, name, sport FROM courts WHERE is_active ORDER BY sort_order, id`
     ),
-    db().query<{ court_id: number; slot_hour: number }>(
-      `SELECT court_id, slot_hour FROM booking_slots WHERE slot_date = $1`,
+    db().query<{ court_id: number; start_hour: number; end_hour: number; player_name: string; status: BookingStatus }>(
+      `SELECT court_id, start_hour, end_hour, player_name, status FROM bookings
+        WHERE booking_date = $1 AND status <> 'cancelled' ORDER BY court_id, start_hour`,
       [date]
     ),
     blocksOn(date),
@@ -77,7 +79,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     sports,
     date,
     today: today.date,
-    currentHour: today.hour,
+    currentHour: today.time, // e.g. 10.75 at 10:45 — slots starting at or before this are past
     openHour: settings.open_hour,
     closeHour: settings.close_hour,
     maxHoursPerBooking: settings.max_hours_per_booking,
@@ -94,9 +96,16 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     },
     paymentMethods: enabledMethods(settings),
     courts,
-    booked: slots.rows
+    // Booked times, shown with the booker's first name and last initial only ("Ana C.").
+    bookings: taken.rows
       .filter((r) => courtIds.has(r.court_id))
-      .map((r) => ({ courtId: r.court_id, hour: r.slot_hour })),
+      .map((r) => ({
+        courtId: r.court_id,
+        start: r.start_hour,
+        end: r.end_hour,
+        name: publicName(r.player_name),
+        status: r.status as "pending" | "confirmed",
+      })),
     // Reserved times (Open Play, Queueing, …) with their label, so players see why.
     blocked: [...blockedSlots(blocks, date)]
       .map(([key, label]) => {
@@ -200,7 +209,7 @@ export async function createBooking(
 
   if (!Number.isInteger(courtId)) return fail(400, "Please choose a court.");
   if (!isValidDate(date)) return fail(400, "Please choose a valid date.");
-  if (!Number.isInteger(startHour) || !Number.isInteger(hours) || hours < 1)
+  if (!isHalfHour(startHour) || !Number.isInteger(hours * 2) || hours < SLOT_HOURS)
     return fail(400, "Please choose a valid time.");
   if (name.length < 2 || name.length > 60) return fail(400, "Please enter your name (2–60 characters).");
   if (!admin && (contact.length < 7 || contact.length > 60 || !/[0-9@]/.test(contact)))
@@ -297,7 +306,7 @@ export async function createBooking(
 
     // Fair-use limit per person per day (matched on their contact number/email).
     const used = await client.query<{ total: number }>(
-      `SELECT COALESCE(SUM(end_hour - start_hour), 0)::int AS total
+      `SELECT COALESCE(SUM(end_hour - start_hour), 0)::float8 AS total
          FROM bookings
         WHERE status <> 'cancelled' AND booking_date = $1
           AND lower(regexp_replace(contact, '[^a-zA-Z0-9@.]', '', 'g'))
@@ -343,10 +352,10 @@ export async function createBooking(
     }
     if (!bookingId) throw new Error("Could not generate a unique booking code");
 
-    // Claim every hour. The primary key on booking_slots rejects any overlap.
+    // Claim every half-hour slot. The primary key on booking_slots rejects any overlap.
     await client.query(
       `INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
-       SELECT $1, $2, h, $3 FROM generate_series($4::int, $5::int - 1) AS h`,
+       SELECT $1, $2, h, $3 FROM generate_series($4::numeric, $5::numeric - 0.5, 0.5) AS h`,
       [courtId, date, bookingId, startHour, endHour]
     );
 
@@ -583,7 +592,7 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
 
   if (!Number.isInteger(courtId)) return fail(400, "Please choose a court.");
   if (!isValidDate(date)) return fail(400, "Please choose a valid date.");
-  if (!Number.isInteger(startHour) || !Number.isInteger(endHour) || startHour < 0 || endHour > 24 || endHour <= startHour)
+  if (!isHalfHour(startHour) || !isHalfHour(endHour) || endHour <= startHour)
     return fail(400, "The end time must be after the start time.");
   if (name.length < 2 || name.length > 60) return fail(400, "Name must be 2–60 characters.");
   if (contact.length > 60) return fail(400, "Contact must be 60 characters or fewer.");
@@ -626,11 +635,11 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
       [id, courtId, date, startHour, endHour, name, contact || "(admin)", notes, rateType, price.hourlyRate,
         price.total, paymentMethod, paymentMethod === "cash" ? "" : paymentRef, status]
     );
-    // Re-claim the hours. The primary key on booking_slots rejects any overlap with other bookings.
+    // Re-claim the half-hour slots. The primary key on booking_slots rejects any overlap with other bookings.
     await client.query(`DELETE FROM booking_slots WHERE booking_id = $1`, [id]);
     await client.query(
       `INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
-       SELECT $1, $2, h, $3 FROM generate_series($4::int, $5::int - 1) AS h`,
+       SELECT $1, $2, h, $3 FROM generate_series($4::numeric, $5::numeric - 0.5, 0.5) AS h`,
       [courtId, date, id, startHour, endHour]
     );
     await client.query("COMMIT");

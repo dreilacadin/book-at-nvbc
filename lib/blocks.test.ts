@@ -27,9 +27,10 @@ test("blockAppliesOn: one-off blocks apply on their date only", () => {
 
 test("blockedSlots lists each reserved court-hour with its label", () => {
   const m = blockedSlots([openPlay, oneOff], "2026-09-29");
-  assert.equal(m.size, 6); // 2 courts × 3 hours
+  assert.equal(m.size, 12); // 2 courts × 6 half-hour slots
   assert.equal(m.get("1:18"), "Open Play");
-  assert.equal(m.get("2:20"), "Open Play");
+  assert.equal(m.get("1:18.5"), "Open Play");
+  assert.equal(m.get("2:20.5"), "Open Play");
   assert.equal(m.get("1:21"), undefined); // end hour is exclusive
   assert.equal(m.get("3:8"), undefined);
 });
@@ -38,6 +39,8 @@ test("findBlockConflict: overlapping hours on a blocked court conflict; touching
   assert.equal(findBlockConflict([openPlay], 1, "2026-09-29", 17, 19)?.label, "Open Play");
   assert.equal(findBlockConflict([openPlay], 1, "2026-09-29", 16, 18), undefined); // ends as it starts
   assert.equal(findBlockConflict([openPlay], 1, "2026-09-29", 21, 22), undefined);
+  assert.equal(findBlockConflict([openPlay], 1, "2026-09-29", 17.5, 18.5)?.label, "Open Play"); // half-hour overlap
+  assert.equal(findBlockConflict([openPlay], 1, "2026-09-29", 17, 18), undefined);
   assert.equal(findBlockConflict([openPlay], 3, "2026-09-29", 18, 20), undefined); // other court
   assert.equal(findBlockConflict([openPlay], 1, "2026-09-30", 18, 20), undefined); // Wednesday
 });

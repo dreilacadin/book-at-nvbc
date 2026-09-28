@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { formatDateLong, formatHour, formatRange } from "@/lib/format";
+import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import {
   formatPeso,
   PAYMENT_METHODS,
@@ -393,7 +393,7 @@ function AddBooking({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const hourOptions = Array.from({ length: 25 }, (_, h) => h);
+  const hourOptions = halfHours(0, 24);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -469,7 +469,7 @@ function AddBooking({
         <div>
           <label htmlFor="s">From</label>
           <select id="s" value={start} onChange={(e) => setStart(Number(e.target.value))}>
-            {hourOptions.slice(0, 24).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
+            {hourOptions.slice(0, -1).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
           </select>
         </div>
         <div>

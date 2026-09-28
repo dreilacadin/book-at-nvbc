@@ -31,7 +31,7 @@ type Row = {
   cancelled_by: string | null;
 };
 
-const time = (h: number) => `${String(h).padStart(2, "0")}:00`;
+const time = (h: number) => `${String(Math.floor(h)).padStart(2, "0")}:${h % 1 ? "30" : "00"}`; // 10.5 → "10:30"
 const dow = (d: string) => new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { weekday: "short", timeZone: "UTC" });
 const manila = (d: Date) =>
   d.toLocaleString("sv-SE", { timeZone: process.env.FACILITY_TIMEZONE || "Asia/Manila" }).slice(0, 16); // "YYYY-MM-DD HH:MM"
