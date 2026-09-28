@@ -8,10 +8,12 @@ import {
   MEMBERSHIP_DAYS,
   membershipState,
   normalizeMemberCode,
+  type MembershipState,
   validateMembershipForm,
   type MembershipStatus,
   type MemberType,
 } from "./membership";
+import { checkImportRecord, findDuplicates, type ImportRecord } from "./member-import";
 import { hasPaymentProof, isPaymentMethod, isPaymentStatus, isProofImage, type PaymentMethod, type PaymentStatus } from "./pricing";
 import { SPORTS } from "./sports";
 import { addDays, nowAtFacility } from "./time";
@@ -30,7 +32,7 @@ export type Membership = {
   email: string;
   mobile: string;
   address: string;
-  birthdate: string;
+  birthdate: string | null; // may be missing on imported members
   gender: string;
   school: string;
   student_id: string;
@@ -49,11 +51,14 @@ export type Membership = {
   staff_notes: string;
   created_at: string;
   approved_at: string | null;
+  reminded_on: string | null; // last time staff reminded an expired member to renew or forfeit
+  forfeited_on: string | null;
 };
 
 const COLUMNS = `id, token, member_code, status, member_type, full_name, email, mobile, address, birthdate, gender,
   school, student_id, sports, emergency_name, emergency_mobile, fee, payment_method, payment_status, payment_ref,
-  (payment_proof <> '') AS has_proof, paid_at, member_since, starts_on, expires_on, staff_notes, created_at, approved_at`;
+  (payment_proof <> '') AS has_proof, paid_at, member_since, starts_on, expires_on, staff_notes, created_at, approved_at,
+  reminded_on, forfeited_on`;
 
 // ---- Public: apply, check status, send payment -------------------------------------------
 
@@ -66,15 +71,18 @@ export async function applyForMembership(input: Record<string, unknown>): Promis
 
   // Everyone applies once. Blocks a second application while one is pending, and for anyone who
   // has ever been approved — expired memberships are renewed at the front desk instead.
-  // Matched by email, or by the same full name and birthdate (e.g. applying again with a new email).
+  // The same person = same full name AND birthdate (like the member import). A shared email is
+  // fine: families often sign several people up with one parent's email.
   const existing = await db().query<{ status: MembershipStatus }>(
     `SELECT status FROM memberships
-      WHERE status <> 'rejected'
-        AND (lower(email) = $1 OR (lower(full_name) = lower($2) AND birthdate = $3))
-      ORDER BY (status = 'active') DESC LIMIT 1`,
-    [form.email, form.fullName, form.birthdate]
+      WHERE status <> 'rejected' AND birthdate = $2
+        AND regexp_replace(lower(trim(full_name)), '\\s+', ' ', 'g') = regexp_replace(lower(trim($1)), '\\s+', ' ', 'g')
+      ORDER BY (status = 'active') DESC, (status = 'forfeited') DESC LIMIT 1`,
+    [form.fullName, form.birthdate]
   );
   const prior = existing.rows[0];
+  if (prior?.status === "forfeited")
+    return fail(409, "Your NVBC membership has ended. The front desk can reactivate it for you — you'll keep your member code.");
   if (prior?.status === "active")
     return fail(
       409,
@@ -99,7 +107,7 @@ export async function applyForMembership(input: Record<string, unknown>): Promis
 
 /** What the applicant sees on their own status page (reached only through their secret link). */
 export type MembershipView = {
-  state: "pending" | "active" | "expired" | "rejected";
+  state: MembershipState;
   memberType: MemberType;
   fullName: string;
   fee: number;
@@ -256,7 +264,8 @@ export async function approveMembership(id: string): Promise<Result<{ id: string
 
 /**
  * Renew for another 365 days (after collecting the fee at the desk). A membership renewed early
- * keeps its remaining days: the new year starts when the current one ends. Same member code.
+ * keeps its remaining days: the new year starts when the current one ends. An expired or
+ * forfeited membership restarts today. Same member code.
  */
 export async function renewMembership(id: string): Promise<Result<{ id: string; expiresOn: string }>> {
   if (!isId(id)) return fail(400, "Invalid id.");
@@ -266,17 +275,47 @@ export async function renewMembership(id: string): Promise<Result<{ id: string; 
   );
   const m = rows[0];
   if (!m) return fail(404, "Membership not found.");
-  if (m.status !== "active" || !m.expires_on) return fail(400, "Only approved memberships can be renewed.");
+  if ((m.status !== "active" && m.status !== "forfeited") || !m.expires_on)
+    return fail(400, "Only approved memberships can be renewed.");
   const today = nowAtFacility().date;
-  const startsOn = m.expires_on > today ? m.expires_on : today;
+  const startsOn = m.status === "active" && m.expires_on > today ? m.expires_on : today;
   const expiresOn = addDays(startsOn, MEMBERSHIP_DAYS);
+  const what = m.status === "forfeited" ? "Reactivated" : "Renewed";
   await db().query(
-    `UPDATE memberships SET starts_on = $2, expires_on = $3, payment_status = 'paid', paid_at = now(),
+    `UPDATE memberships SET status = 'active', starts_on = $2, expires_on = $3, payment_status = 'paid', paid_at = now(),
+            reminded_on = NULL, forfeited_on = NULL,
             staff_notes = btrim(staff_notes || E'\\n' || $4, E' \\n')
       WHERE id = $1`,
-    [id, startsOn, expiresOn, `Renewed ${today}: ${startsOn} → ${expiresOn}`]
+    [id, startsOn, expiresOn, `${what} ${today}: ${startsOn} → ${expiresOn}`]
   );
   return { ok: true, data: { id, expiresOn } };
+}
+
+/** The member doesn't want to renew: end the membership. Their code stops working. */
+export async function forfeitMembership(id: string, reason: unknown): Promise<Result<{ id: string }>> {
+  if (!isId(id)) return fail(400, "Invalid id.");
+  const today = nowAtFacility().date;
+  const note = typeof reason === "string" && reason.trim() ? `: ${reason.trim().slice(0, 200)}` : "";
+  const { rowCount } = await db().query(
+    `UPDATE memberships SET status = 'forfeited', forfeited_on = $2,
+            staff_notes = btrim(staff_notes || E'\\n' || $3, E' \\n')
+      WHERE id = $1 AND status = 'active'`,
+    [id, today, `Forfeited ${today}${note}`]
+  );
+  if (!rowCount) return fail(400, "Only approved memberships can be forfeited.");
+  return { ok: true, data: { id } };
+}
+
+/** Staff told an expired member to renew or forfeit: remember when. */
+export async function markReminded(id: string): Promise<Result<{ id: string; remindedOn: string }>> {
+  if (!isId(id)) return fail(400, "Invalid id.");
+  const today = nowAtFacility().date;
+  const { rowCount } = await db().query(
+    `UPDATE memberships SET reminded_on = $2 WHERE id = $1 AND status = 'active' AND expires_on <= $2`,
+    [id, today]
+  );
+  if (!rowCount) return fail(400, "Only expired memberships need a reminder.");
+  return { ok: true, data: { id, remindedOn: today } };
 }
 
 export async function rejectMembership(id: string, reason: unknown): Promise<Result<{ id: string }>> {
@@ -304,4 +343,97 @@ export async function membershipProof(id: string): Promise<string | null> {
   if (!isId(id)) return null;
   const { rows } = await db().query<{ payment_proof: string }>(`SELECT payment_proof FROM memberships WHERE id = $1`, [id]);
   return rows[0]?.payment_proof || null;
+}
+
+// ---- Staff: batch import of existing members ------------------------------------------------
+
+export type ImportOutcome =
+  | { row: number; result: "imported"; fullName: string; memberCode: string; token: string; email: string; mobile: string; expiresOn: string }
+  | { row: number; result: "ready"; warning?: string } // dry run: would be imported (warning: same name only)
+  | { row: number; result: "ask"; reason: string } // dry run: looks like a duplicate — staff decide
+  | { row: number; result: "duplicate"; reason: string }
+  | { row: number; result: "error"; reason: string };
+
+export const MAX_IMPORT_ROWS = 3000;
+
+/**
+ * Imports existing members (e.g. from a Google Forms sheet) as approved, paid memberships with
+ * new member codes.
+ * - dryRun: checks every row and saves nothing. Rows that look like an existing member or an
+ *   earlier row (2+ of name, contact number, birthday — see findDuplicates) come back as "ask".
+ * - Otherwise: imports exactly the rows sent — the ones staff ticked or chose "Import anyway".
+ */
+export async function importMembers(input: unknown, dryRun: boolean): Promise<Result<{ outcomes: ImportOutcome[] }>> {
+  if (!Array.isArray(input) || input.length === 0) return fail(400, "No members to import.");
+  if (input.length > MAX_IMPORT_ROWS) return fail(400, `Import up to ${MAX_IMPORT_ROWS} members at a time.`);
+
+  const outcomes: ImportOutcome[] = [];
+  const valid: ImportRecord[] = [];
+  for (const r of input as ImportRecord[]) {
+    const problem = r && typeof r === "object" ? checkImportRecord(r) : "Invalid row";
+    if (problem) outcomes.push({ row: Number(r?.row) || 0, result: "error", reason: problem });
+    else valid.push(r);
+  }
+
+  const existing = await db().query<{ name: string; mobile: string; birthdate: string | null; member_code: string | null }>(
+    `SELECT full_name AS name, mobile, birthdate, member_code FROM memberships WHERE status <> 'rejected'`
+  );
+  const codes = new Set(existing.rows.map((r) => r.member_code).filter(Boolean) as string[]);
+  const dupes = dryRun ? findDuplicates(valid, existing.rows) : [];
+
+  const settings = await getSettings();
+  const today = nowAtFacility().date;
+  const toInsert: { r: ImportRecord; code: string; token: string }[] = [];
+
+  for (const [i, r] of valid.entries()) {
+    const row = r.row;
+    if (dryRun) {
+      const d = dupes[i];
+      outcomes.push(
+        d && "ask" in d ? { row, result: "ask", reason: d.ask }
+          : d && "warn" in d ? { row, result: "ready", warning: d.warn }
+          : { row, result: "ready" }
+      );
+      continue;
+    }
+    let code = "";
+    do code = formatMemberCode(Array.from({ length: 8 }, () => randomInt(MEMBER_CODE_ALPHABET_SIZE)));
+    while (codes.has(code));
+    codes.add(code);
+    toInsert.push({ r, code, token: randomBytes(18).toString("base64url") });
+  }
+
+  if (!dryRun && toInsert.length) {
+    const client = await db().connect();
+    try {
+      await client.query("BEGIN");
+      for (const { r, code, token } of toInsert) {
+        const note = [`Imported ${today}.`, r.notes].filter(Boolean).join(" ");
+        await client.query(
+          `INSERT INTO memberships (token, member_code, status, member_type, full_name, email, mobile, address, birthdate,
+                                    gender, school, student_id, emergency_name, emergency_mobile, fee,
+                                    payment_method, payment_status, member_since, starts_on, expires_on,
+                                    staff_notes, approved_at)
+           VALUES ($1, $2, 'active', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                   'cash', 'paid', $15, $15, $16, $17, now())`,
+          [token, code, r.memberType, r.fullName.trim(), r.email.toLowerCase(), r.mobile, r.address, r.birthdate,
+            r.gender, r.school, r.studentId, r.emergencyName, r.emergencyMobile,
+            r.memberType === "student" ? settings.membership_fee_student : settings.membership_fee_adult,
+            r.startsOn, r.expiresOn, note]
+        );
+        outcomes.push({
+          row: r.row, result: "imported", fullName: r.fullName.trim(), memberCode: code, token,
+          email: r.email.toLowerCase(), mobile: r.mobile, expiresOn: r.expiresOn,
+        });
+      }
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+  outcomes.sort((a, b) => a.row - b.row);
+  return { ok: true, data: { outcomes } };
 }

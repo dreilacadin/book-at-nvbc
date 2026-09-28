@@ -8,7 +8,7 @@ import { formatPeso, paymentLabel, type PaymentMethod, type PaymentStatus } from
 import { loadMembership, saveMembership } from "@/lib/saved-membership";
 
 type View = {
-  state: "pending" | "active" | "expired" | "rejected";
+  state: "pending" | "active" | "expired" | "rejected" | "forfeited";
   memberType: MemberType;
   fullName: string;
   fee: number;
@@ -74,8 +74,9 @@ export default function MembershipStatus({ token }: { token: string }) {
           </div>
         ) : (
           <div className="notice" style={{ marginBottom: 16 }}>
-            Your membership expired on <strong>{v.expiresOn && niceDate(v.expiresOn)}</strong>. Renew it at the front
-            desk — you&apos;ll keep the same member code.
+            Your membership expired on <strong>{v.expiresOn && niceDate(v.expiresOn)}</strong>. On your next visit, let
+            the front desk know whether you&apos;d like to renew (you keep the same member code) or end your membership.
+            Until then, courts are booked at the Regular rate.
           </div>
         )}
 
@@ -118,6 +119,22 @@ export default function MembershipStatus({ token }: { token: string }) {
             <a className="btn secondary" href={v.qr} download={`NVBC-member-${v.memberCode}.png`}>Save QR image</a>
           </div>
         )}
+      </div>
+    );
+
+  if (v.state === "forfeited")
+    return (
+      <div className="member-page">
+        <h1>Membership ended</h1>
+        <div className="card">
+          <p style={{ marginTop: 0 }}>
+            {firstName}, your NVBC membership ({v.memberCode}) has ended, so member rates no longer apply. Thank you for being
+            part of NVBC!
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            Want to come back? The front desk can reactivate it — you&apos;ll keep the same member code.
+          </p>
+        </div>
       </div>
     );
 

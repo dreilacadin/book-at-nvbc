@@ -24,6 +24,9 @@ import ReservedTimes from "./ReservedTimes";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 
+const shortDate = (d: string | null) =>
+  d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
+
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "settings">("overview");
@@ -170,6 +173,18 @@ function BookingsTab({
     }
   }
 
+  async function remind(b: AdminBooking) {
+    try {
+      const r = await api<{ remindedOn: string }>("/api/admin/members", { action: "remind", id: b.expired_member_id });
+      setBookings((list) =>
+        list.map((x) => (x.expired_member_id === b.expired_member_id ? { ...x, expired_member_reminded: r.remindedOn } : x))
+      );
+    } catch (e) {
+      onAuthError(e);
+      setError(e instanceof Error ? e.message : "Update failed");
+    }
+  }
+
   async function remove(b: AdminBooking) {
     if (!window.confirm(`Permanently delete ${b.name}'s cancelled booking (${b.code})? This can't be undone.`)) return;
     try {
@@ -279,6 +294,17 @@ function BookingsTab({
                         {b.contact.startsWith("+") || /^\d/.test(b.contact) ? <a href={`tel:${b.contact}`}>{b.contact}</a> : <span className="muted">{b.contact}</span>}
                       </div>
                       {b.notes && <div className="muted" style={{ fontSize: 13 }}>{b.notes}</div>}
+                      {b.expired_member_id && (
+                        <div className="expired-flag">
+                          ⚠ {b.expired_member_name !== b.name ? `${b.expired_member_name}'s ` : ""}membership expired{" "}
+                          {shortDate(b.expired_member_on)} — remind: renew or forfeit.{" "}
+                          {b.expired_member_reminded ? (
+                            <span className="muted">Reminded {shortDate(b.expired_member_reminded)}.</span>
+                          ) : (
+                            <button type="button" className="link-btn" onClick={() => remind(b)}>Mark reminded</button>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td>
                       {rateTypeLabel(b.rate_type)}

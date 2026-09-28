@@ -269,3 +269,16 @@ CREATE INDEX IF NOT EXISTS memberships_email_idx ON memberships (lower(email));
 -- a link to that membership so staff can see whose code was used.
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS membership_id UUID REFERENCES memberships(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS bookings_membership_idx ON bookings (membership_id) WHERE membership_id IS NOT NULL;
+
+-- v12: importing existing members --------------------------------------------------------
+-- Records brought in from older sign-up sheets may not have a birthdate.
+ALTER TABLE memberships ALTER COLUMN birthdate DROP NOT NULL;
+
+-- v13: expired memberships — remind, then renew or forfeit ----------------------------------
+-- An expired membership stays in the system (status 'active' with a past expires_on) until the
+-- member renews or forfeits. Staff note when they reminded them.
+ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_status_check;
+ALTER TABLE memberships ADD CONSTRAINT memberships_status_check
+  CHECK (status IN ('pending', 'active', 'rejected', 'forfeited'));
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS reminded_on  DATE;
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS forfeited_on DATE;

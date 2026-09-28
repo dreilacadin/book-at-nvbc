@@ -27,6 +27,10 @@ export type AdminBooking = {
   has_proof: boolean;
   member_code: string | null; // member-rate bookings: whose member code was used
   member_name: string | null;
+  expired_member_id: string | null; // the booker's membership has expired: remind them
+  expired_member_name: string | null;
+  expired_member_on: string | null;
+  expired_member_reminded: string | null;
   ref_reused: number;
 };
 export type Court = { id: number; name: string; sport: Sport; is_active: boolean; sort_order: number; upcoming: number };
@@ -70,13 +74,13 @@ export type AdminMember = {
   id: string;
   token: string;
   member_code: string | null;
-  status: "pending" | "active" | "rejected";
+  status: "pending" | "active" | "rejected" | "forfeited";
   member_type: "student" | "adult";
   full_name: string;
   email: string;
   mobile: string;
   address: string;
-  birthdate: string;
+  birthdate: string | null;
   gender: string;
   school: string;
   student_id: string;
@@ -93,4 +97,6 @@ export type AdminMember = {
   expires_on: string | null;
   staff_notes: string;
   created_at: string;
+  reminded_on: string | null;
+  forfeited_on: string | null;
 };

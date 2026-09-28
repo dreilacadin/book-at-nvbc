@@ -24,15 +24,25 @@ export async function GET(req: NextRequest) {
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof,
               mb.member_code, mb.full_name AS member_name,
+              ex.id AS expired_member_id, ex.full_name AS expired_member_name,
+              ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,
               -- Same reference number used on another booking? Worth a second look.
               CASE WHEN b.payment_ref = '' THEN 0 ELSE
                 (SELECT count(*)::int FROM bookings o WHERE o.payment_ref = b.payment_ref AND o.id <> b.id) END
                 AS ref_reused
          FROM bookings b JOIN courts c ON c.id = b.court_id
          LEFT JOIN memberships mb ON mb.id = b.membership_id
+         -- The booker is an expired member (same mobile, last 10 digits): remind them to renew or forfeit.
+         LEFT JOIN LATERAL (
+           SELECT m.id, m.full_name, m.expires_on, m.reminded_on FROM memberships m
+            WHERE m.status = 'active' AND m.expires_on <= $3
+              AND length(regexp_replace(b.contact, '\\D', '', 'g')) >= 10
+              AND right(regexp_replace(m.mobile, '\\D', '', 'g'), 10) = right(regexp_replace(b.contact, '\\D', '', 'g'), 10)
+            ORDER BY m.expires_on DESC LIMIT 1
+         ) ex ON b.status <> 'cancelled'
         WHERE b.booking_date BETWEEN $1 AND $2
         ORDER BY b.booking_date, (b.status = 'cancelled'), c.sport, b.start_hour, c.sort_order, c.id`,
-      [from, to]
+      [from, to, nowAtFacility().date]
     );
     return NextResponse.json({ date: from, from, to, bookings: rows }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {

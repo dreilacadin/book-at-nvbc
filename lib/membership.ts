@@ -15,20 +15,23 @@ export const MEMBERSHIP_DAYS = 365;
  * pending  — applied, waiting for payment and staff approval
  * active   — approved (may be past its expires_on date: see membershipState)
  * rejected — declined by staff
+ * forfeited — the member gave it up after it expired (staff can reactivate it with a renewal)
  */
-export type MembershipStatus = "pending" | "active" | "rejected";
+export type MembershipStatus = "pending" | "active" | "rejected" | "forfeited";
 
-/** What a membership means today: Active, Expired, Pending or Rejected. */
-export function membershipState(
-  m: { status: MembershipStatus; expires_on: string | null },
-  today: string
-): "pending" | "active" | "expired" | "rejected" {
+export type MembershipState = "pending" | "active" | "expired" | "rejected" | "forfeited";
+
+/**
+ * What a membership means today. An expired membership stays "expired" (not deleted) until the
+ * member renews or forfeits it, so staff can remind them on their next visit.
+ */
+export function membershipState(m: { status: MembershipStatus; expires_on: string | null }, today: string): MembershipState {
   if (m.status !== "active") return m.status;
   return m.expires_on && today >= m.expires_on ? "expired" : "active";
 }
 
 export const membershipStateLabel = (s: string) =>
-  ({ pending: "Pending", active: "Active", expired: "Expired", rejected: "Not approved" })[s] ?? s;
+  ({ pending: "Pending", active: "Active", expired: "Expired", rejected: "Not approved", forfeited: "Forfeited" })[s] ?? s;
 
 // No 0/O/1/I/L so codes are easy to read out loud or type.
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";

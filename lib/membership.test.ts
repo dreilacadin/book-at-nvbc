@@ -60,4 +60,7 @@ test("membershipState: active until the day it expires", () => {
   assert.equal(membershipState(m, "2027-09-27"), "active");
   assert.equal(membershipState(m, "2027-09-28"), "expired");
   assert.equal(membershipState({ status: "pending", expires_on: null }, "2027-01-01"), "pending");
+  // Expired stays expired, however long ago, until renewed or forfeited.
+  assert.equal(membershipState(m, "2031-01-01"), "expired");
+  assert.equal(membershipState({ status: "forfeited", expires_on: "2027-09-28" }, "2027-10-01"), "forfeited");
 });

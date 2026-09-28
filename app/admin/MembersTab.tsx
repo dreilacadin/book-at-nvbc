@@ -4,10 +4,12 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ageOn, membershipState, membershipStateLabel, memberTypeLabel } from "@/lib/membership";
 import { formatPeso, PAYMENT_STATUSES, paymentLabel, type PaymentStatus } from "@/lib/pricing";
 import { sportLabel } from "@/lib/sports";
+import ImportMembers from "./ImportMembers";
 import QrScanner from "./QrScanner";
 import { api, todayManila, type AdminMember } from "./shared";
 
-type Filter = "action" | "active" | "expired" | "rejected" | "all";
+type Filter = "action" | "active" | "expired" | "forfeited" | "rejected" | "all";
+type Act = (body: Record<string, unknown>, confirmText?: string) => Promise<boolean>;
 
 const niceDate = (d: string | null) =>
   d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—";
@@ -21,6 +23,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
   const today = todayManila();
 
   const load = useCallback(async () => {
@@ -39,17 +42,19 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
     load();
   }, [load]);
 
-  async function act(body: Record<string, unknown>, confirmText?: string) {
-    if (confirmText && !window.confirm(confirmText)) return;
+  const act: Act = async (body, confirmText) => {
+    if (confirmText && !window.confirm(confirmText)) return false;
     try {
       await api("/api/admin/members", body);
       setError("");
       load();
+      return true;
     } catch (e) {
       onAuthError(e);
       setError(e instanceof Error ? e.message : "Action failed");
+      return false;
     }
-  }
+  };
 
   const stateOf = (m: AdminMember) => membershipState(m, today);
   const counts = {
@@ -58,18 +63,32 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
     ready: members.filter((m) => stateOf(m) === "pending" && (m.payment_status === "paid" || m.payment_status === "waived")).length,
     active: members.filter((m) => stateOf(m) === "active").length,
     expiring: members.filter((m) => stateOf(m) === "active" && m.expires_on && daysBetween(today, m.expires_on) <= 30).length,
+    expired: members.filter((m) => stateOf(m) === "expired").length,
+    notReminded: members.filter((m) => stateOf(m) === "expired" && !m.reminded_on).length,
   };
   const q = search.trim().toLowerCase();
-  const shown = members.filter((m) => {
-    const st = stateOf(m);
-    if (filter === "action" && st !== "pending") return false;
-    if (filter !== "action" && filter !== "all" && st !== filter) return false;
-    return !q || [m.full_name, m.email, m.mobile, m.member_code ?? ""].some((v) => v.toLowerCase().includes(q));
-  });
+  const shown = members
+    .filter((m) => {
+      const st = stateOf(m);
+      if (filter === "action" && st !== "pending") return false;
+      if (filter !== "action" && filter !== "all" && st !== filter) return false;
+      return !q || [m.full_name, m.email, m.mobile, m.member_code ?? ""].some((v) => v.toLowerCase().includes(q));
+    })
+    // Expired list: not yet reminded first, then longest expired first.
+    .sort((a, b) =>
+      filter === "expired" ? Number(!!a.reminded_on) - Number(!!b.reminded_on) || (a.expires_on ?? "").localeCompare(b.expires_on ?? "") : 0
+    );
 
   return (
     <div className="stack">
-      <MemberLookup today={today} onAuthError={onAuthError} onRenew={(m) => act({ action: "renew", id: m.id }, renewText(m, today))} />
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button className="btn small secondary" onClick={() => setImporting((v) => !v)}>
+          {importing ? "Close import" : "⬆ Import existing members"}
+        </button>
+      </div>
+      {importing && <ImportMembers onDone={load} onAuthError={onAuthError} />}
+
+      <MemberLookup today={today} onAuthError={onAuthError} act={act} />
 
       <div className="stats">
         <button type="button" className="stat" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setFilter("action")}>
@@ -80,13 +99,19 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
           <div className="n">{counts.active}</div>
           <div className="l">active members{counts.expiring ? ` · ${counts.expiring} expire within 30 days` : ""}</div>
         </button>
+        <button type="button" className="stat" style={{ textAlign: "left", cursor: "pointer", borderColor: counts.notReminded ? "#e0a800" : undefined }}
+          onClick={() => setFilter("expired")}>
+          <div className="n">{counts.expired}</div>
+          <div className="l">expired — remind to renew or forfeit{counts.notReminded ? ` · ${counts.notReminded} not reminded yet` : ""}</div>
+        </button>
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <select aria-label="Show" value={filter} onChange={(e) => setFilter(e.target.value as Filter)} style={{ width: "auto" }}>
           <option value="action">Pending applications</option>
           <option value="active">Active members</option>
-          <option value="expired">Expired</option>
+          <option value="expired">Expired — remind to renew or forfeit</option>
+          <option value="forfeited">Forfeited</option>
           <option value="rejected">Not approved</option>
           <option value="all">Everyone</option>
         </select>
@@ -124,7 +149,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                           onClick={() => setOpen(open === m.id ? null : m.id)}>
                           {m.full_name} {open === m.id ? "▾" : "▸"}
                         </button>
-                        <div className="muted" style={{ fontSize: 13 }}>{m.mobile} · {m.email}</div>
+                        <div className="muted" style={{ fontSize: 13 }}>{[m.mobile, m.email].filter(Boolean).join(" · ")}</div>
                         <div className="muted" style={{ fontSize: 12 }}>Applied {niceDate(m.created_at.slice(0, 10))}</div>
                       </td>
                       <td>{memberTypeLabel(m.member_type)}</td>
@@ -145,9 +170,15 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                       <td>
                         <span className={`badge member-${st}`}>{membershipStateLabel(st)}</span>
                         {m.member_code && <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, marginTop: 4 }}>{m.member_code}</div>}
-                        {m.expires_on && st !== "pending" && (
+                        {m.expires_on && (st === "active" || st === "expired") && (
                           <div className="muted" style={{ fontSize: 12 }}>{st === "expired" ? "Expired" : "Expires"} {niceDate(m.expires_on)}</div>
                         )}
+                        {st === "expired" && (
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>
+                            {m.reminded_on ? `Reminded ${niceDate(m.reminded_on)}` : "⚠ Not reminded yet"}
+                          </div>
+                        )}
+                        {st === "forfeited" && <div className="muted" style={{ fontSize: 12 }}>Forfeited {niceDate(m.forfeited_on)}</div>}
                       </td>
                       <td>
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
@@ -166,11 +197,12 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                               </button>
                             </>
                           )}
-                          {(st === "active" || st === "expired") && (
-                            <button className="btn small secondary" onClick={() => act({ action: "renew", id: m.id }, renewText(m, today))}>
-                              Renew
+                          {(st === "active" || st === "expired" || st === "forfeited") && (
+                            <button className={`btn small${st === "expired" ? "" : " secondary"}`} onClick={() => act({ action: "renew", id: m.id }, renewText(m, today))}>
+                              {st === "forfeited" ? "Reactivate" : "Renew"}
                             </button>
                           )}
+                          {st === "expired" && <ExpiredActions m={m} act={act} />}
                           {st === "rejected" && (
                             <button className="btn small secondary danger-text"
                               onClick={() => act({ action: "delete", id: m.id }, `Permanently delete ${m.full_name}'s declined application?`)}>
@@ -197,19 +229,42 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
 }
 
 function renewText(m: AdminMember, today: string) {
-  const early = m.expires_on && m.expires_on > today;
-  return `Renew ${m.full_name}'s membership for another 365 days${early ? ` (added after it ends on ${niceDate(m.expires_on)})` : " starting today"}? Collect the ${memberTypeLabel(m.member_type).toLowerCase()} fee first.`;
+  const early = m.status === "active" && m.expires_on && m.expires_on > today;
+  const verb = m.status === "forfeited" ? "Reactivate" : "Renew";
+  return `${verb} ${m.full_name}'s membership for 365 days${early ? ` (added after it ends on ${niceDate(m.expires_on)})` : " starting today"}? Collect the ${memberTypeLabel(m.member_type).toLowerCase()} fee first. They keep the same member code.`;
+}
+
+/** Expired: the member decides on their next visit — renew (button beside this), or forfeit. */
+function ExpiredActions({ m, act }: { m: AdminMember; act: Act }) {
+  return (
+    <>
+      <button className="btn small secondary danger-text" onClick={() => {
+        const reason = window.prompt(
+          `Forfeit ${m.full_name}'s membership? Their member code stops working. The front desk can reactivate it later.\n\nOptional note (staff only):`,
+          ""
+        );
+        if (reason !== null) act({ action: "forfeit", id: m.id, reason });
+      }}>
+        Forfeit
+      </button>
+      {!m.reminded_on && (
+        <button className="btn small secondary" title="They've been told to renew or forfeit" onClick={() => act({ action: "remind", id: m.id })}>
+          Mark reminded
+        </button>
+      )}
+    </>
+  );
 }
 
 /** Scan (USB/Bluetooth scanner or camera) or type a member code to check a membership. */
 function MemberLookup({
   today,
   onAuthError,
-  onRenew,
+  act,
 }: {
   today: string;
   onAuthError: (e: unknown) => void;
-  onRenew: (m: AdminMember) => void;
+  act: Act;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState("");
@@ -262,19 +317,33 @@ function MemberLookup({
           <div className="lookup-status">
             <span className="lookup-icon" aria-hidden="true">{st === "active" ? "✓" : st === "expired" ? "!" : "…"}</span>
             <div>
-              <strong>{st === "active" ? "Active member" : st === "expired" ? "Membership expired" : membershipStateLabel(st)}</strong>
+              <strong>
+                {st === "active" ? "Active member" : st === "expired" ? "Membership expired" : st === "forfeited" ? "Membership forfeited" : membershipStateLabel(st)}
+              </strong>
               <div>
                 {st === "active" && daysLeft !== null && `Valid until ${niceDate(result.expires_on)} · ${daysLeft} day${daysLeft === 1 ? "" : "s"} left`}
-                {st === "expired" && `Expired ${niceDate(result.expires_on)}`}
+                {st === "expired" && `Expired ${niceDate(result.expires_on)}${result.reminded_on ? ` · reminded ${niceDate(result.reminded_on)}` : ""}`}
+                {st === "forfeited" && `Forfeited ${niceDate(result.forfeited_on)} — member rates don't apply`}
               </div>
             </div>
-            {(st === "active" || st === "expired") && (
-              <button className="btn small secondary" style={{ marginLeft: "auto" }}
-                onClick={async () => { onRenew(result); setTimeout(() => lookup(result.member_code ?? ""), 800); }}>
-                Renew
-              </button>
+            {(st === "active" || st === "expired" || st === "forfeited") && (
+              <div className="lookup-actions">
+                <button className={`btn small${st === "active" ? " secondary" : ""}`}
+                  onClick={async () => { if (await act({ action: "renew", id: result.id }, renewText(result, today))) lookup(result.member_code ?? ""); }}>
+                  {st === "forfeited" ? "Reactivate" : "Renew"}
+                </button>
+                {st === "expired" && (
+                  <ExpiredActions m={result} act={async (b, c) => { const ok = await act(b, c); if (ok) lookup(result.member_code ?? ""); return ok; }} />
+                )}
+              </div>
             )}
           </div>
+          {st === "expired" && (
+            <div className="notice" style={{ marginBottom: 12 }}>
+              Ask {result.full_name.split(" ")[0]} whether they&apos;d like to <strong>renew</strong> ({formatPeso(result.fee)}) or{" "}
+              <strong>forfeit</strong> their membership. Until then they book at the Regular rate.
+            </div>
+          )}
           <MemberDetails m={result} today={today} />
         </div>
       )}
@@ -290,14 +359,14 @@ function MemberDetails({ m, today }: { m: AdminMember; today: string }) {
     ["Type", `${memberTypeLabel(m.member_type)} · ${formatPeso(m.fee)}`],
     ["Member since", niceDate(m.member_since)],
     ["Current period", m.starts_on ? `${niceDate(m.starts_on)} – ${niceDate(m.expires_on)}` : "—"],
-    ["Birthdate", `${niceDate(m.birthdate)} (age ${ageOn(m.birthdate, today)})${m.gender ? ` · ${m.gender}` : ""}`],
+    ["Birthdate", m.birthdate ? `${niceDate(m.birthdate)} (age ${ageOn(m.birthdate, today)})${m.gender ? ` · ${m.gender}` : ""}` : "—"],
     ["Mobile", <a key="t" href={`tel:${m.mobile}`}>{m.mobile}</a>],
     ["Email", <a key="e" href={`mailto:${m.email}`}>{m.email}</a>],
-    ["Address", m.address],
+    ["Address", m.address || "—"],
   ];
   if (m.member_type === "student") rows.push(["School", `${m.school} · ID ${m.student_id}`]);
   if (m.sports.length) rows.push(["Plays", m.sports.map(sportLabel).join(", ")]);
-  rows.push(["Emergency contact", `${m.emergency_name} · ${m.emergency_mobile}`]);
+  rows.push(["Emergency contact", m.emergency_name || m.emergency_mobile ? `${m.emergency_name} · ${m.emergency_mobile}` : "—"]);
   if (m.staff_notes) rows.push(["Staff notes", <span key="s" style={{ whiteSpace: "pre-wrap" }}>{m.staff_notes}</span>]);
   if (m.status !== "rejected")
     rows.push(["Member's page", <a key="l" href={`/membership/${m.token}`} target="_blank" rel="noopener noreferrer">Open (to re-send their QR link)</a>]);

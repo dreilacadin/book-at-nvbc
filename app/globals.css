@@ -422,3 +422,22 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .scanner video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .scanner-frame { position: absolute; inset: 18%; border: 3px solid rgba(255,255,255,.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0,0,0,.35); }
 @media (max-width: 600px) { .lookup-bar { flex-wrap: wrap; } .lookup-bar input { flex: 1 1 100%; } }
+.import-map td { padding-top: 4px; padding-bottom: 4px; }
+.import-map select { min-width: 200px; padding: 6px 8px; font-size: 14px; }
+.import-example { font-size: 12px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.checklist-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.checklist-bar .segmented { grid-template-columns: repeat(3, auto); }
+.checklist-bar .segmented button { padding: 6px 12px; font-size: 14px; }
+.list tr.import-skip > td { opacity: .55; }
+.list tr.import-skip > td:first-child { opacity: 1; }
+.expired-flag { margin-top: 4px; font-size: 12px; font-weight: 600; background: #fff4d6; color: #7a4b00; border-radius: 6px; padding: 3px 8px; }
+.expired-flag .link-btn { font-size: 12px; padding: 0; color: inherit; }
+@media (prefers-color-scheme: dark) { .expired-flag { background: #3a2e12; color: #ffd98a; } }
+.lookup-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.lookup-result.member-forfeited { border-color: var(--border); }
+.badge.member-forfeited { background: var(--booked); color: var(--muted); }
+.dup-ask { font-size: 12px; font-weight: 600; background: #fff4d6; color: #7a4b00; border-radius: 8px; padding: 6px 8px; max-width: 360px; }
+.dup-ask.undecided { box-shadow: inset 0 0 0 2px #e0a800; }
+.dup-ask .segmented { grid-template-columns: 1fr 1fr; margin-top: 6px; }
+.dup-ask .segmented button { padding: 4px 8px; font-size: 13px; }
+@media (prefers-color-scheme: dark) { .dup-ask { background: #3a2e12; color: #ffd98a; } }

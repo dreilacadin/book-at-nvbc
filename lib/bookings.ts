@@ -167,6 +167,7 @@ export async function verifyMemberCode(raw: unknown, date: string): Promise<{ id
   );
   const m = rows[0];
   if (!m || m.status === "rejected") return `We couldn't find member code ${code}. Check it, or book at the Regular rate.`;
+  if (m.status === "forfeited") return "That membership has ended. Ask the front desk to reactivate it, or book at the Regular rate.";
   if (m.status !== "active" || !m.expires_on) return "That membership hasn't been approved yet. Book at the Regular rate for now.";
   const today = nowAtFacility().date;
   if (today >= m.expires_on)
