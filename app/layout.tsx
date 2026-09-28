@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NVBC — Court Reservations",
+  title: "NVBC Courts — Court Reservation System",
   description:
     "Check court availability and reserve a badminton or pickleball court at NV Badminton Center. No account needed.",
 };
