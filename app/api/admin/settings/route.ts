@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
     for (const sp of SPORTS) {
       const src = plansIn[sp.id] ?? {};
       const memberRates = src.memberRates === true;
+      const coachRates = src.coachRates === true;
       const weekendRates = src.weekendRates === true;
       // A valid price, the fallback (for a price that is switched off), or an error message.
       const price = (day: "weekday" | "weekend", type: RateType, fallback?: number): number | string => {
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
         const r = Number(raw);
         if (raw === "" || raw === null || raw === undefined || !Number.isFinite(r) || r < 0 || r > 100_000) {
           if (fallback !== undefined) return fallback;
-          const who = memberRates ? `${rateTypeLabel(type).toLowerCase()} ` : "";
+          const who = memberRates || coachRates ? `${rateTypeLabel(type).toLowerCase()} ` : "";
           return `Enter a valid ${day} ${who}price for ${sp.label}.`;
         }
         return Math.round(r * 100) / 100;
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
         if (typeof regular === "string") return regular;
         const member = price(day, "member", memberRates && !off ? undefined : off?.member ?? regular);
         if (typeof member === "string") return member;
-        const coach = price(day, "coach", memberRates && !off ? undefined : off?.coach ?? regular);
+        const coach = price(day, "coach", coachRates && !off ? undefined : off?.coach ?? regular);
         if (typeof coach === "string") return coach;
         return { regular, member, coach };
       };
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
       if (typeof weekday === "string") return bad(weekday);
       const weekend = readDay("weekend", weekendRates ? undefined : weekday);
       if (typeof weekend === "string") return bad(weekend);
-      rate_plans[sp.id] = { memberRates, weekendRates, weekday, weekend };
+      rate_plans[sp.id] = { memberRates, coachRates, weekendRates, weekday, weekend };
     }
 
     // Payment methods

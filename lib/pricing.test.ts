@@ -118,6 +118,7 @@ test("isWeekend: Saturday and Sunday only", () => {
 test("ratesForDate: weekend prices apply on weekends only when switched on", () => {
   const plan = {
     memberRates: true,
+    coachRates: true,
     weekendRates: true,
     weekday: { regular: 250, member: 200, coach: 150 },
     weekend: { regular: 300, member: 240, coach: 180 },
@@ -130,6 +131,7 @@ test("ratesForDate: weekend prices apply on weekends only when switched on", () 
 test("ratesForDate: without member rates everyone pays the standard rate", () => {
   const plan = {
     memberRates: false,
+    coachRates: false,
     weekendRates: true,
     weekday: { regular: 200, member: 150, coach: 120 },
     weekend: { regular: 260, member: 150, coach: 120 },
@@ -137,13 +139,14 @@ test("ratesForDate: without member rates everyone pays the standard rate", () =>
   assert.deepEqual(ratesForDate(plan, "2026-09-28"), { regular: 200, member: 200, coach: 200 });
   assert.deepEqual(ratesForDate(plan, "2026-09-26"), { regular: 260, member: 260, coach: 260 });
   assert.deepEqual(rateTypesFor(plan), ["regular"]);
-  assert.deepEqual(rateTypesFor({ memberRates: true }), ["regular", "member", "coach"]);
+  assert.deepEqual(rateTypesFor({ memberRates: true, coachRates: true }), ["regular", "member", "coach"]);
 });
 
 test("toSportPricing: fills a missing plan from the older prices", () => {
   const legacy = { regular: 250, member: 180, coach: 150 };
   assert.deepEqual(toSportPricing(undefined, legacy), {
     memberRates: true,
+    coachRates: true,
     weekendRates: false,
     weekday: legacy,
     weekend: legacy,
@@ -169,4 +172,25 @@ test("hasPaymentProof: a reference number or a screenshot is enough", () => {
   assert.ok(hasPaymentProof("1234 5678", ""));
   assert.ok(hasPaymentProof("", "data:image/png;base64,iVBORw0KGgo="));
   assert.ok(!hasPaymentProof("   ", ""));
+});
+
+test("member and coach rates switch on and off separately", () => {
+  const plan = {
+    memberRates: false,
+    coachRates: true,
+    weekendRates: false,
+    weekday: { regular: 400, member: 300, coach: 250 },
+    weekend: { regular: 400, member: 300, coach: 250 },
+  };
+  assert.deepEqual(rateTypesFor(plan), ["regular", "coach"]);
+  assert.deepEqual(ratesForDate(plan, "2026-09-28"), { regular: 400, member: 400, coach: 250 });
+  assert.deepEqual(rateTypesFor({ ...plan, memberRates: true, coachRates: false }), ["regular", "member"]);
+  assert.deepEqual(ratesForDate({ ...plan, memberRates: true, coachRates: false }, "2026-09-28"), { regular: 400, member: 300, coach: 400 });
+});
+
+test("toSportPricing: plans saved with one member & coach switch keep working", () => {
+  const legacy = { regular: 400, member: 300, coach: 250 };
+  assert.equal(toSportPricing({ memberRates: false }, legacy).coachRates, false); // both were off
+  assert.equal(toSportPricing({ memberRates: true }, legacy).coachRates, true); // both were on
+  assert.equal(toSportPricing({ memberRates: true, coachRates: false }, legacy).coachRates, false);
 });

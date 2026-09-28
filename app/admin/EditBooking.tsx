@@ -52,7 +52,7 @@ export default function EditBooking({
   const hours = end - start;
   const sport = courts.find((c) => c.id === courtId)?.sport;
   const plan = sport && plans?.[sport];
-  const currentRate = plan ? rateFor(ratesForDate(plan, date), plan.memberRates ? rateType : "regular") : null;
+  const currentRate = plan ? rateFor(ratesForDate(plan, date), rateType) : null; // switched-off rates fall back to regular
   const amount = hours > 0 && hourlyRate !== "" ? Math.round(hourlyRate * hours * 100) / 100 : 0;
   const hourOptions = halfHours(0, 24);
 

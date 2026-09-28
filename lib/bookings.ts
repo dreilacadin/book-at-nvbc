@@ -11,6 +11,7 @@ import {
   rateFor,
   ratesForDate,
   rateTypesFor,
+  rateTypeLabel,
   isPaymentStatus,
   isRateType,
   PAYMENT_METHODS,
@@ -292,6 +293,20 @@ export async function createBooking(
       return fail(400, "That coach code isn't right. Choose Regular, or ask the front desk for the coach code.");
   }
 
+  // Is this rate offered for the court's sport? Checked first, so a switched-off Member rate
+  // says so instead of asking for a member code. (Re-checked in the transaction below.)
+  if (!admin && rateType !== "regular") {
+    const c = await db().query<{ sport: Sport }>(`SELECT sport FROM courts WHERE id = $1`, [courtId]);
+    const plan = c.rows[0] && settings.rate_plans[c.rows[0].sport];
+    if (plan && !rateTypesFor(plan).includes(rateType))
+      return fail(
+        400,
+        rateTypesFor(plan).length === 1
+          ? `${sportLabel(c.rows[0].sport)} has one standard rate. Please book at the standard rate.`
+          : `The ${rateTypeLabel(rateType).toLowerCase()} rate isn't offered for ${sportLabel(c.rows[0].sport)}. Please choose another rate.`
+      );
+  }
+
   // The member rate needs the player's own member code, active on the booking date.
   // Staff bookings don't (they check membership at the desk) but may still link one.
   let membershipId: string | null = null;
@@ -352,7 +367,12 @@ export async function createBooking(
     if (!rateTypesFor(plan).includes(rateType)) {
       if (!admin) {
         await client.query("ROLLBACK");
-        return fail(400, `${sportLabel(sport)} has one standard rate. Please book at the standard rate.`);
+        return fail(
+          400,
+          rateTypesFor(plan).length === 1
+            ? `${sportLabel(sport)} has one standard rate. Please book at the standard rate.`
+            : `The ${rateTypeLabel(rateType).toLowerCase()} rate isn't offered for ${sportLabel(sport)}. Please choose another rate.`
+        );
       }
       rateType = "regular"; // staff picked member/coach for a sport without them: charge the standard rate
     }

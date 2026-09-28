@@ -52,11 +52,13 @@ export function rateFor(rates: SportRates, rateType: RateType): number {
 
 /**
  * A sport's full price plan, set in /admin → Settings.
- * - memberRates off: everyone pays one standard rate (member/coach are not offered).
+ * - memberRates off: the Member rate isn't offered (members pay the regular rate).
+ * - coachRates off: the Coach rate isn't offered. Both off → one standard rate for everyone.
  * - weekendRates off: Saturdays and Sundays use the weekday prices.
  */
 export type SportPricing = {
   memberRates: boolean;
+  coachRates: boolean;
   weekendRates: boolean;
   weekday: SportRates;
   weekend: SportRates;
@@ -71,12 +73,12 @@ export function isWeekend(date: string): boolean {
 /** The prices that apply on a date. Without member rates, member/coach equal the standard rate. */
 export function ratesForDate(p: SportPricing, date: string): SportRates {
   const r = p.weekendRates && isWeekend(date) ? p.weekend : p.weekday;
-  return p.memberRates ? { ...r } : { regular: r.regular, member: r.regular, coach: r.regular };
+  return { regular: r.regular, member: p.memberRates ? r.member : r.regular, coach: p.coachRates ? r.coach : r.regular };
 }
 
 /** Rate types players can choose for a sport. */
-export function rateTypesFor(p: { memberRates: boolean }): RateType[] {
-  return p.memberRates ? RATE_TYPES.map((r) => r.id) : ["regular"];
+export function rateTypesFor(p: { memberRates: boolean; coachRates: boolean }): RateType[] {
+  return RATE_TYPES.map((r) => r.id).filter((id) => id === "regular" || (id === "member" ? p.memberRates : p.coachRates));
 }
 
 const money = (v: unknown, fallback: number) => {
@@ -98,6 +100,8 @@ export function toSportPricing(raw: unknown, fallback: SportRates): SportPricing
   const weekday = toRates(src.weekday, fallback);
   return {
     memberRates: src.memberRates !== false,
+    // Plans saved before the coach switch existed had one switch for both.
+    coachRates: typeof src.coachRates === "boolean" ? src.coachRates : src.memberRates !== false,
     weekendRates: src.weekendRates === true,
     weekday,
     weekend: toRates(src.weekend, weekday),

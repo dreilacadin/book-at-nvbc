@@ -768,7 +768,9 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         {SPORTS.map((sp) => {
           const plan = s.rate_plans[sp.id];
           const setPlan = (next: Partial<SportPricing>) => set("rate_plans", { ...s.rate_plans, [sp.id]: { ...plan, ...next } });
-          const types = plan.memberRates ? RATE_TYPES : ([{ id: "regular", label: "Standard" }] as const);
+          // Only the rates switched on get a price column; with neither, it's one "Standard" price.
+          const types = RATE_TYPES.filter((t) => t.id === "regular" || (t.id === "member" ? plan.memberRates : plan.coachRates));
+          const regularLabel = types.length === 1 ? "Standard" : plan.memberRates ? "Non-member" : "Regular";
           const days = plan.weekendRates
             ? ([["weekday", "Weekdays"], ["weekend", "Weekends"]] as const)
             : ([["weekday", "Every day"]] as const);
@@ -778,7 +780,11 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                 <strong>{sp.emoji} {sp.label}</strong>
                 <label>
                   <input type="checkbox" checked={plan.memberRates} onChange={(e) => setPlan({ memberRates: e.target.checked })} />
-                  Member &amp; coach prices
+                  Member price
+                </label>
+                <label>
+                  <input type="checkbox" checked={plan.coachRates} onChange={(e) => setPlan({ coachRates: e.target.checked })} />
+                  Coach price
                 </label>
                 <label>
                   <input type="checkbox" checked={plan.weekendRates} onChange={(e) => setPlan({ weekendRates: e.target.checked })} />
@@ -790,7 +796,7 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                   <thead>
                     <tr>
                       <th></th>
-                      {types.map((t) => <th key={t.id}>{t.id === "regular" && plan.memberRates ? "Non-member" : t.label}</th>)}
+                      {types.map((t) => <th key={t.id}>{t.id === "regular" ? regularLabel : t.label}</th>)}
                     </tr>
                   </thead>
                   <tbody>
