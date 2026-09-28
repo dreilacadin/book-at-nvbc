@@ -4,6 +4,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ageOn, membershipState, membershipStateLabel, memberTypeLabel } from "@/lib/membership";
 import { formatPeso, PAYMENT_STATUSES, paymentLabel, type PaymentStatus } from "@/lib/pricing";
 import { sportLabel } from "@/lib/sports";
+import EmailReminders, { type EmailStatus } from "./EmailReminders";
+import EditMember from "./EditMember";
 import ImportMembers from "./ImportMembers";
 import QrScanner from "./QrScanner";
 import { api, todayManila, type AdminMember } from "./shared";
@@ -24,11 +26,15 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [emailing, setEmailing] = useState(false);
+  const [email, setEmail] = useState<EmailStatus | null>(null);
   const today = todayManila();
 
   const load = useCallback(async () => {
     try {
-      setMembers((await api<{ members: AdminMember[] }>("/api/admin/members")).members);
+      const r = await api<{ members: AdminMember[]; email: EmailStatus }>("/api/admin/members");
+      setMembers(r.members);
+      setEmail(r.email);
       setError("");
     } catch (e) {
       onAuthError(e);
@@ -81,14 +87,25 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
 
   return (
     <div className="stack">
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button className="btn small secondary" onClick={() => setImporting((v) => !v)}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn small secondary" onClick={() => { setEmailing((v) => !v); setImporting(false); }}>
+          {emailing ? "Close emails" : `✉ Email expired members${counts.expired ? ` (${counts.expired})` : ""}`}
+        </button>
+        <button className="btn small secondary" onClick={() => { setImporting((v) => !v); setEmailing(false); }}>
           {importing ? "Close import" : "⬆ Import existing members"}
         </button>
       </div>
       {importing && <ImportMembers onDone={load} onAuthError={onAuthError} />}
+      {emailing && (
+        <EmailReminders
+          expired={members.filter((m) => stateOf(m) === "expired").sort((a, b) => (a.expires_on ?? "").localeCompare(b.expires_on ?? ""))}
+          email={email}
+          onSent={load}
+          onAuthError={onAuthError}
+        />
+      )}
 
-      <MemberLookup today={today} onAuthError={onAuthError} act={act} />
+      <MemberLookup today={today} onAuthError={onAuthError} act={act} onChanged={load} />
 
       <div className="stats">
         <button type="button" className="stat" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => setFilter("action")}>
@@ -178,6 +195,9 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                             {m.reminded_on ? `Reminded ${niceDate(m.reminded_on)}` : "⚠ Not reminded yet"}
                           </div>
                         )}
+                        {st === "expired" && m.emailed_on && (
+                          <div className="muted" style={{ fontSize: 12 }}>✉ Emailed {niceDate(m.emailed_on)}</div>
+                        )}
                         {st === "forfeited" && <div className="muted" style={{ fontSize: 12 }}>Forfeited {niceDate(m.forfeited_on)}</div>}
                       </td>
                       <td>
@@ -204,8 +224,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                           )}
                           {st === "expired" && <ExpiredActions m={m} act={act} />}
                           {st === "rejected" && (
-                            <button className="btn small secondary danger-text"
-                              onClick={() => act({ action: "delete", id: m.id }, `Permanently delete ${m.full_name}'s declined application?`)}>
+                            <button className="btn small secondary danger-text" onClick={() => deleteMember(m, act)}>
                               Delete
                             </button>
                           )}
@@ -214,7 +233,10 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                     </tr>
                     {open === m.id && (
                       <tr className="edit-row">
-                        <td colSpan={5}><MemberDetails m={m} today={today} /></td>
+                        <td colSpan={5}>
+                          <MemberPanel m={m} today={today} act={act} onAuthError={onAuthError}
+                            onChanged={() => load()} onDeleted={() => { setOpen(null); load(); }} />
+                        </td>
                       </tr>
                     )}
                   </Fragment>
@@ -261,10 +283,12 @@ function MemberLookup({
   today,
   onAuthError,
   act,
+  onChanged,
 }: {
   today: string;
   onAuthError: (e: unknown) => void;
   act: Act;
+  onChanged: () => void; // reload the member list after an edit
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState("");
@@ -344,10 +368,62 @@ function MemberLookup({
               <strong>forfeit</strong> their membership. Until then they book at the Regular rate.
             </div>
           )}
-          <MemberDetails m={result} today={today} />
+          <MemberPanel m={result} today={today} act={act} onAuthError={onAuthError}
+            onChanged={(u) => { setResult(u); onChanged(); }} onDeleted={() => setResult(null)} />
         </div>
       )}
       {camera && <QrScanner onCode={fromCamera} onClose={() => setCamera(false)} />}
+    </div>
+  );
+}
+
+/** Asks for confirmation (typing DELETE for anyone beyond a declined application), then deletes. */
+async function deleteMember(m: AdminMember, act: Act): Promise<boolean> {
+  if (m.status === "rejected") return act({ action: "delete", id: m.id }, `Permanently delete ${m.full_name}'s declined application?`);
+  const typed = window.prompt(
+    `Permanently delete ${m.full_name}${m.member_code ? ` (${m.member_code})` : ""}?\n\n` +
+      "Their member code and member page stop working, and this can't be undone. Their past bookings are kept.\n" +
+      "If they're just not renewing, use Forfeit instead.\n\nType DELETE to confirm:"
+  );
+  if (typed === null) return false;
+  if (typed.trim().toUpperCase() !== "DELETE") {
+    window.alert("Not deleted — you need to type DELETE.");
+    return false;
+  }
+  return act({ action: "delete", id: m.id });
+}
+
+/** A member's details, with Edit and Delete. */
+function MemberPanel({
+  m,
+  today,
+  act,
+  onAuthError,
+  onChanged,
+  onDeleted,
+}: {
+  m: AdminMember;
+  today: string;
+  act: Act;
+  onAuthError: (e: unknown) => void;
+  onChanged: (updated: AdminMember) => void;
+  onDeleted: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (editing)
+    return (
+      <EditMember m={m} onAuthError={onAuthError} onClose={() => setEditing(false)}
+        onSaved={(u) => { setEditing(false); onChanged(u); }} />
+    );
+  return (
+    <div>
+      <MemberDetails m={m} today={today} />
+      <div className="actions" style={{ marginTop: 12, justifyContent: "flex-start" }}>
+        <button type="button" className="btn small secondary" onClick={() => setEditing(true)}>✎ Edit details</button>
+        <button type="button" className="btn small secondary danger-text" onClick={async () => { if (await deleteMember(m, act)) onDeleted(); }}>
+          Delete member
+        </button>
+      </div>
     </div>
   );
 }

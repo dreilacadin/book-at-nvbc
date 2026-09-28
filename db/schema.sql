@@ -282,3 +282,7 @@ ALTER TABLE memberships ADD CONSTRAINT memberships_status_check
   CHECK (status IN ('pending', 'active', 'rejected', 'forfeited'));
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS reminded_on  DATE;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS forfeited_on DATE;
+
+-- v14: reminder emails ---------------------------------------------------------------------
+-- When staff last emailed an expired member a "please renew" reminder.
+ALTER TABLE memberships ADD COLUMN IF NOT EXISTS emailed_on DATE;

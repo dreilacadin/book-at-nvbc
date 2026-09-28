@@ -120,3 +120,70 @@ export function validateMembershipForm(input: Record<string, unknown>, today: st
   if (input.consent !== true) return "Please agree to the privacy notice and club rules.";
   return f;
 }
+
+/** Staff edits to a member's details. Dates apply only to approved memberships. */
+export type MemberEdit = {
+  fullName: string;
+  email: string;
+  mobile: string;
+  address: string;
+  birthdate: string | null;
+  gender: string;
+  memberType: MemberType;
+  school: string;
+  studentId: string;
+  emergencyName: string;
+  emergencyMobile: string;
+  staffNotes: string;
+  memberSince: string | null;
+  startsOn: string | null;
+  expiresOn: string | null;
+};
+
+const isDate = (v: string) => DATE.test(v) && !Number.isNaN(Date.parse(v + "T00:00:00Z")) && new Date(v + "T00:00:00Z").toISOString().startsWith(v);
+
+/**
+ * Checks a staff edit. Staff can leave details blank that the public form requires (older
+ * records are often incomplete), but what is filled in must be valid. Returns the cleaned edit
+ * or an error message. `approved`: the membership has dates (active, expired or forfeited).
+ */
+export function validateMemberEdit(input: Record<string, unknown>, approved: boolean): MemberEdit | string {
+  const date = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const e: MemberEdit = {
+    fullName: str(input.fullName, 80),
+    email: str(input.email, 120).toLowerCase(),
+    mobile: str(input.mobile, 20),
+    address: str(input.address, 200),
+    birthdate: date(input.birthdate),
+    gender: str(input.gender, 30),
+    memberType: input.memberType as MemberType,
+    school: str(input.school, 120),
+    studentId: str(input.studentId, 40),
+    emergencyName: str(input.emergencyName, 80),
+    emergencyMobile: str(input.emergencyMobile, 20),
+    staffNotes: typeof input.staffNotes === "string" ? input.staffNotes.trim().slice(0, 2000) : "",
+    memberSince: date(input.memberSince),
+    startsOn: date(input.startsOn),
+    expiresOn: date(input.expiresOn),
+  };
+  if (e.fullName.length < 2) return "Enter the member's name.";
+  if (e.email && !EMAIL.test(e.email)) return "That email address doesn't look valid.";
+  if (e.mobile && !PHONE.test(e.mobile)) return "That mobile number doesn't look valid.";
+  if (e.emergencyMobile && !PHONE.test(e.emergencyMobile)) return "That emergency contact number doesn't look valid.";
+  if (!isMemberType(e.memberType)) return "Choose Student or Adult.";
+  if (e.birthdate && !isDate(e.birthdate)) return "Enter a valid birthdate.";
+  if (e.memberType === "adult") {
+    e.school = "";
+    e.studentId = "";
+  }
+  if (approved) {
+    if (!e.startsOn || !isDate(e.startsOn)) return "Enter the start date of the current membership year.";
+    if (!e.expiresOn || !isDate(e.expiresOn)) return "Enter the expiry date.";
+    if (e.expiresOn <= e.startsOn) return "The expiry date must be after the start date.";
+    if (e.memberSince && !isDate(e.memberSince)) return "Enter a valid 'member since' date.";
+    if (e.memberSince && e.memberSince > e.startsOn) return "'Member since' can't be after the start date.";
+  } else {
+    e.memberSince = e.startsOn = e.expiresOn = null; // set when the application is approved
+  }
+  return e;
+}

@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ageOn, formatMemberCode, membershipState, normalizeMemberCode, validateMembershipForm } from "./membership.ts";
+import { ageOn, formatMemberCode, membershipState, normalizeMemberCode, validateMemberEdit, validateMembershipForm } from "./membership.ts";
 
 const SPORTS = ["badminton", "pickleball"];
 const good = {
@@ -63,4 +63,25 @@ test("membershipState: active until the day it expires", () => {
   // Expired stays expired, however long ago, until renewed or forfeited.
   assert.equal(membershipState(m, "2031-01-01"), "expired");
   assert.equal(membershipState({ status: "forfeited", expires_on: "2027-09-28" }, "2027-10-01"), "forfeited");
+});
+
+test("validateMemberEdit: blanks allowed, but what's filled in must be valid", () => {
+  const base = {
+    fullName: " Ana  Cruz ", email: "ANA@X.COM", mobile: "", address: "", birthdate: "", gender: "",
+    memberType: "adult", school: "Leftover School", studentId: "1", emergencyName: "", emergencyMobile: "",
+    staffNotes: " note ", memberSince: "2025-01-01", startsOn: "2026-01-01", expiresOn: "2027-01-01",
+  };
+  const ok = validateMemberEdit(base, true);
+  if (typeof ok === "string") return assert.fail(ok);
+  assert.equal(ok.fullName, "Ana Cruz");
+  assert.equal(ok.email, "ana@x.com");
+  assert.equal(ok.birthdate, null);
+  assert.equal(ok.school, ""); // adults have no school
+  assert.equal(ok.staffNotes, "note");
+  assert.match(String(validateMemberEdit({ ...base, email: "ana@x" }, true)), /email/);
+  assert.match(String(validateMemberEdit({ ...base, birthdate: "1995-02-30" }, true)), /birthdate/);
+  assert.match(String(validateMemberEdit({ ...base, expiresOn: "2025-12-31" }, true)), /after the start/);
+  assert.match(String(validateMemberEdit({ ...base, memberSince: "2026-06-01" }, true)), /Member since/);
+  const pending = validateMemberEdit({ ...base, startsOn: "", expiresOn: "" }, false);
+  assert.equal(typeof pending === "object" && pending.expiresOn, null); // dates ignored until approved
 });

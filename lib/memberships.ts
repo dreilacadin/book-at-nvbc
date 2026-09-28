@@ -8,13 +8,16 @@ import {
   MEMBERSHIP_DAYS,
   membershipState,
   normalizeMemberCode,
+  validateMemberEdit,
   type MembershipState,
   validateMembershipForm,
   type MembershipStatus,
   type MemberType,
 } from "./membership";
+import { emailSender, sendEmail } from "./mailer";
+import { fillTemplate, niceLongDate, type ReminderVars } from "./reminder-email";
 import { checkImportRecord, findDuplicates, type ImportRecord } from "./member-import";
-import { hasPaymentProof, isPaymentMethod, isPaymentStatus, isProofImage, type PaymentMethod, type PaymentStatus } from "./pricing";
+import { formatPeso, hasPaymentProof, isPaymentMethod, isPaymentStatus, isProofImage, type PaymentMethod, type PaymentStatus } from "./pricing";
 import { SPORTS } from "./sports";
 import { addDays, nowAtFacility } from "./time";
 
@@ -52,13 +55,14 @@ export type Membership = {
   created_at: string;
   approved_at: string | null;
   reminded_on: string | null; // last time staff reminded an expired member to renew or forfeit
+  emailed_on: string | null; // last reminder email
   forfeited_on: string | null;
 };
 
 const COLUMNS = `id, token, member_code, status, member_type, full_name, email, mobile, address, birthdate, gender,
   school, student_id, sports, emergency_name, emergency_mobile, fee, payment_method, payment_status, payment_ref,
   (payment_proof <> '') AS has_proof, paid_at, member_since, starts_on, expires_on, staff_notes, created_at, approved_at,
-  reminded_on, forfeited_on`;
+  reminded_on, forfeited_on, emailed_on`;
 
 // ---- Public: apply, check status, send payment -------------------------------------------
 
@@ -331,12 +335,42 @@ export async function rejectMembership(id: string, reason: unknown): Promise<Res
   return { ok: true, data: { id } };
 }
 
-/** Staff: permanently delete a declined application. */
+/**
+ * Staff: permanently delete a member or application. Their past bookings stay; bookings made at
+ * the member rate just lose the link to this membership.
+ */
 export async function deleteMembership(id: string): Promise<Result<{ id: string }>> {
   if (!isId(id)) return fail(400, "Invalid id.");
-  const { rowCount } = await db().query(`DELETE FROM memberships WHERE id = $1 AND status = 'rejected'`, [id]);
-  if (!rowCount) return fail(400, "Only declined applications can be deleted.");
+  const { rowCount } = await db().query(`DELETE FROM memberships WHERE id = $1`, [id]);
+  if (!rowCount) return fail(404, "That member was already deleted.");
   return { ok: true, data: { id } };
+}
+
+/** Staff: correct a member's details (and, for approved memberships, their dates). */
+export async function updateMembership(id: string, input: Record<string, unknown>): Promise<Result<Membership>> {
+  if (!isId(id)) return fail(400, "Invalid id.");
+  const cur = await db().query<{ status: MembershipStatus; expires_on: string | null }>(
+    `SELECT status, expires_on FROM memberships WHERE id = $1`,
+    [id]
+  );
+  if (!cur.rows[0]) return fail(404, "Member not found.");
+  const approved = cur.rows[0].status === "active" || cur.rows[0].status === "forfeited";
+  const e = validateMemberEdit(input, approved);
+  if (typeof e === "string") return fail(400, e);
+  const { rows } = await db().query<Membership>(
+    `UPDATE memberships SET full_name = $2, email = $3, mobile = $4, address = $5, birthdate = $6, gender = $7,
+            member_type = $8, school = $9, student_id = $10, emergency_name = $11, emergency_mobile = $12,
+            staff_notes = $13,
+            member_since = CASE WHEN $14::boolean THEN COALESCE($15::date, member_since) ELSE member_since END,
+            starts_on    = CASE WHEN $14::boolean THEN $16::date ELSE starts_on END,
+            expires_on   = CASE WHEN $14::boolean THEN $17::date ELSE expires_on END,
+            -- A new expiry date means a new reminder is needed later.
+            reminded_on  = CASE WHEN $14::boolean AND $17::date IS DISTINCT FROM expires_on THEN NULL ELSE reminded_on END
+      WHERE id = $1 RETURNING ${COLUMNS}`,
+    [id, e.fullName, e.email, e.mobile, e.address, e.birthdate, e.gender, e.memberType, e.school, e.studentId,
+      e.emergencyName, e.emergencyMobile, e.staffNotes, approved, e.memberSince, e.startsOn, e.expiresOn]
+  );
+  return { ok: true, data: rows[0] };
 }
 
 export async function membershipProof(id: string): Promise<string | null> {
@@ -436,4 +470,84 @@ export async function importMembers(input: unknown, dryRun: boolean): Promise<Re
   }
   outcomes.sort((a, b) => a.row - b.row);
   return { ok: true, data: { outcomes } };
+}
+
+// ---- Staff: reminder emails to expired members ---------------------------------------------
+
+export const EMAIL_BATCH = 10; // per request, so a batch finishes well within the server time limit
+
+export type EmailOutcome = { id: string; name: string; ok: boolean; error?: string };
+
+function reminderVars(m: Membership, origin: string): ReminderVars {
+  return {
+    first_name: m.full_name.split(" ")[0],
+    name: m.full_name,
+    expired_on: m.expires_on ? niceLongDate(m.expires_on) : "",
+    fee: formatPeso(m.fee),
+    member_code: m.member_code ?? "",
+    member_page: `${origin}/membership/${m.token}`,
+  };
+}
+
+const cleanTemplate = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+
+/**
+ * Emails the "your membership expired — please renew" reminder, one email per member, to up to
+ * EMAIL_BATCH expired members. Records the date on each one sent.
+ */
+export async function sendReminderEmails(
+  ids: unknown,
+  subject: unknown,
+  body: unknown,
+  origin: string
+): Promise<Result<{ outcomes: EmailOutcome[] }>> {
+  if (!emailSender()) return fail(400, "Email isn't set up yet. Add GMAIL_USER and GMAIL_APP_PASSWORD, then restart the app.");
+  const list = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string" && isId(x)) : [];
+  if (list.length === 0) return fail(400, "Choose who to email.");
+  if (list.length > EMAIL_BATCH) return fail(400, `Send up to ${EMAIL_BATCH} at a time.`);
+  const subj = cleanTemplate(subject, 200).trim();
+  const text = cleanTemplate(body, 5000).trim();
+  if (!subj || !text) return fail(400, "Write a subject and a message.");
+
+  const { rows } = await db().query<Membership>(`SELECT ${COLUMNS} FROM memberships WHERE id = ANY($1::uuid[])`, [list]);
+  const today = nowAtFacility().date;
+  const outcomes: EmailOutcome[] = [];
+  for (const m of rows) {
+    if (membershipState(m, today) !== "expired") {
+      outcomes.push({ id: m.id, name: m.full_name, ok: false, error: "Not expired any more" });
+      continue;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(m.email)) {
+      outcomes.push({ id: m.id, name: m.full_name, ok: false, error: "No email address" });
+      continue;
+    }
+    const vars = reminderVars(m, origin);
+    try {
+      await sendEmail(m.email, fillTemplate(subj, vars), fillTemplate(text, vars));
+      await db().query(`UPDATE memberships SET emailed_on = $2 WHERE id = $1`, [m.id, today]);
+      outcomes.push({ id: m.id, name: m.full_name, ok: true });
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "Sending failed";
+      outcomes.push({ id: m.id, name: m.full_name, ok: false, error });
+      // A login or limit problem affects everyone else too: stop here.
+      if (/refused the login|sending limit/.test(error)) break;
+    }
+  }
+  return { ok: true, data: { outcomes } };
+}
+
+/** Sends one filled-in reminder (using `id`'s details) to the club's own address, to check it. */
+export async function sendTestReminder(id: unknown, subject: unknown, body: unknown, origin: string): Promise<Result<{ to: string }>> {
+  const from = emailSender();
+  if (!from) return fail(400, "Email isn't set up yet. Add GMAIL_USER and GMAIL_APP_PASSWORD, then restart the app.");
+  if (typeof id !== "string" || !isId(id)) return fail(400, "Choose a member to preview.");
+  const { rows } = await db().query<Membership>(`SELECT ${COLUMNS} FROM memberships WHERE id = $1`, [id]);
+  if (!rows[0]) return fail(404, "Membership not found.");
+  const vars = reminderVars(rows[0], origin);
+  try {
+    await sendEmail(from.address, `[Test] ${fillTemplate(cleanTemplate(subject, 200), vars)}`, fillTemplate(cleanTemplate(body, 5000), vars));
+  } catch (e) {
+    return fail(502, e instanceof Error ? e.message : "Sending failed");
+  }
+  return { ok: true, data: { to: from.address } };
 }

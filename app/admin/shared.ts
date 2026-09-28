@@ -99,4 +99,5 @@ export type AdminMember = {
   created_at: string;
   reminded_on: string | null;
   forfeited_on: string | null;
+  emailed_on: string | null;
 };
