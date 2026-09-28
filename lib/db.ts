@@ -75,12 +75,14 @@ export type Settings = {
   bpi_account_number: string;
   qrph_image: string;
   payment_note: string;
+  membership_fee_student: number;
+  membership_fee_adult: number;
 };
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
   booking_window_days, announcement, rate_plans, hourly_rates, member_rates, coach_rates,
   member_code, coach_code, payment_methods, gcash_name, gcash_number, bpi_account_name,
-  bpi_account_number, qrph_image, payment_note`;
+  bpi_account_number, qrph_image, payment_note, membership_fee_student, membership_fee_adult`;
 
 /** Full settings, including staff-only values. Never send this object to the public as-is. */
 export async function getSettings(): Promise<Settings> {

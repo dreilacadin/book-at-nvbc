@@ -222,3 +222,44 @@ SELECT b.court_id, b.booking_date, h, b.id
   FROM bookings b, generate_series(b.start_hour, b.end_hour - 0.5, 0.5) AS h
  WHERE b.status <> 'cancelled'
 ON CONFLICT DO NOTHING;
+
+-- v10: memberships ---------------------------------------------------------------------
+-- Apply online → pay the fee → staff approve → member code + QR, valid for 365 days.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS membership_fee_student NUMERIC(10,2) NOT NULL DEFAULT 500
+  CHECK (membership_fee_student >= 0);
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS membership_fee_adult NUMERIC(10,2) NOT NULL DEFAULT 600
+  CHECK (membership_fee_adult >= 0);
+
+CREATE TABLE IF NOT EXISTS memberships (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token            TEXT NOT NULL UNIQUE,   -- secret part of the applicant's status-page link
+  member_code      TEXT UNIQUE,            -- NVBC-XXXX-XXXX, set when approved
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'rejected')),
+  member_type      TEXT NOT NULL CHECK (member_type IN ('student', 'adult')),
+  full_name        TEXT NOT NULL,
+  email            TEXT NOT NULL,
+  mobile           TEXT NOT NULL,
+  address          TEXT NOT NULL,
+  birthdate        DATE NOT NULL,
+  gender           TEXT NOT NULL DEFAULT '',
+  school           TEXT NOT NULL DEFAULT '',
+  student_id       TEXT NOT NULL DEFAULT '',
+  sports           TEXT[] NOT NULL DEFAULT '{}',
+  emergency_name   TEXT NOT NULL,
+  emergency_mobile TEXT NOT NULL,
+  fee              NUMERIC(10,2) NOT NULL,
+  payment_method   TEXT NOT NULL DEFAULT 'cash' CHECK (payment_method IN ('cash', 'gcash', 'qrph', 'bpi')),
+  payment_status   TEXT NOT NULL DEFAULT 'unpaid'
+                   CHECK (payment_status IN ('unpaid', 'for_verification', 'paid', 'waived', 'refunded')),
+  payment_ref      TEXT NOT NULL DEFAULT '',
+  payment_proof    TEXT NOT NULL DEFAULT '',  -- receipt screenshot (image data: URL)
+  paid_at          TIMESTAMPTZ,
+  member_since     DATE,                      -- first approval
+  starts_on        DATE,                      -- current 365-day period
+  expires_on       DATE,
+  staff_notes      TEXT NOT NULL DEFAULT '',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS memberships_status_idx ON memberships (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS memberships_email_idx ON memberships (lower(email));

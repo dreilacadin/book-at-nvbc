@@ -98,6 +98,14 @@ export async function POST(req: NextRequest) {
     if (s.qrph_image && (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(s.qrph_image) || s.qrph_image.length > MAX_QR_CHARS))
       return bad("The QR image must be a PNG, JPG or WebP under 500 KB.");
 
+    // Membership fees (₱). Missing values keep the current fee (older admin pages don't send them).
+    const current = await getSettings();
+    const fee = (v: unknown, keep: number) => (v === undefined || v === null || v === "" ? keep : Number(v));
+    const feeStudent = fee(b.membership_fee_student, current.membership_fee_student);
+    const feeAdult = fee(b.membership_fee_adult, current.membership_fee_adult);
+    if (![feeStudent, feeAdult].every((f) => Number.isFinite(f) && f >= 0 && f <= 100_000))
+      return bad("Enter valid membership fees.");
+
     await db().query(
       `UPDATE settings SET
          open_hour = $1, close_hour = $2, max_hours_per_booking = $3, max_hours_per_day = $4,
@@ -105,13 +113,14 @@ export async function POST(req: NextRequest) {
          rate_plans = $7::jsonb,
          member_code = $8, coach_code = $9, payment_methods = $10::text[],
          gcash_name = $11, gcash_number = $12, bpi_account_name = $13, bpi_account_number = $14,
-         qrph_image = $15, payment_note = $16
+         qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
         JSON.stringify(rate_plans), s.member_code, s.coach_code,
         `{${payment_methods.join(",")}}`,
         s.gcash_name, s.gcash_number, s.bpi_account_name, s.bpi_account_number, s.qrph_image, s.payment_note,
+        Math.round(feeStudent * 100) / 100, Math.round(feeAdult * 100) / 100,
       ]
     );
     return NextResponse.json(await getSettings());

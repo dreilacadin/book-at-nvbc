@@ -34,6 +34,7 @@ export default function RootLayout({
             <nav className="nav">
               <Link href="/">Book a court</Link>
               <Link href="/my-booking">My booking</Link>
+              <Link href="/membership">Membership</Link>
             </nav>
           </div>
         </header>

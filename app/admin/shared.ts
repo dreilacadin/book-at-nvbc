@@ -45,6 +45,8 @@ export type Settings = {
   bpi_account_number: string;
   qrph_image: string;
   payment_note: string;
+  membership_fee_student: number;
+  membership_fee_adult: number;
 };
 
 export async function api<T>(url: string, body?: unknown): Promise<T> {
@@ -61,3 +63,32 @@ export class AuthError extends Error {}
 export function todayManila() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
 }
+
+export type AdminMember = {
+  id: string;
+  token: string;
+  member_code: string | null;
+  status: "pending" | "active" | "rejected";
+  member_type: "student" | "adult";
+  full_name: string;
+  email: string;
+  mobile: string;
+  address: string;
+  birthdate: string;
+  gender: string;
+  school: string;
+  student_id: string;
+  sports: string[];
+  emergency_name: string;
+  emergency_mobile: string;
+  fee: number;
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  payment_ref: string;
+  has_proof: boolean;
+  member_since: string | null;
+  starts_on: string | null;
+  expires_on: string | null;
+  staff_notes: string;
+  created_at: string;
+};

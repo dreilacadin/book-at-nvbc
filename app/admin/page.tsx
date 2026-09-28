@@ -18,6 +18,7 @@ import {
 } from "@/lib/pricing";
 import { imageToDataUrl } from "@/lib/image";
 import EditBooking from "./EditBooking";
+import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
@@ -25,7 +26,7 @@ import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "courts" | "settings">("overview");
+  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
 
   useEffect(() => {
@@ -54,7 +55,7 @@ export default function AdminPage() {
         </button>
       </div>
       <div className="tabs" role="tablist">
-        {(["overview", "bookings", "courts", "settings"] as const).map((t) => (
+        {(["overview", "bookings", "members", "courts", "settings"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
@@ -70,6 +71,7 @@ export default function AdminPage() {
         />
       )}
       {tab === "bookings" && <BookingsTab initialDate={bookingsDate} onDateChange={setBookingsDate} onAuthError={onAuthError} />}
+      {tab === "members" && <MembersTab onAuthError={onAuthError} />}
       {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
       {tab === "settings" && <SettingsTab onAuthError={onAuthError} />}
     </>
@@ -796,6 +798,23 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
           If you set a code, players must type it to get the member/coach price — share it only with your members or
           coaches, and change it if it leaks. New prices apply to new bookings only.
         </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Membership fees</legend>
+        <div className="row">
+          <div>
+            <label htmlFor="mf-s">Student — ₱ per year</label>
+            <input id="mf-s" type="number" min={0} step="0.01" required value={s.membership_fee_student}
+              onChange={(e) => set("membership_fee_student", e.target.value === "" ? ("" as unknown as number) : Number(e.target.value))} />
+          </div>
+          <div>
+            <label htmlFor="mf-a">Adult — ₱ per year</label>
+            <input id="mf-a" type="number" min={0} step="0.01" required value={s.membership_fee_adult}
+              onChange={(e) => set("membership_fee_adult", e.target.value === "" ? ("" as unknown as number) : Number(e.target.value))} />
+          </div>
+        </div>
+        <p className="hint" style={{ margin: "8px 0 0" }}>New fees apply to new applications. Memberships last 365 days.</p>
       </fieldset>
 
       <fieldset>

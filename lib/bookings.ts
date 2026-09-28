@@ -121,7 +121,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
  * filled in (a GCash method with no GCash number would just confuse people).
  * Kept in the standard order: Cash, GCash, QR Ph, BPI.
  */
-function enabledMethods(s: Settings): PaymentMethod[] {
+export function enabledMethods(s: Settings): PaymentMethod[] {
   const on = s.payment_methods ?? [];
   const ready: Record<PaymentMethod, boolean> = {
     cash: true,
@@ -149,7 +149,7 @@ export async function getPaymentInfo(): Promise<PaymentInfo> {
 
 const sameCode = (a: string, b: string) => a.trim().toUpperCase() === b.trim().toUpperCase();
 
-function cleanRef(v: unknown): string {
+export function cleanRef(v: unknown): string {
   return typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, 60) : "";
 }
 

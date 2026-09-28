@@ -169,6 +169,7 @@ export async function runHealthChecks(): Promise<{ ok: boolean; checks: Check[] 
         await db().query(`SELECT rate_plans, payment_methods FROM settings WHERE id = 1`);
         await db().query(`SELECT payment_proof FROM bookings LIMIT 0`);
         await db().query(`SELECT id FROM court_blocks LIMIT 0`);
+        await db().query(`SELECT id FROM memberships LIMIT 0`);
         await db().query(`SELECT sport FROM courts LIMIT 1`);
         await db().query(`SELECT payment_status, amount FROM bookings LIMIT 1`);
         await db().query(`SELECT 1 FROM booking_slots LIMIT 1`);
