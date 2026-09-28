@@ -25,6 +25,8 @@ export type AdminBooking = {
   payment_status: PaymentStatus;
   payment_ref: string;
   has_proof: boolean;
+  member_code: string | null; // member-rate bookings: whose member code was used
+  member_name: string | null;
   ref_reused: number;
 };
 export type Court = { id: number; name: string; sport: Sport; is_active: boolean; sort_order: number; upcoming: number };

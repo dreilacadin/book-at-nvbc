@@ -64,18 +64,25 @@ export async function applyForMembership(input: Record<string, unknown>): Promis
   const form = validateMembershipForm(input, today, SPORTS.map((s) => s.id));
   if (typeof form === "string") return fail(400, form);
 
-  // One open application or current membership per email address.
-  const existing = await db().query<{ status: MembershipStatus; expires_on: string | null }>(
-    `SELECT status, expires_on FROM memberships WHERE lower(email) = $1 AND status <> 'rejected'`,
-    [form.email]
+  // Everyone applies once. Blocks a second application while one is pending, and for anyone who
+  // has ever been approved — expired memberships are renewed at the front desk instead.
+  // Matched by email, or by the same full name and birthdate (e.g. applying again with a new email).
+  const existing = await db().query<{ status: MembershipStatus }>(
+    `SELECT status FROM memberships
+      WHERE status <> 'rejected'
+        AND (lower(email) = $1 OR (lower(full_name) = lower($2) AND birthdate = $3))
+      ORDER BY (status = 'active') DESC LIMIT 1`,
+    [form.email, form.fullName, form.birthdate]
   );
-  for (const m of existing.rows) {
-    const state = membershipState(m, today);
-    if (state === "pending")
-      return fail(409, "There's already a pending application with this email. Open the link you got when you applied, or ask the front desk.");
-    if (state === "active")
-      return fail(409, "This email already has an active membership. Ask the front desk if you need your member code again.");
-  }
+  const prior = existing.rows[0];
+  if (prior?.status === "active")
+    return fail(
+      409,
+      "You're already an NVBC member — membership is applied for only once. Open your member page on the phone you applied with, " +
+        "or ask the front desk for your member code. Expired memberships are renewed at the front desk."
+    );
+  if (prior?.status === "pending")
+    return fail(409, "You already have a pending application. Open the link you got when you applied, or ask the front desk.");
 
   const settings = await getSettings();
   const fee = form.memberType === "student" ? settings.membership_fee_student : settings.membership_fee_adult;

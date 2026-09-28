@@ -1,17 +1,18 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { GENDERS, MEMBER_TYPES, type MemberType } from "@/lib/membership";
 import { formatPeso } from "@/lib/pricing";
-import { loadMembership, saveMembership, type SavedMembership } from "@/lib/saved-membership";
+import { forgetMembership, loadMembership, saveMembership } from "@/lib/saved-membership";
 import { SPORTS } from "@/lib/sports";
 
 export default function MembershipForm() {
   const router = useRouter();
   const [fees, setFees] = useState<Record<MemberType, number> | null>(null);
-  const [saved, setSaved] = useState<SavedMembership | null>(null);
+  // Membership is applied for once: a device that already applied goes to its member page.
+  const [checking, setChecking] = useState(true);
+  const [declined, setDeclined] = useState(false);
   const [memberType, setMemberType] = useState<MemberType>("adult");
   const [f, setF] = useState({
     fullName: "",
@@ -32,12 +33,25 @@ export default function MembershipForm() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setSaved(loadMembership());
+    const saved = loadMembership();
+    if (saved) {
+      fetch(`/api/membership/${saved.token}`, { cache: "no-store" })
+        .then(async (r) => {
+          if (r.status === 404) return forgetMembership(); // removed by staff: allow a fresh application
+          const v = await r.json();
+          if (!r.ok) return;
+          if (v.state === "rejected") return setDeclined(true); // declined: may apply again
+          router.replace(`/membership/${saved.token}`); // pending, active or expired
+          return "redirecting";
+        })
+        .then((r) => r !== "redirecting" && setChecking(false))
+        .catch(() => setChecking(false));
+    } else setChecking(false);
     fetch("/api/membership", { cache: "no-store" })
       .then((r) => r.json())
       .then((j) => setFees(j.fees))
       .catch(() => {});
-  }, []);
+  }, [router]);
 
   const field = (k: keyof typeof f) => ({
     value: f[k],
@@ -66,19 +80,19 @@ export default function MembershipForm() {
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  if (checking) return <p className="muted">Loading…</p>;
 
   return (
     <>
       <h1>Become an NVBC Member</h1>
       <p className="lead">
-        Members book courts at the member rate. Fill in the form, pay the yearly fee, and once the front desk
+        Members book courts at the member rate using their member code. Fill in the form, pay the yearly fee, and once the front desk
         approves it you&apos;ll get your personal member QR code. Membership is valid for 365 days.
       </p>
 
-      {saved && (
+      {declined && (
         <div className="notice" style={{ marginBottom: 16 }}>
-          You applied on this device{saved.name ? ` as ${saved.name}` : ""}.{" "}
-          <Link href={`/membership/${saved.token}`}><strong>View your membership →</strong></Link>
+          Your earlier application wasn&apos;t approved. You can apply again below, or ask the front desk.
         </div>
       )}
 

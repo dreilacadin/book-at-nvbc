@@ -23,11 +23,13 @@ export async function GET(req: NextRequest) {
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof,
+              mb.member_code, mb.full_name AS member_name,
               -- Same reference number used on another booking? Worth a second look.
               CASE WHEN b.payment_ref = '' THEN 0 ELSE
                 (SELECT count(*)::int FROM bookings o WHERE o.payment_ref = b.payment_ref AND o.id <> b.id) END
                 AS ref_reused
          FROM bookings b JOIN courts c ON c.id = b.court_id
+         LEFT JOIN memberships mb ON mb.id = b.membership_id
         WHERE b.booking_date BETWEEN $1 AND $2
         ORDER BY b.booking_date, (b.status = 'cancelled'), c.sport, b.start_hour, c.sort_order, c.id`,
       [from, to]

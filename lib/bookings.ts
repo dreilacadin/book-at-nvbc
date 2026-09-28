@@ -21,7 +21,8 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { isHalfHour, publicName, SLOT_HOURS } from "./format";
+import { formatDateLong, isHalfHour, publicName, SLOT_HOURS } from "./format";
+import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { SPORTS, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
@@ -91,7 +92,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
       rates: ratesForDate(settings.rate_plans[sport], date),
       rateTypes: rateTypesFor(settings.rate_plans[sport]),
       weekend: settings.rate_plans[sport].weekendRates && isWeekend(date),
-      memberCodeRequired: settings.member_code.trim() !== "",
+      memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
       coachCodeRequired: settings.coach_code.trim() !== "",
     },
     paymentMethods: enabledMethods(settings),
@@ -153,9 +154,31 @@ export function cleanRef(v: unknown): string {
   return typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, 60) : "";
 }
 
+/**
+ * Checks a member code for a member-rate booking on `date`: the membership must be approved and
+ * not expired by then. Returns the membership, or a message for the player.
+ */
+export async function verifyMemberCode(raw: unknown, date: string): Promise<{ id: string; fullName: string } | string> {
+  const code = normalizeMemberCode(raw);
+  if (!code) return "Enter your member code — it looks like NVBC-XXXX-XXXX and is on your member QR card.";
+  const { rows } = await db().query<{ id: string; full_name: string; status: string; expires_on: string | null }>(
+    `SELECT id, full_name, status, expires_on FROM memberships WHERE member_code = $1`,
+    [code]
+  );
+  const m = rows[0];
+  if (!m || m.status === "rejected") return `We couldn't find member code ${code}. Check it, or book at the Regular rate.`;
+  if (m.status !== "active" || !m.expires_on) return "That membership hasn't been approved yet. Book at the Regular rate for now.";
+  const today = nowAtFacility().date;
+  if (today >= m.expires_on)
+    return `That membership expired on ${formatDateLong(m.expires_on)}. Renew it at the front desk, or book at the Regular rate.`;
+  if (date >= m.expires_on)
+    return `That membership expires on ${formatDateLong(m.expires_on)}, before this booking. Renew it at the front desk, or book at the Regular rate.`;
+  return { id: m.id, fullName: m.full_name };
+}
+
 export type NewBookingInput = {
   rateType?: unknown; // regular | member | coach
-  rateCode?: unknown; // member/coach code, if the center requires one
+  rateCode?: unknown; // member rate: the player's member code; coach rate: the coach code, if set
   paymentMethod?: unknown; // cash | gcash | qrph | bpi
   paymentRef?: unknown; // reference number, if already paid by e-wallet/bank
   paymentProof?: unknown; // screenshot of the receipt (image data: URL)
@@ -231,13 +254,18 @@ export async function createBooking(
   if (!admin) {
     if (!enabledMethods(settings).includes(paymentMethod))
       return fail(400, "That payment method isn't available right now. Please choose another.");
-    // Member/coach rates can be protected with a code set by staff in /admin.
-    const required = rateType === "member" ? settings.member_code : rateType === "coach" ? settings.coach_code : "";
-    if (required.trim() && !sameCode(str(input.rateCode), required))
-      return fail(
-        400,
-        `That ${rateType} code isn't right. Choose Regular, or ask the front desk for the ${rateType} code.`
-      );
+    // The coach rate can be protected with a shared code set by staff in /admin.
+    if (rateType === "coach" && settings.coach_code.trim() && !sameCode(str(input.rateCode), settings.coach_code))
+      return fail(400, "That coach code isn't right. Choose Regular, or ask the front desk for the coach code.");
+  }
+
+  // The member rate needs the player's own member code, active on the booking date.
+  // Staff bookings don't (they check membership at the desk) but may still link one.
+  let membershipId: string | null = null;
+  if (rateType === "member" && (!admin || str(input.rateCode))) {
+    const member = await verifyMemberCode(input.rateCode, date);
+    if (typeof member === "string") return fail(400, member);
+    membershipId = member.id;
   }
 
   const noCharge = admin && input.noCharge === true;
@@ -332,13 +360,14 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status, payment_proof)
+                                 payment_ref, paid_at, status, payment_proof, membership_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17) RETURNING id`,
+                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
             rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
             paymentMethod === "cash" ? "" : paymentProof,
+            rateType === "member" ? membershipId : null,
           ]
         );
         bookingId = ins.rows[0].id;

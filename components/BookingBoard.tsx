@@ -26,6 +26,7 @@ import {
   type RateType,
 } from "@/lib/pricing";
 import { saveCode } from "@/lib/saved-codes";
+import { loadMembership } from "@/lib/saved-membership";
 import PaymentPanel, { PaymentDetails, ProofFields, usePaymentInfo } from "./PaymentPanel";
 import { isSport, sportLabel, type Sport } from "@/lib/sports";
 
@@ -357,7 +358,8 @@ function BookingDialog({
 
   const [hours, setHours] = useState(() => Math.min(1, maxHours));
   const [rateType, setRateType] = useState<RateType>("regular");
-  const [rateCode, setRateCode] = useState("");
+  // A member's code is saved on their phone when they open their member page: fill it in.
+  const [rateCode, setRateCode] = useState(() => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? ""));
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(data.paymentMethods[0] ?? "cash");
   const [paymentRef, setPaymentRef] = useState("");
   const [paymentProof, setPaymentProof] = useState("");
@@ -543,13 +545,20 @@ function BookingDialog({
                   <input
                     type="text"
                     aria-label={`${rateTypeLabel(rateType)} code`}
-                    placeholder={`${rateTypeLabel(rateType)} code (ask the front desk)`}
+                    placeholder={rateType === "member" ? "Your member code (NVBC-XXXX-XXXX)" : "Coach code (ask the front desk)"}
                     required
                     autoComplete="off"
+                    spellCheck={false}
                     value={rateCode}
                     onChange={(e) => setRateCode(e.target.value)}
-                    style={{ marginTop: 8 }}
+                    style={{ marginTop: 8, textTransform: rateType === "member" ? "uppercase" : undefined }}
                   />
+                )}
+                {rateType === "member" && (
+                  <p className="hint" style={{ margin: "6px 0 0" }}>
+                    It&apos;s under the QR code on your member card. Not a member yet?{" "}
+                    <Link href="/membership">Become a member</Link>.
+                  </p>
                 )}
                 {rateType !== "regular" && !codeRequired && (
                   <p className="hint" style={{ margin: "6px 0 0" }}>

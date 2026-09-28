@@ -282,6 +282,11 @@ function BookingsTab({
                     </td>
                     <td>
                       {rateTypeLabel(b.rate_type)}
+                      {b.member_code && (
+                        <div style={{ fontSize: 12, fontFamily: "ui-monospace, monospace" }} title={`Member: ${b.member_name}`}>
+                          {b.member_code}
+                        </div>
+                      )}
                       {b.discount_pct > 0 ? (
                         <div className="muted" style={{ fontSize: 13 }}>−{b.discount_pct}%</div>
                       ) : b.hourly_rate > 0 ? (
@@ -436,7 +441,7 @@ function AddBooking({
       <h2>Add booking or block courts — {formatDateLong(date)}</h2>
       <p className="muted" style={{ marginTop: -6, fontSize: 14 }}>
         Use this for walk-ins, phone bookings, tournaments or maintenance. Staff bookings ignore the
-        player limits and member/coach codes. Blocked slots show as &ldquo;Booked&rdquo; to the public.
+        player limits and member/coach codes (check the member&apos;s QR in Members). Blocked slots show as &ldquo;Booked&rdquo; to the public.
       </p>
       <div className="field">
         <label>Courts</label>
@@ -784,19 +789,14 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         })}
         <div className="row field">
           <div>
-            <label htmlFor="mc">Member code <span className="hint">(optional)</span></label>
-            <input id="mc" type="text" maxLength={40} autoComplete="off" value={s.member_code}
-              onChange={(e) => set("member_code", e.target.value)} placeholder="Leave blank = check at desk" />
-          </div>
-          <div>
             <label htmlFor="cc">Coach code <span className="hint">(optional)</span></label>
             <input id="cc" type="text" maxLength={40} autoComplete="off" value={s.coach_code}
               onChange={(e) => set("coach_code", e.target.value)} placeholder="Leave blank = check at desk" />
           </div>
         </div>
         <p className="hint" style={{ margin: "8px 0 0" }}>
-          If you set a code, players must type it to get the member/coach price — share it only with your members or
-          coaches, and change it if it leaks. New prices apply to new bookings only.
+          The member price needs the player&apos;s own active member code (from Members). If you set a coach code, players
+          must type it to get the coach price — share it only with your coaches. New prices apply to new bookings only.
         </p>
       </fieldset>
 

@@ -263,3 +263,9 @@ CREATE TABLE IF NOT EXISTS memberships (
 );
 CREATE INDEX IF NOT EXISTS memberships_status_idx ON memberships (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS memberships_email_idx ON memberships (lower(email));
+
+-- v11: member-rate bookings are tied to a verified membership -------------------------
+-- Players booking at the member rate must enter an active member code; the booking keeps
+-- a link to that membership so staff can see whose code was used.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS membership_id UUID REFERENCES memberships(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS bookings_membership_idx ON bookings (membership_id) WHERE membership_id IS NOT NULL;

@@ -40,7 +40,7 @@ export default function MembershipStatus({ token }: { token: string }) {
       setError("");
       // Keep this link on the device so the member can find their QR again.
       if (!loadMembership() || loadMembership()?.token === token)
-        saveMembership({ token, name: json.fullName, appliedOn: json.appliedOn });
+        saveMembership({ token, name: json.fullName, appliedOn: json.appliedOn, memberCode: json.memberCode ?? undefined });
     } catch {
       setError("Network error. Please check your connection.");
     }

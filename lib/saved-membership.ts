@@ -3,7 +3,7 @@
 
 const KEY = "nvbc_membership";
 
-export type SavedMembership = { token: string; name: string; appliedOn: string };
+export type SavedMembership = { token: string; name: string; appliedOn: string; memberCode?: string };
 
 export function loadMembership(): SavedMembership | null {
   try {
