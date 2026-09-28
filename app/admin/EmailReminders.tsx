@@ -258,7 +258,7 @@ export default function EmailReminders({
       {error && <div className="error">{error}</div>}
       {results && (
         <div className={failed.length ? "notice" : "success"}>
-          <strong>{sent}</strong> reminder{sent === 1 ? "" : "s"} sent.
+          <strong>{sent}</strong> reminder{sent === 1 ? "" : "s"} sent{sent ? " — marked as reminded" : ""}.
           {failed.length > 0 && (
             <>
               {" "}{failed.length} not sent (still ticked — fix and send again):

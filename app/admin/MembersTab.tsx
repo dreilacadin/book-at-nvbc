@@ -23,6 +23,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
   const [filter, setFilter] = useState<Filter>("action");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set()); // Expired list: tick to mark reminded
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -85,6 +86,12 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
       filter === "expired" ? Number(!!a.reminded_on) - Number(!!b.reminded_on) || (a.expires_on ?? "").localeCompare(b.expires_on ?? "") : 0
     );
 
+  // Expired list: select members to mark as reminded (e.g. everyone already emailed).
+  const bulk = filter === "expired";
+  const picked = shown.filter((m) => selected.has(m.id));
+  const notReminded = shown.filter((m) => !m.reminded_on);
+  const emailedNotMarked = notReminded.filter((m) => m.emailed_on);
+
   return (
     <div className="stack">
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
@@ -124,7 +131,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select aria-label="Show" value={filter} onChange={(e) => setFilter(e.target.value as Filter)} style={{ width: "auto" }}>
+        <select aria-label="Show" value={filter} onChange={(e) => { setFilter(e.target.value as Filter); setSelected(new Set()); }} style={{ width: "auto" }}>
           <option value="action">Pending applications</option>
           <option value="active">Active members</option>
           <option value="expired">Expired — remind to renew or forfeit</option>
@@ -138,6 +145,28 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
 
       {error && <div className="error">{error}</div>}
 
+      {bulk && shown.length > 0 && (
+        <div className="checklist-bar remind-bar">
+          <span><strong>{picked.length}</strong> selected</span>
+          <button type="button" className="btn small secondary" disabled={!emailedNotMarked.length}
+            onClick={() => setSelected(new Set(emailedNotMarked.map((m) => m.id)))}>
+            ✉ Emailed, not marked yet ({emailedNotMarked.length})
+          </button>
+          <button type="button" className="btn small secondary" disabled={!notReminded.length}
+            onClick={() => setSelected(new Set(notReminded.map((m) => m.id)))}>
+            All not reminded ({notReminded.length})
+          </button>
+          {picked.length > 0 && <button type="button" className="btn small secondary" onClick={() => setSelected(new Set())}>Clear</button>}
+          <button type="button" className="btn small" style={{ marginLeft: "auto" }} disabled={!picked.length}
+            onClick={async () => {
+              if (await act({ action: "remind", ids: picked.map((m) => m.id) },
+                `Mark ${picked.length} member${picked.length === 1 ? "" : "s"} as reminded to renew or forfeit?`)) setSelected(new Set());
+            }}>
+            ✓ Mark {picked.length || ""} reminded
+          </button>
+        </div>
+      )}
+
       <div className="card table-wrap" style={{ padding: 0 }}>
         {loading ? (
           <p className="muted" style={{ padding: 16 }}>Loading…</p>
@@ -147,6 +176,14 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
           <table className="list">
             <thead>
               <tr>
+                {bulk && (
+                  <th style={{ width: 36 }}>
+                    <input type="checkbox" aria-label="Select everyone shown"
+                      checked={picked.length > 0 && picked.length === shown.length}
+                      ref={(el) => { if (el) el.indeterminate = picked.length > 0 && picked.length < shown.length; }}
+                      onChange={(e) => setSelected(e.target.checked ? new Set(shown.map((m) => m.id)) : new Set())} />
+                  </th>
+                )}
                 <th>Name</th>
                 <th>Type</th>
                 <th>Fee / payment</th>
@@ -160,7 +197,13 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                 const paid = m.payment_status === "paid" || m.payment_status === "waived";
                 return (
                   <Fragment key={m.id}>
-                    <tr>
+                    <tr className={bulk && selected.has(m.id) ? "row-picked" : undefined}>
+                      {bulk && (
+                        <td>
+                          <input type="checkbox" aria-label={`Select ${m.full_name}`} checked={selected.has(m.id)}
+                            onChange={(e) => setSelected((cur) => { const n = new Set(cur); if (e.target.checked) n.add(m.id); else n.delete(m.id); return n; })} />
+                        </td>
+                      )}
                       <td>
                         <button type="button" className="link-btn" style={{ fontSize: 15, padding: 0, textDecoration: "none", fontWeight: 600, color: "var(--text)" }}
                           onClick={() => setOpen(open === m.id ? null : m.id)}>
@@ -233,7 +276,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                     </tr>
                     {open === m.id && (
                       <tr className="edit-row">
-                        <td colSpan={5}>
+                        <td colSpan={bulk ? 6 : 5}>
                           <MemberPanel m={m} today={today} act={act} onAuthError={onAuthError}
                             onChanged={() => load()} onDeleted={() => { setOpen(null); load(); }} />
                         </td>

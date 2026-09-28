@@ -450,3 +450,5 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 @media (max-width: 800px) { .email-grid { grid-template-columns: 1fr; } }
 .edit-member { max-width: 860px; }
 @media (max-width: 700px) { .edit-member .row { grid-template-columns: 1fr !important; } }
+.remind-bar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin: 0; }
+.list tr.row-picked > td { background: var(--brand-soft); }

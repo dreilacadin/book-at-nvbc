@@ -312,14 +312,28 @@ export async function forfeitMembership(id: string, reason: unknown): Promise<Re
 
 /** Staff told an expired member to renew or forfeit: remember when. */
 export async function markReminded(id: string): Promise<Result<{ id: string; remindedOn: string }>> {
-  if (!isId(id)) return fail(400, "Invalid id.");
+  const r = await markRemindedMany([id]);
+  if (!r.ok) return r;
+  if (!r.data.marked) return fail(400, "Only expired memberships need a reminder.");
+  return { ok: true, data: { id, remindedOn: nowAtFacility().date } };
+}
+
+/**
+ * Marks several expired members as reminded. Someone already emailed a reminder (after their
+ * membership expired) is marked with the email's date; anyone else with today's date.
+ */
+export async function markRemindedMany(ids: unknown): Promise<Result<{ marked: number }>> {
+  const list = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string" && isId(x)) : [];
+  if (list.length === 0) return fail(400, "Choose who to mark as reminded.");
+  if (list.length > 2000) return fail(400, "Mark up to 2,000 at a time.");
   const today = nowAtFacility().date;
   const { rowCount } = await db().query(
-    `UPDATE memberships SET reminded_on = $2 WHERE id = $1 AND status = 'active' AND expires_on <= $2`,
-    [id, today]
+    `UPDATE memberships
+        SET reminded_on = CASE WHEN emailed_on IS NOT NULL AND emailed_on >= expires_on THEN emailed_on ELSE $2::date END
+      WHERE id = ANY($1::uuid[]) AND status = 'active' AND expires_on <= $2`,
+    [list, today]
   );
-  if (!rowCount) return fail(400, "Only expired memberships need a reminder.");
-  return { ok: true, data: { id, remindedOn: today } };
+  return { ok: true, data: { marked: rowCount ?? 0 } };
 }
 
 export async function rejectMembership(id: string, reason: unknown): Promise<Result<{ id: string }>> {
@@ -524,7 +538,8 @@ export async function sendReminderEmails(
     const vars = reminderVars(m, origin);
     try {
       await sendEmail(m.email, fillTemplate(subj, vars), fillTemplate(text, vars));
-      await db().query(`UPDATE memberships SET emailed_on = $2 WHERE id = $1`, [m.id, today]);
+      // A reminder email counts as reminding them.
+      await db().query(`UPDATE memberships SET emailed_on = $2, reminded_on = $2 WHERE id = $1`, [m.id, today]);
       outcomes.push({ id: m.id, name: m.full_name, ok: true });
     } catch (e) {
       const error = e instanceof Error ? e.message : "Sending failed";

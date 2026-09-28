@@ -8,6 +8,7 @@ import {
   deleteMembership,
   forfeitMembership,
   markReminded,
+  markRemindedMany,
   sendReminderEmails,
   sendTestReminder,
   updateMembership,
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
 // { action: "payment", id, status } | { action: "approve", id } | { action: "renew", id }
 // | { action: "reject", id, reason? } | { action: "delete", id }
 // | { action: "update", id, fullName, email, mobile, …, startsOn, expiresOn }
-// | { action: "forfeit", id, reason? } | { action: "remind", id }  (expired memberships)
+// | { action: "forfeit", id, reason? } | { action: "remind", id } | { action: "remind", ids: [...] }  (expired)
 // | { action: "import", records, dryRun }
 // | { action: "email", ids, subject, body }  (reminders to expired members, up to 10 per call)
 // | { action: "email-test", id, subject, body }  (one filled-in reminder to the club's own address)  (existing members from a spreadsheet)
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
     if (b.action === "payment") return respond(await setMembershipPayment(id, b.status));
     if (b.action === "approve") return respond(await approveMembership(id));
     if (b.action === "forfeit") return respond(await forfeitMembership(id, b.reason));
+    if (b.action === "remind" && Array.isArray(b.ids)) return respond(await markRemindedMany(b.ids));
     if (b.action === "remind") return respond(await markReminded(id));
     if (b.action === "renew") return respond(await renewMembership(id));
     if (b.action === "reject") return respond(await rejectMembership(id, b.reason));
