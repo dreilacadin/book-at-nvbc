@@ -452,3 +452,18 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 @media (max-width: 700px) { .edit-member .row { grid-template-columns: 1fr !important; } }
 .remind-bar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin: 0; }
 .list tr.row-picked > td { background: var(--brand-soft); }
+
+/* Booking QR + policy */
+.booking-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 12px 0; text-align: center; }
+.booking-qr img { width: 200px; height: 200px; background: #fff; border-radius: 12px; padding: 6px; image-rendering: pixelated; }
+.policy-box { background: var(--bg); border: 1px solid var(--border); border-left: 4px solid #e0a800; border-radius: 10px;
+  padding: 10px 14px; margin-top: 14px; font-size: 14px; }
+.policy-box ul { margin: 6px 0 0; padding-left: 18px; }
+.policy-box li + li { margin-top: 4px; }
+.pay-options button:disabled { opacity: .5; cursor: not-allowed; }
+.confirm-pay { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.lookup-result.booking-pending { border-color: #e0a800; }
+.lookup-result.booking-pending .lookup-icon { background: #e0a800; }
+.lookup-result.booking-confirmed { border-color: var(--brand); }
+.lookup-result.booking-confirmed .lookup-icon { background: var(--brand); }
+.lookup-result.booking-cancelled .lookup-icon, .lookup-result.booking-released .lookup-icon { background: var(--muted); }

@@ -23,6 +23,14 @@ export function formatHour(h: number): string {
   return `${h12}:${min} ${hour < 12 ? "AM" : "PM"}`;
 }
 
+/** Any time of day in hours, to the minute: 9.8333 → "9:50 AM". */
+export function formatClock(h: number): string {
+  const total = Math.round(h * 60);
+  const hour = Math.floor(total / 60) % 24;
+  const min = String(total % 60).padStart(2, "0");
+  return `${hour % 12 === 0 ? 12 : hour % 12}:${min} ${hour < 12 ? "AM" : "PM"}`;
+}
+
 /** 0.5 → "30 min", 1 → "1 hour", 1.5 → "1½ hours" */
 export function formatDuration(hours: number): string {
   if (hours < 1) return `${Math.round(hours * 60)} min`;

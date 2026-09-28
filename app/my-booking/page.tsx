@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { formatDateLong, formatRange } from "@/lib/format";
 import { forgetCode, loadCodes, type SavedCode } from "@/lib/saved-codes";
 import { sportLabel } from "@/lib/sports";
+import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
+import BookingQr from "@/components/BookingQr";
 import PaymentPanel from "@/components/PaymentPanel";
+import { REFUND_HOURS, RELEASE_MINUTES, refundOnCancel } from "@/lib/booking-policy";
+import { nowAtFacility } from "@/lib/time";
 import {
   formatPeso,
   paymentLabel,
@@ -33,6 +37,7 @@ type Booking = {
   paymentStatus: PaymentStatus;
   paymentRef: string;
   hasProof: boolean;
+  cancelledBy: string | null; // "system" = released (not paid in time)
 };
 
 export default function MyBookingPage() {
@@ -100,6 +105,13 @@ export default function MyBookingPage() {
     setSaved(loadCodes());
   }
 
+  const refund = booking
+    ? refundOnCancel(
+        { payment_method: booking.paymentMethod, payment_status: booking.paymentStatus, date: booking.date, start_hour: booking.startHour },
+        nowAtFacility()
+      )
+    : "none";
+
   return (
     <div style={{ maxWidth: 560 }}>
       <h1>My booking</h1>
@@ -139,7 +151,7 @@ export default function MyBookingPage() {
               <span className="muted" style={{ display: "block", fontSize: 14, fontWeight: 400 }}>{sportLabel(booking.sport)}</span>
             </h2>
             <span className={`badge ${booking.status === "pending" ? "pending" : booking.status === "cancelled" ? "grey" : ""}`}>
-              {bookingStatusLabel(booking.status)}
+              {booking.status === "cancelled" && booking.cancelledBy === "system" ? "Released" : bookingStatusLabel(booking.status)}
             </span>
           </div>
           <p style={{ margin: "8px 0 0" }}>
@@ -166,11 +178,27 @@ export default function MyBookingPage() {
 
           {booking.status === "pending" && (
             <div className="notice" style={{ marginTop: 12 }}>
-              Your slot is held, but the booking stays <strong>Pending</strong> until staff verify your{" "}
-              {paymentLabel(booking.paymentMethod)} payment.{" "}
-              {booking.paymentStatus === "unpaid" ? "Please pay and enter your reference number below." : "We'll confirm it shortly."}
+              {booking.paymentStatus === "for_verification" ? (
+                <>
+                  We&apos;ve received your {paymentLabel(booking.paymentMethod)} payment details. Your booking is{" "}
+                  <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
+                </>
+              ) : (
+                <>
+                  Your slot is held as <strong>Pending</strong>. Please pay by{" "}
+                  <strong>{payByLabel(booking.date, booking.startHour)}</strong> — unpaid bookings are released at that
+                  time. Your booking is <strong>Confirmed</strong> once staff receive your payment.
+                </>
+              )}
             </div>
           )}
+          {booking.status === "cancelled" && booking.cancelledBy === "system" && (
+            <div className="notice" style={{ marginTop: 12 }}>
+              This booking was released because it wasn&apos;t paid {RELEASE_MINUTES} minutes before the start time, so the
+              court could be offered to other players. You&apos;re welcome to book another slot.
+            </div>
+          )}
+          {booking.status !== "cancelled" && <BookingQr code={booking.code} />}
 
           {booking.status !== "cancelled" && booking.amount > 0 && (
             <PaymentPanel
@@ -181,18 +209,27 @@ export default function MyBookingPage() {
               status={booking.paymentStatus}
               reference={booking.paymentRef}
               hasProof={booking.hasProof}
+              payBy={payByLabel(booking.date, booking.startHour)}
               onUpdated={(u) => setBooking({ ...booking, ...u, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
             />
           )}
-          {booking.status === "cancelled" && booking.paymentStatus === "paid" && (
+          {booking.status === "cancelled" && booking.paymentStatus === "paid" && booking.paymentMethod !== "cash" && (
             <p className="muted" style={{ fontSize: 14 }}>
-              You already paid for this booking. Please contact the front desk about your refund.
+              You paid for this booking by {paymentLabel(booking.paymentMethod)}. Refunds apply to bookings cancelled at
+              least {REFUND_HOURS} hours before the start time — please contact the front desk about your refund.
             </p>
           )}
 
           {booking.canCancel && !confirming && (
             <div className="actions">
               <button className="btn secondary" onClick={() => setConfirming(true)}>Cancel this booking</button>
+            </div>
+          )}
+          {confirming && refund !== "none" && (
+            <div className={refund === "refundable" ? "success" : "notice"} style={{ marginTop: 14 }}>
+              {refund === "refundable"
+                ? `You're cancelling at least ${REFUND_HOURS} hours before your start time, so your ${paymentLabel(booking.paymentMethod)} payment is eligible for a refund. The front desk will arrange it.`
+                : `Your start time is less than ${REFUND_HOURS} hours away, so your ${paymentLabel(booking.paymentMethod)} payment is non-refundable if you cancel now.`}
             </div>
           )}
           {confirming && (
@@ -207,6 +244,7 @@ export default function MyBookingPage() {
               This booking has already started. Please talk to the front desk for changes.
             </p>
           )}
+          {booking.status !== "cancelled" && booking.amount > 0 && <BookingPolicy title="Good to know" />}
         </div>
       )}
 

@@ -159,6 +159,7 @@ export default function PaymentPanel({
   status: initialStatus,
   reference: initialRef = "",
   hasProof: initialHasProof = false,
+  payBy,
   onUpdated,
 }: {
   code: string;
@@ -167,6 +168,7 @@ export default function PaymentPanel({
   status: PaymentStatus;
   reference?: string;
   hasProof?: boolean;
+  payBy?: string; // "9:50 AM on Thu, Oct 1": unpaid bookings are released then
   onUpdated?: (p: { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; paymentRef: string; hasProof: boolean }) => void;
 }) {
   const { info, error: infoError } = usePaymentInfo();
@@ -243,8 +245,9 @@ export default function PaymentPanel({
 
       {method === "cash" && (
         <p style={{ margin: "10px 0 0" }}>
-          Pay <strong>{formatPeso(amount)}</strong> in cash at the front desk before you play. Just tell staff your
-          booking code <strong>{code}</strong>.
+          Pay <strong>{formatPeso(amount)}</strong> in cash at the front desk
+          {payBy ? <> by <strong>{payBy}</strong></> : " before you play"} and show your booking QR (or code{" "}
+          <strong>{code}</strong>). Your booking is confirmed once staff receive your payment.
         </p>
       )}
 

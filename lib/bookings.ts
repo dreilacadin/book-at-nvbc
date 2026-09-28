@@ -21,6 +21,7 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
+import { minutesUntilStart, RELEASE_MINUTES } from "./booking-policy";
 import { formatDateLong, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
@@ -51,7 +52,33 @@ export function normalizeCode(code: unknown): string | null {
  * Public, anonymous availability for one date and sport. Never includes who booked.
  * If no sport is given, the first sport that has courts is used.
  */
+/**
+ * Releases unpaid bookings that are within RELEASE_MINUTES of their start (see shouldRelease): they
+ * are cancelled by "system" and their slots open up. Runs whenever bookings are looked at or made
+ * (at most every 15 seconds per server), so no scheduled job is needed.
+ */
+let lastRelease = 0;
+export async function releaseUnpaidBookings(): Promise<number> {
+  if (Date.now() - lastRelease < 15_000) return 0;
+  lastRelease = Date.now();
+  const now = nowAtFacility();
+  const { rows } = await db().query<{ released: number }>(
+    `WITH rel AS (
+       UPDATE bookings SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
+        WHERE status = 'pending' AND payment_status = 'unpaid' AND amount > 0
+          AND (booking_date - $1::date) * 1440 + (start_hour - $2::numeric) * 60 <= $3
+        RETURNING id
+     ), freed AS (
+       DELETE FROM booking_slots WHERE booking_id IN (SELECT id FROM rel)
+     )
+     SELECT count(*)::int AS released FROM rel`,
+    [now.date, now.time, RELEASE_MINUTES]
+  );
+  return rows[0]?.released ?? 0;
+}
+
 export async function getAvailability(date: string, requestedSport?: Sport) {
+  await releaseUnpaidBookings();
   const settings = await getSettings();
   const today = nowAtFacility();
   const [allCourts, taken, blocks] = await Promise.all([
@@ -222,6 +249,7 @@ export async function createBooking(
 > {
   const admin = !!opts.admin;
   if (!admin && str(input.website)) return fail(400, "Booking could not be completed.");
+  await releaseUnpaidBookings();
 
   const courtId = Number(input.courtId);
   const startHour = Number(input.startHour);
@@ -285,6 +313,13 @@ export async function createBooking(
     if (startHour < settings.open_hour || endHour > settings.close_hour)
       return fail(400, "That time is outside opening hours.");
     if (isPastSlot(date, startHour)) return fail(400, "That time slot has already started.");
+    // A cash booking this close to the start would be released right away (not paid in time).
+    if (paymentMethod === "cash" && minutesUntilStart(date, startHour, nowAtFacility()) <= RELEASE_MINUTES)
+      return fail(
+        400,
+        `This slot starts in less than ${RELEASE_MINUTES} minutes, so it can't be held for payment at the desk. ` +
+          "Please pay online (GCash, QR Ph or bank transfer), or book at the front desk."
+      );
   }
 
   const client = await db().connect();
@@ -331,7 +366,7 @@ export async function createBooking(
     let paymentStatus: PaymentStatus = proven ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
-    const status = activeBookingStatus(paymentMethod, paymentStatus, price.total);
+    const status = activeBookingStatus(paymentStatus, price.total);
 
     // Fair-use limit per person per day (matched on their contact number/email).
     const used = await client.query<{ total: number }>(
@@ -427,16 +462,18 @@ export type BookingView = {
   paymentRef: string;
   hasProof: boolean; // a payment screenshot was uploaded
   canCancel: boolean;
+  cancelledBy: string | null; // "system" = released automatically (not paid in time)
 };
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
 export async function findByCode(rawCode: unknown): Promise<Result<BookingView>> {
   const code = normalizeCode(rawCode);
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
+  await releaseUnpaidBookings();
   const { rows } = await db().query(
     `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
             b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
-            b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof
+            b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by
        FROM bookings b JOIN courts c ON c.id = b.court_id
       WHERE b.cancel_code = $1`,
     [code]
@@ -463,6 +500,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       paymentRef: r.payment_ref,
       hasProof: r.has_proof,
       canCancel: r.status !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
+      cancelledBy: r.cancelled_by,
     },
   };
 }
@@ -552,7 +590,13 @@ export async function submitPayment(
   if (!rows[0]) {
     const b = await findByCode(code);
     if (!b.ok) return b;
-    if (b.data.status === "cancelled") return fail(400, "This booking was cancelled.");
+    if (b.data.status === "cancelled")
+      return fail(
+        400,
+        b.data.cancelledBy === "system"
+          ? `This booking was released because it wasn't paid ${RELEASE_MINUTES} minutes before the start time.`
+          : "This booking was cancelled."
+      );
     return fail(400, `This booking is already marked "${b.data.paymentStatus === "paid" ? "paid" : b.data.paymentStatus}".`);
   }
   return {
@@ -580,7 +624,7 @@ export async function setPaymentStatus(
         -- Pending ⇄ confirmed follows the payment (see activeBookingStatus); cancelled stays cancelled.
         status = CASE
           WHEN status = 'cancelled' THEN status
-          WHEN COALESCE($3, payment_method) <> 'cash' AND amount > 0 AND $2 IN ('unpaid', 'for_verification') THEN 'pending'
+          WHEN amount > 0 AND $2 NOT IN ('paid', 'waived') THEN 'pending'
           ELSE 'confirmed' END
       WHERE id = $1 RETURNING id, status`,
     [id, status, method ?? null, ref === undefined ? null : cleanRef(ref)]
@@ -656,7 +700,7 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
       return fail(400, "That court doesn't exist.");
     }
 
-    const status = activeBookingStatus(paymentMethod, b.payment_status, price.total);
+    const status = activeBookingStatus(b.payment_status, price.total);
     await client.query(
       `UPDATE bookings SET court_id = $2, booking_date = $3, start_hour = $4, end_hour = $5,
               player_name = $6, contact = $7, notes = $8, rate_type = $9, hourly_rate = $10,

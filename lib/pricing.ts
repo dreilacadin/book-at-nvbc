@@ -33,13 +33,11 @@ export const paymentStatusLabel = (id: string) => PAYMENT_STATUSES.find((s) => s
 export type BookingStatus = "pending" | "confirmed" | "cancelled";
 
 /**
- * An active booking paid online (GCash, QR Ph, BPI) is "pending" until staff verify the
- * payment (Paid or No charge). Cash bookings are "confirmed" right away and paid at the desk.
+ * Every booking is "pending" until staff record the payment as received (Paid, or No charge) —
+ * whatever the payment method, cash included. Nothing to pay (₱0) → confirmed.
  */
-export function activeBookingStatus(method: PaymentMethod, paymentStatus: PaymentStatus, amount: number): "pending" | "confirmed" {
-  return method !== "cash" && amount > 0 && (paymentStatus === "unpaid" || paymentStatus === "for_verification")
-    ? "pending"
-    : "confirmed";
+export function activeBookingStatus(paymentStatus: PaymentStatus, amount: number): "pending" | "confirmed" {
+  return amount > 0 && paymentStatus !== "paid" && paymentStatus !== "waived" ? "pending" : "confirmed";
 }
 
 export const bookingStatusLabel = (s: string) =>

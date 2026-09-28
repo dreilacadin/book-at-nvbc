@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin, unauthorized } from "@/lib/admin-auth";
-import { cancelById, createBooking, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { cancelById, createBooking, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
 import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
@@ -8,16 +8,25 @@ import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
 export const dynamic = "force-dynamic";
 
 // Admin only: full booking details (names + contacts) for a date (?date=),
-// or for a range of up to 6 weeks (?from=&to=, inclusive) for the overview.
+// or for a range of up to 6 weeks (?from=&to=, inclusive) for the overview,
+// or one booking by its code (?code=, from scanning the booking QR).
 export async function GET(req: NextRequest) {
   if (!isAdmin(req)) return unauthorized();
   const q = req.nextUrl.searchParams;
+  const rawCode = q.get("code");
+  const code = rawCode === null ? null : normalizeCode(rawCode);
+  if (rawCode !== null && !code)
+    return NextResponse.json(
+      { error: /NVBC/i.test(rawCode) ? "That's a member code — check it in the Members tab." : "Booking codes look like NV-ABC123." },
+      { status: 400 }
+    );
   const date = q.get("date") || nowAtFacility().date;
   const from = q.get("from") || date;
   const to = q.get("to") || from;
   if (!isValidDate(from) || !isValidDate(to) || to < from || daysBetween(from, to) > 42)
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   try {
+    await releaseUnpaidBookings();
     const { rows } = await db().query(
       `SELECT b.id, b.cancel_code AS code, c.name AS court_name, c.sport, b.court_id, b.booking_date AS date,
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
@@ -40,10 +49,14 @@ export async function GET(req: NextRequest) {
               AND right(regexp_replace(m.mobile, '\\D', '', 'g'), 10) = right(regexp_replace(b.contact, '\\D', '', 'g'), 10)
             ORDER BY m.expires_on DESC LIMIT 1
          ) ex ON b.status <> 'cancelled'
-        WHERE b.booking_date BETWEEN $1 AND $2
+        WHERE ($4::text IS NULL AND b.booking_date BETWEEN $1 AND $2) OR b.cancel_code = $4
         ORDER BY b.booking_date, (b.status = 'cancelled'), c.sport, b.start_hour, c.sort_order, c.id`,
-      [from, to, nowAtFacility().date]
+      [from, to, nowAtFacility().date, code]
     );
+    if (code) {
+      if (!rows[0]) return NextResponse.json({ error: `No booking found with code ${code}.` }, { status: 404 });
+      return NextResponse.json(rows[0], { headers: { "Cache-Control": "no-store" } });
+    }
     return NextResponse.json({ date: from, from, to, bookings: rows }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return serverError(e);

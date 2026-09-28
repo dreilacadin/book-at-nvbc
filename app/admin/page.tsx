@@ -17,6 +17,8 @@ import {
   type SportPricing,
 } from "@/lib/pricing";
 import { imageToDataUrl } from "@/lib/image";
+import { payByLabel } from "@/components/BookingPolicy";
+import BookingLookup, { refundNote } from "./BookingLookup";
 import EditBooking from "./EditBooking";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
@@ -162,8 +164,7 @@ function BookingsTab({
   }, [load]);
 
   async function cancel(b: AdminBooking) {
-    const paidNote = b.payment_status === "paid" ? `\n\nThis booking is PAID (${formatPeso(b.amount)}). Remember to refund it.` : "";
-    if (!window.confirm(`Cancel ${b.name}'s booking on ${b.court_name}, ${formatRange(b.start_hour, b.end_hour)}?${paidNote}`)) return;
+    if (!window.confirm(`Cancel ${b.name}'s booking on ${b.court_name}, ${formatRange(b.start_hour, b.end_hour)}?${refundNote(b)}`)) return;
     try {
       await api("/api/admin/bookings", { action: "cancel", id: b.id });
       load();
@@ -218,6 +219,7 @@ function BookingsTab({
 
   return (
     <div className="stack">
+      <BookingLookup onChanged={load} onOpenDate={setDate} onAuthError={onAuthError} />
       <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div>
           <label htmlFor="d">Date</label>
@@ -358,9 +360,14 @@ function BookingsTab({
                       {b.status !== "cancelled" ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
                           <span className={`badge ${b.status === "pending" ? "pending" : ""}`}
-                            title={b.status === "pending" ? "Waiting for the online payment to be verified — mark it Paid to confirm" : undefined}>
+                            title={b.status === "pending" ? "Waiting for payment — set the payment to Paid to confirm" : undefined}>
                             {bookingStatusLabel(b.status)}
                           </span>
+                          {b.status === "pending" && b.payment_status === "unpaid" && b.amount > 0 && (
+                            <span className="muted" style={{ fontSize: 12 }} title="Unpaid bookings are released automatically">
+                              Releases {payByLabel(b.date, b.start_hour).replace(/ on .*/, "")} if unpaid
+                            </span>
+                          )}
                           <div style={{ display: "flex", gap: 6 }}>
                             <button className="btn small secondary" onClick={() => setEditing(editing === b.id ? null : b.id)}>
                               Edit
@@ -370,7 +377,9 @@ function BookingsTab({
                         </div>
                       ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-                          <span className="badge grey">Cancelled{b.cancelled_by ? ` by ${b.cancelled_by}` : ""}</span>
+                          <span className="badge grey" title={b.cancelled_by === "system" ? "Released automatically: not paid 10 minutes before the start" : undefined}>
+                            {b.cancelled_by === "system" ? "Released — not paid in time" : `Cancelled${b.cancelled_by ? ` by ${b.cancelled_by}` : ""}`}
+                          </span>
                           <button className="btn small secondary danger-text" onClick={() => remove(b)}>Delete</button>
                         </div>
                       )}

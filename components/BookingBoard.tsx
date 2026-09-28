@@ -27,6 +27,9 @@ import {
 } from "@/lib/pricing";
 import { saveCode } from "@/lib/saved-codes";
 import { loadMembership } from "@/lib/saved-membership";
+import { minutesUntilStart, RELEASE_MINUTES } from "@/lib/booking-policy";
+import BookingPolicy, { payByLabel } from "./BookingPolicy";
+import BookingQr from "./BookingQr";
 import PaymentPanel, { PaymentDetails, ProofFields, usePaymentInfo } from "./PaymentPanel";
 import { isSport, sportLabel, type Sport } from "@/lib/sports";
 
@@ -360,7 +363,11 @@ function BookingDialog({
   const [rateType, setRateType] = useState<RateType>("regular");
   // A member's code is saved on their phone when they open their member page: fill it in.
   const [rateCode, setRateCode] = useState(() => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? ""));
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(data.paymentMethods[0] ?? "cash");
+  // A cash booking this close to the start can't be held for payment at the desk (it'd be released).
+  const startsSoon = minutesUntilStart(data.date, selection.hour, { date: data.today, time: data.currentHour }) <= RELEASE_MINUTES;
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
+    (startsSoon ? data.paymentMethods.find((m) => m !== "cash") : undefined) ?? data.paymentMethods[0] ?? "cash"
+  );
   const [paymentRef, setPaymentRef] = useState("");
   const [paymentProof, setPaymentProof] = useState("");
   const { info: payInfo } = usePaymentInfo();
@@ -459,10 +466,20 @@ function BookingDialog({
           <div>
             {done.status === "pending" ? (
               <>
-                <h2 id="dlg-title">Slot held — verifying payment</h2>
+                <h2 id="dlg-title">Booking received — pending payment</h2>
                 <p className="notice" style={{ marginTop: 0 }}>
-                  Your booking is <strong>Pending</strong> until staff verify your {paymentLabel(done.paymentMethod)} payment.
-                  It becomes <strong>Confirmed</strong> once verified.
+                  {done.paymentStatus === "for_verification" ? (
+                    <>
+                      Thank you! We&apos;ve received your {paymentLabel(done.paymentMethod)} payment details. Your booking is{" "}
+                      <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
+                    </>
+                  ) : (
+                    <>
+                      Your slot is held as <strong>Pending</strong>. Please pay by{" "}
+                      <strong>{payByLabel(done.date, done.startHour)}</strong> — unpaid bookings are released at that time.
+                      Your booking is <strong>Confirmed</strong> once staff receive your payment.
+                    </>
+                  )}
                 </p>
               </>
             ) : (
@@ -480,11 +497,10 @@ function BookingDialog({
                 </>
               )}
             </div>
-            <p style={{ margin: 0 }}>Your booking code:</p>
-            <div className="code-box">{done.code}</div>
-            <p className="muted" style={{ fontSize: 14 }}>
-              Take a screenshot or save this code. You&apos;ll need it to view, pay or cancel your booking on the{" "}
-              <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
+            <BookingQr code={done.code} />
+            <p className="muted" style={{ fontSize: 14, marginTop: 0 }}>
+              Take a screenshot of this QR code or save your booking code. You&apos;ll need it to view, pay or cancel your
+              booking on the <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
             </p>
             {done.amount > 0 && (
               <PaymentPanel
@@ -494,8 +510,10 @@ function BookingDialog({
                 status={done.paymentStatus}
                 reference={done.paymentRef}
                 hasProof={done.hasProof}
+                payBy={payByLabel(done.date, done.startHour)}
               />
             )}
+            {done.amount > 0 && <BookingPolicy title="Good to know" />}
             <div className="actions">
               <button className="btn secondary" onClick={copy}>{copied ? "Copied ✓" : "Copy code"}</button>
               <button className="btn" onClick={onClose}>Done</button>
@@ -602,13 +620,20 @@ function BookingDialog({
                         type="button"
                         role="radio"
                         aria-checked={paymentMethod === m.id}
+                        disabled={startsSoon && m.id === "cash"}
                         onClick={() => setPaymentMethod(m.id)}
                       >
                         <strong>{m.label}</strong>
-                        <small>{m.hint}</small>
+                        <small>{startsSoon && m.id === "cash" ? `Not available — starts in under ${RELEASE_MINUTES} min` : m.hint}</small>
                       </button>
                     ))}
                   </div>
+                  {startsSoon && data.paymentMethods.every((m) => m === "cash") && (
+                    <p className="error" style={{ marginTop: 8 }}>
+                      This slot starts in under {RELEASE_MINUTES} minutes and can only be paid at the front desk — please book
+                      it there.
+                    </p>
+                  )}
                 </div>
 
                 <div className="price-box" aria-live="polite">
@@ -643,6 +668,8 @@ function BookingDialog({
                 )}
               </>
             )}
+
+            {hasPrices && price.total > 0 && <BookingPolicy />}
 
             {/* Honeypot: hidden from people, often filled in by spam bots. */}
             <div className="hp" aria-hidden="true">
