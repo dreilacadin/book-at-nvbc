@@ -3,6 +3,7 @@ import { db, getSettings, type Settings } from "./db";
 import {
   activeBookingStatus,
   computePrice,
+  formatPeso,
   hasPaymentProof,
   isPaymentMethod,
   isProofImage,
@@ -23,12 +24,33 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { bookingPhase, minutesUntilStart, paymentDeadline, RELEASE_MINUTES, type Phase } from "./booking-policy";
+import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, RELEASE_MINUTES, type Phase } from "./booking-policy";
 import { formatDateLong, formatRange, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
-import { BOOKING_DEFAULT_SPORT, SPORTS, sportLabel, type Sport } from "./sports";
+import { notifyStaff } from "./notify";
+import { BOOKING_DEFAULT_SPORT, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
+
+/** "🏸 Badminton Court 2 · Wed, Oct 1 · 9:00 AM – 10:00 AM" — for staff notifications. */
+function bookingLine(b: { court_name: string; sport: string; booking_date: string; start_hour: number; end_hour: number }) {
+  const day = new Date(b.booking_date + "T00:00:00Z").toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  return `${sportEmoji(b.sport)} ${b.court_name} · ${day} · ${formatRange(b.start_hour, b.end_hour)}`;
+}
+
+/** Court/time details of one booking, for a notification. */
+async function bookingDetails(where: "id" | "cancel_code", value: string) {
+  const { rows } = await db().query<{
+    id: string; cancel_code: string; player_name: string; court_name: string; sport: string; booking_date: string;
+    start_hour: number; end_hour: number; amount: number; payment_method: PaymentMethod; payment_ref: string;
+  }>(
+    `SELECT b.id, b.cancel_code, b.player_name, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
+            b.amount, b.payment_method, b.payment_ref
+       FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.${where} = $1`,
+    [value]
+  );
+  return rows[0] ?? null;
+}
 
 export type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
 
@@ -61,21 +83,35 @@ export async function releaseUnpaidBookings(): Promise<number> {
   if (Date.now() - lastRelease < 10_000) return 0;
   lastRelease = Date.now();
   const now = nowAtFacility();
-  const { rows } = await db().query<{ released: number }>(
+  const { rows } = await db().query<{
+    id: string; cancel_code: string; player_name: string; court_name: string; sport: string;
+    booking_date: string; start_hour: number; end_hour: number;
+  }>(
     `WITH rel AS (
-       UPDATE bookings SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
-        WHERE status IN ('pending', 'reserved') AND payment_status = 'unpaid' AND amount > 0
-          AND phase IS NULL AND auto_release -- marked in progress/completed or restored by staff: keep
-          AND ((booking_date - $1::date) * 1440 + (start_hour - $2::numeric) * 60 <= $3
-               OR pay_by <= now())
-        RETURNING id
+       UPDATE bookings b SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
+         FROM courts c
+        WHERE c.id = b.court_id
+          AND b.status IN ('pending', 'reserved') AND b.payment_status = 'unpaid' AND b.amount > 0
+          AND b.phase IS NULL AND b.auto_release -- marked in progress/completed or restored by staff: keep
+          AND ((b.booking_date - $1::date) * 1440 + (b.start_hour - $2::numeric) * 60 <= $3
+               OR b.pay_by <= now())
+        RETURNING b.id, b.cancel_code, b.player_name, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour
      ), freed AS (
        DELETE FROM booking_slots WHERE booking_id IN (SELECT id FROM rel)
      )
-     SELECT count(*)::int AS released FROM rel`,
+     SELECT * FROM rel`,
     [now.date, now.time, RELEASE_MINUTES]
   );
-  return rows[0]?.released ?? 0;
+  await notifyStaff(
+    rows.map((r) => ({
+      kind: "booking_gone" as const,
+      title: `Released — ${r.player_name} (not paid in time)`,
+      pushTitle: `Released — ${publicName(r.player_name)} (not paid in time)`,
+      body: bookingLine(r),
+      bookingCode: r.cancel_code,
+    }))
+  );
+  return rows.length;
 }
 
 /**
@@ -464,6 +500,19 @@ export async function createBooking(
     );
 
     await client.query("COMMIT");
+    if (!admin) {
+      const paying =
+        paymentStatus === "for_verification" ? `${paymentLabel(paymentMethod)} payment sent — please verify`
+        : paymentMethod === "cash" ? "Coach · cash at the desk"
+        : price.total > 0 ? `${paymentLabel(paymentMethod)} · paying within ${PAY_WINDOW_MINUTES} min` : "No charge";
+      await notifyStaff([{
+        kind: "booking_new",
+        title: `New booking — ${name}`,
+        pushTitle: `New booking — ${publicName(name)}`,
+        body: `${bookingLine({ court_name: court.rows[0].name, sport, booking_date: date, start_hour: startHour, end_hour: endHour })} · ${formatPeso(price.total)} · ${paying}`,
+        bookingCode: code,
+      }]);
+    }
     return {
       ok: true,
       data: {
@@ -593,7 +642,19 @@ async function cancelWhere(whereSql: string, param: string, by: string, allowSta
 export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: string }>> {
   const code = normalizeCode(rawCode);
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
-  return cancelWhere("cancel_code = $1", code, "player", false);
+  const r = await cancelWhere("cancel_code = $1", code, "player", false);
+  if (r.ok) {
+    const b = await bookingDetails("cancel_code", code);
+    if (b)
+      await notifyStaff([{
+        kind: "booking_gone",
+        title: `Cancelled by player — ${b.player_name}`,
+        pushTitle: `Cancelled by player — ${publicName(b.player_name)}`,
+        body: bookingLine(b),
+        bookingCode: b.cancel_code,
+      }]);
+  }
+  return r;
 }
 
 /** Staff cancel. `by` is recorded on the booking (the staff member's name). */
@@ -653,6 +714,15 @@ export async function submitPayment(
     if (b.data.status === "cancelled") return fail(400, "This booking was cancelled.");
     return fail(400, `This booking is already marked "${b.data.paymentStatus === "paid" ? "paid" : b.data.paymentStatus}".`);
   }
+  const b = await bookingDetails("cancel_code", code);
+  if (b)
+    await notifyStaff([{
+      kind: "payment_sent",
+      title: `Payment sent — ${b.player_name}`,
+      pushTitle: `Payment sent — ${publicName(b.player_name)}`,
+      body: `${paymentLabel(method)}${rows[0].payment_ref ? ` ref ${rows[0].payment_ref}` : ""}${rows[0].has_proof ? " · screenshot" : ""} · ${formatPeso(b.amount)} · ${bookingLine(b)} — please verify`,
+      bookingCode: b.cancel_code,
+    }]);
   return {
     ok: true,
     data: { paymentStatus: "for_verification", paymentMethod: method, paymentRef: rows[0].payment_ref, hasProof: rows[0].has_proof },

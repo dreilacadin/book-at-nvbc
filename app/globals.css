@@ -602,3 +602,32 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .cl-staff ul { margin-top: 8px; font-size: 14px; }
 .cl-tag { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; background: var(--booked); color: var(--muted); }
 .cl-tag.added { background: var(--brand-soft); color: var(--brand-dark); }
+
+/* Staff notifications */
+.notify { position: relative; }
+.bell { position: relative; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; width: 38px; height: 38px;
+  font-size: 17px; cursor: pointer; line-height: 1; }
+.bell-count { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.notify-panel { position: absolute; right: 0; top: 46px; z-index: 60; width: min(380px, calc(100vw - 24px)); max-height: 70vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+.notify-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface); }
+.notify-list { list-style: none; margin: 0; padding: 0; }
+.notify-list button { display: flex; gap: 10px; width: 100%; text-align: left; padding: 10px 14px; border: 0; border-bottom: 1px solid var(--border);
+  background: none; font: inherit; color: var(--text); cursor: pointer; }
+.notify-list button:hover { background: var(--bg); }
+.notify-list button.unread { background: var(--brand-soft); }
+.notify-icon { font-size: 18px; }
+.notify-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+.notify-text strong { font-size: 14px; }
+.notify-text small { color: var(--muted); }
+.notify-settings { padding: 12px 14px; display: grid; gap: 8px; font-size: 14px; }
+.notify-push { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; display: grid; gap: 6px; }
+.notify-push .hint { margin: 0; }
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 90; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); }
+.toast { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 12px 14px; border-radius: 12px; cursor: pointer; font: inherit;
+  background: var(--surface); color: var(--text); border: 1px solid var(--brand); box-shadow: var(--shadow); animation: toast-in .2s ease-out; }
+.toast strong { display: block; font-size: 14px; }
+.toast small { display: block; color: var(--muted); font-size: 13px; }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }

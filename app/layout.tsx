@@ -6,6 +6,8 @@ export const metadata: Metadata = {
   title: "NVBC Courts — Court Reservation System",
   description:
     "Check court availability and reserve a badminton or pickleball court at NV Badminton Center. No account needed.",
+  // Added to an iPhone's Home Screen, the site opens like an app (needed for staff push notifications on iOS).
+  appleWebApp: { capable: true, title: "NVBC", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {

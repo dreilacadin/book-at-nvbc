@@ -20,6 +20,21 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Staff:** **Notifications for staff.** A 🔔 bell in the admin panel shows new bookings, payment
+  proof sent (needs verifying), bookings cancelled by the player or released, and new membership
+  applications — with a pop-up, an optional chime, and the unread count in the browser tab title.
+  Click one to open that booking straight away. Each staff member chooses which kinds they get.
+- **Staff:** **Push notifications on phones and computers.** Turn them on per device from the
+  bell (⚙ Settings → Turn on notifications) to be notified even when the admin panel is closed;
+  tapping a notification opens the booking. On iPhone/iPad, add the site to the Home Screen first
+  (iOS 16.4 or later). Push notifications show only the booker's first name and last initial,
+  since they can appear on a locked screen.
+- **Add NVBC to your Home Screen.** On phones, "Add to Home Screen" now gives NVBC Courts its own
+  icon and opens it like an app.
+- **Database:** New tables for staff notifications, each staff member's notification settings,
+  and the devices that turned on push notifications.
+- **Internal:** New settings `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` for push
+  notifications (see .env.example); new dependency `web-push`.
 - **A "What's new" page.** See what's new and improved at NVBC Courts — it's the new
   **Changelog** link at the top of every page.
 - **See when your booking is under way.** On **My booking**, a paid booking now shows

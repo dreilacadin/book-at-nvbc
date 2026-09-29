@@ -326,3 +326,35 @@ ALTER TABLE bookings ADD CONSTRAINT bookings_phase_check CHECK (phase IS NULL OR
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS auto_release BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS restored_by TEXT;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ;
+
+-- v17: staff notifications (in the admin panel, and push to phones/computers) ----------------
+-- One row per event. kind: booking_new | payment_sent | booking_gone (cancelled by the player or
+-- released) | member_applied. push_title uses the booker's first name + last initial only,
+-- because push notifications can show on a locked screen.
+CREATE TABLE IF NOT EXISTS admin_events (
+  id            BIGSERIAL PRIMARY KEY,
+  kind          TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  push_title    TEXT NOT NULL,
+  body          TEXT NOT NULL DEFAULT '',
+  booking_code  TEXT,
+  membership_id UUID,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS admin_events_created_idx ON admin_events (created_at);
+-- Per staff member ("owner" or an admin_users id): what they've seen, and which kinds they want.
+CREATE TABLE IF NOT EXISTS admin_notify_state (
+  who           TEXT PRIMARY KEY,
+  last_seen_id  BIGINT NOT NULL DEFAULT 0,
+  kinds         TEXT[] NOT NULL DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied']
+);
+-- Devices that turned on push notifications. Removed automatically when they stop accepting pushes.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id          SERIAL PRIMARY KEY,
+  who         TEXT NOT NULL,
+  endpoint    TEXT NOT NULL UNIQUE,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  device      TEXT NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

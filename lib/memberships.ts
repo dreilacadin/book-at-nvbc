@@ -5,6 +5,7 @@ import { db, getSettings } from "./db";
 import {
   formatMemberCode,
   MEMBER_CODE_ALPHABET_SIZE,
+  memberTypeLabel,
   MEMBERSHIP_DAYS,
   membershipState,
   normalizeMemberCode,
@@ -16,6 +17,8 @@ import {
 } from "./membership";
 import { emailSender, sendEmail } from "./mailer";
 import { fillTemplate, niceLongDate, type ReminderVars } from "./reminder-email";
+import { publicName } from "./format";
+import { notifyStaff } from "./notify";
 import { checkImportRecord, findDuplicates, type ImportRecord } from "./member-import";
 import { formatPeso, hasPaymentProof, isPaymentMethod, isPaymentStatus, isProofImage, type PaymentMethod, type PaymentStatus } from "./pricing";
 import { SPORTS } from "./sports";
@@ -99,13 +102,20 @@ export async function applyForMembership(input: Record<string, unknown>): Promis
   const settings = await getSettings();
   const fee = form.memberType === "student" ? settings.membership_fee_student : settings.membership_fee_adult;
   const token = randomBytes(18).toString("base64url");
-  await db().query(
+  const ins = await db().query<{ id: string }>(
     `INSERT INTO memberships (token, member_type, full_name, email, mobile, address, birthdate, gender, school,
                               student_id, sports, emergency_name, emergency_mobile, fee)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13, $14)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text[], $12, $13, $14) RETURNING id`,
     [token, form.memberType, form.fullName, form.email, form.mobile, form.address, form.birthdate, form.gender,
       form.school, form.studentId, form.sports, form.emergencyName, form.emergencyMobile, fee]
   );
+  await notifyStaff([{
+    kind: "member_applied",
+    title: `Membership application — ${form.fullName}`,
+    pushTitle: `Membership application — ${publicName(form.fullName)}`,
+    body: `${memberTypeLabel(form.memberType)} · ${formatPeso(fee)} · waiting for payment and approval`,
+    membershipId: ins.rows[0].id,
+  }]);
   return { ok: true, data: { token } };
 }
 

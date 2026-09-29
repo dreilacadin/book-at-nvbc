@@ -18,7 +18,9 @@ import {
 } from "@/lib/pricing";
 import { imageToDataUrl } from "@/lib/image";
 import { payByLabel } from "@/components/BookingPolicy";
+import { AdminBookingCard } from "./BookingLookup";
 import BookingsTab from "./BookingsTab";
+import Notifications from "./Notifications";
 import StaffTab from "./StaffTab";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
@@ -35,6 +37,32 @@ export default function AdminPage() {
   const [me, setMe] = useState<{ name: string; id: number | null } | null>(null);
   const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "staff" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
+  // A booking opened from a notification (or /admin?booking=NV-…), shown in a pop-up card.
+  const [openCode, setOpenCode] = useState<string | null>(null);
+  const [openBooking, setOpenBooking] = useState<AdminBooking | null>(null);
+
+  // Links from push notifications: /admin?booking=NV-XXXXXX or /admin?tab=members
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const code = q.get("booking");
+    if (code) setOpenCode(code);
+    if (q.get("tab") === "members") setTab("members");
+    if (code || q.get("tab")) window.history.replaceState(null, "", "/admin");
+  }, []);
+
+  const reloadOpenBooking = useCallback(async () => {
+    if (!openCode) return setOpenBooking(null);
+    try {
+      setOpenBooking(await api<AdminBooking>(`/api/admin/bookings?code=${encodeURIComponent(openCode)}`));
+    } catch (e) {
+      if (e instanceof AuthError) setLoggedIn(false);
+      setOpenCode(null);
+      setOpenBooking(null);
+    }
+  }, [openCode]);
+  useEffect(() => {
+    if (loggedIn) reloadOpenBooking();
+  }, [loggedIn, reloadOpenBooking]);
 
   useEffect(() => {
     api<{ loggedIn: boolean; name?: string; id?: number | null }>("/api/admin/login")
@@ -58,6 +86,7 @@ export default function AdminPage() {
         <h1>Staff dashboard</h1>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {me && <span className="muted" style={{ fontSize: 14 }}>Logged in as <strong>{me.name}</strong></span>}
+        <Notifications onOpenBooking={setOpenCode} onOpenMembers={() => setTab("members")} onAuthError={onAuthError} />
         <button
           className="btn small secondary"
           onClick={async () => {
@@ -89,6 +118,19 @@ export default function AdminPage() {
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
       {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
       {tab === "staff" && <StaffTab onAuthError={onAuthError} />}
+      {openCode && openBooking && (
+        <div className="backdrop" onClick={() => setOpenCode(null)}>
+          <div className="card modal staff-modal" role="dialog" aria-modal="true" aria-label={`Booking ${openBooking.code}`}
+            onClick={(e) => e.stopPropagation()}>
+            <AdminBookingCard key={openBooking.id + openBooking.status + openBooking.payment_status + (openBooking.phase ?? "")}
+              b={openBooking} onAuthError={onAuthError} onChanged={reloadOpenBooking}
+              onOpenDate={(d) => { setOpenCode(null); setBookingsDate(d); setTab("bookings"); }} />
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => setOpenCode(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
       {tab === "settings" && <SettingsTab onAuthError={onAuthError} />}
     </>
   );
