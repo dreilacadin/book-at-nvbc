@@ -98,7 +98,7 @@ Open /admin → **Settings**:
 
 1. **Prices** — set the Non-member, Member and Coach price per court per hour for badminton and pickleball (they start as placeholders). Tick **Separate weekend prices** to charge different prices on Saturdays and Sundays, and untick **Member price** or **Coach price** to stop offering that rate for the sport (untick both for one standard rate).
 2. **Member code / Coach code (optional)** — if you fill these in, players must type the code to get the member/coach price. Give the code only to your members/coaches and change it if it spreads. If you leave them blank, anyone can choose Member/Coach and staff check at the desk (the booking list shows who booked at which rate).
-3. **Payment methods** — tick the ones you accept and fill in your GCash number, BPI account, and upload your QR Ph code (a screenshot from your bank/GCash merchant app is fine). A method stays hidden from players until its details are filled in.
+3. **Payment methods** — tick the ones you accept and fill in your GCash number (use **+ Add another GCash number** for up to 4 more; players can pay to any of them), BPI account, and upload your QR Ph code (a screenshot from your bank/GCash merchant app is fine). A method stays hidden from players until its details are filled in.
 4. **Payment note (optional)** — e.g. "Please pay within 2 hours of booking."
 
 ### How payment verification works

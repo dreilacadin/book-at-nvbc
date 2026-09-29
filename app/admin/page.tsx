@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import {
   formatPeso,
+  MAX_EXTRA_GCASH,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   paymentLabel,
@@ -509,6 +510,34 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
               <input id="gname" type="text" maxLength={80} value={s.gcash_name}
                 onChange={(e) => set("gcash_name", e.target.value)} />
             </div>
+          </div>
+        )}
+        {s.payment_methods.includes("gcash") && (
+          <div className="gcash-more">
+            {s.gcash_more.map((a, i) => (
+              <div key={i} className="row field gcash-more-row">
+                <div>
+                  <label htmlFor={`gn-${i}`}>GCash number {i + 2}</label>
+                  <input id={`gn-${i}`} type="text" maxLength={40} value={a.number} placeholder="09XX XXX XXXX"
+                    onChange={(e) => set("gcash_more", s.gcash_more.map((x, j) => (j === i ? { ...x, number: e.target.value } : x)))} />
+                </div>
+                <div>
+                  <label htmlFor={`gname-${i}`}>Account name {i + 2}</label>
+                  <input id={`gname-${i}`} type="text" maxLength={80} value={a.name}
+                    onChange={(e) => set("gcash_more", s.gcash_more.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                </div>
+                <button type="button" className="btn small secondary danger-text" aria-label={`Remove GCash number ${i + 2}`}
+                  onClick={() => set("gcash_more", s.gcash_more.filter((_, j) => j !== i))}>Remove</button>
+              </div>
+            ))}
+            {s.gcash_more.length < MAX_EXTRA_GCASH && (
+              <button type="button" className="btn small secondary" onClick={() => set("gcash_more", [...s.gcash_more, { name: "", number: "" }])}>
+                + Add another GCash number
+              </button>
+            )}
+            <p className="hint" style={{ margin: 0 }}>
+              Players see every number and can pay to any of them. Handy when one account reaches its GCash limit.
+            </p>
           </div>
         )}
 

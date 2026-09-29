@@ -148,11 +148,21 @@ export function isProofImage(v: unknown): v is string {
 /** Online payments need proof: a reference number, a screenshot, or both. */
 export const hasPaymentProof = (ref: string, proof: string) => ref.trim() !== "" || proof !== "";
 
+/** A GCash account players can send money to. */
+export type GcashAccount = { name: string; number: string };
+export const MAX_EXTRA_GCASH = 4;
+
+/** Every GCash account in use: the main one, then the extras (ones without a number are skipped). */
+export function gcashAccounts(s: { gcash_name: string; gcash_number: string; gcash_more?: GcashAccount[] }): GcashAccount[] {
+  return [{ name: s.gcash_name, number: s.gcash_number }, ...(s.gcash_more ?? [])]
+    .map((a) => ({ name: a.name.trim(), number: a.number.trim() }))
+    .filter((a) => a.number !== "");
+}
+
 /** What players see about payments (no staff-only data). */
 export type PaymentInfo = {
   methods: PaymentMethod[];
-  gcashName: string;
-  gcashNumber: string;
+  gcashAccounts: GcashAccount[]; // pay to any one of them
   bpiAccountName: string;
   bpiAccountNumber: string;
   qrphImage: string;

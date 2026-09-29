@@ -16,6 +16,7 @@ import {
   rateTypeLabel,
   isPaymentStatus,
   isRateType,
+  gcashAccounts,
   PAYMENT_METHODS,
   paymentLabel,
   type PaymentInfo,
@@ -200,7 +201,7 @@ export function enabledMethods(s: Settings): PaymentMethod[] {
   const on = s.payment_methods ?? [];
   const ready: Record<PaymentMethod, boolean> = {
     cash: true,
-    gcash: s.gcash_number.trim() !== "",
+    gcash: gcashAccounts(s).length > 0,
     qrph: s.qrph_image !== "",
     bpi: s.bpi_account_number.trim() !== "",
   };
@@ -221,8 +222,7 @@ export async function getPaymentInfo(): Promise<PaymentInfo> {
   const s = await getSettings();
   return {
     methods: enabledMethods(s),
-    gcashName: s.gcash_name,
-    gcashNumber: s.gcash_number,
+    gcashAccounts: gcashAccounts(s),
     bpiAccountName: s.bpi_account_name,
     bpiAccountNumber: s.bpi_account_number,
     qrphImage: s.qrph_image,

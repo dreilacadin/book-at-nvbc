@@ -1,5 +1,5 @@
 import { Pool, types } from "pg";
-import { toSportPricing, type SportPricing } from "./pricing";
+import { toSportPricing, type GcashAccount, type SportPricing } from "./pricing";
 import { SPORTS } from "./sports";
 
 // Return DATE columns as plain "YYYY-MM-DD" strings instead of JS Dates,
@@ -71,6 +71,7 @@ export type Settings = {
   payment_methods: string[];
   gcash_name: string;
   gcash_number: string;
+  gcash_more: GcashAccount[]; // extra GCash accounts, after the main one
   bpi_account_name: string;
   bpi_account_number: string;
   qrph_image: string;
@@ -81,7 +82,7 @@ export type Settings = {
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
   booking_window_days, announcement, rate_plans, hourly_rates, member_rates, coach_rates,
-  member_code, coach_code, payment_methods, gcash_name, gcash_number, bpi_account_name,
+  member_code, coach_code, payment_methods, gcash_name, gcash_number, gcash_more, bpi_account_name,
   bpi_account_number, qrph_image, payment_note, membership_fee_student, membership_fee_adult`;
 
 /** Full settings, including staff-only values. Never send this object to the public as-is. */
@@ -89,6 +90,8 @@ export async function getSettings(): Promise<Settings> {
   const { rows } = await db().query<Settings>(`SELECT ${SETTINGS_COLUMNS} FROM settings WHERE id = 1`);
   const s = rows[0];
   if (!s) throw new Error("Settings row missing. Run `npm run db:setup`.");
+  s.gcash_more = (Array.isArray(s.gcash_more) ? s.gcash_more : [])
+    .filter((a): a is GcashAccount => typeof a?.name === "string" && typeof a?.number === "string");
   const num = (v: unknown, fallback: number) => (Number.isFinite(Number(v)) && v !== null ? Number(v) : fallback);
   s.rate_plans = Object.fromEntries(
     SPORTS.map((sp) => {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db, getSettings } from "@/lib/db";
+import { gcashAccounts } from "@/lib/pricing";
 import { readJson, respond, serverError } from "@/lib/http";
 import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
 
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
     // Where online payments should have gone, for staff to compare with the screenshot.
     const s = await getSettings();
     const payTo = (m: string) =>
-      m === "gcash" ? [s.gcash_name, s.gcash_number].filter(Boolean).join(" · ")
+      m === "gcash" ? gcashAccounts(s).map((a) => [a.name, a.number].filter(Boolean).join(" · ")).join(" or ")
       : m === "bpi" ? [s.bpi_account_name, s.bpi_account_number].filter(Boolean).join(" · ")
       : m === "qrph" ? "NVBC's QR Ph code"
       : "";

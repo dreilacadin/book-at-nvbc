@@ -20,6 +20,11 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **More GCash numbers to pay to.** When paying by GCash you may now see more than one NVBC GCash
+  number — send your payment to any one of them.
+- **Staff:** **Extra GCash accounts.** In Settings → Payment methods, "+ Add another GCash number"
+  adds up to 4 more GCash numbers and account names (handy when one account reaches its GCash
+  limit). Players see them all, and the payment checklist on a booking accepts any of them.
 - **Membership covers badminton — pickleball is coming soon.** The membership page and your member
   card page now say that membership (and member rates) currently applies to badminton, and that
   pickleball membership and perks are on the way.
@@ -36,6 +41,7 @@ Earlier changes (before this file existed) are in the git history.
   icon and opens it like an app.
 - **Database:** New tables for staff notifications, each staff member's notification settings,
   and the devices that turned on push notifications.
+- **Database:** Settings can hold extra GCash accounts.
 - **Database:** Bookings record when the payment proof was sent, plus a normalised reference number
   and a fingerprint of the screenshot, for spotting reuse.
 - **Internal:** New settings `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` for push

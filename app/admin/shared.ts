@@ -1,5 +1,5 @@
 // Types and helpers shared by the admin page and its parts.
-import type { BookingStatus, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
+import type { BookingStatus, GcashAccount, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
 import type { Sport } from "@/lib/sports";
 
 export type AdminBooking = {
@@ -72,6 +72,7 @@ export type Settings = {
   payment_methods: PaymentMethod[];
   gcash_name: string;
   gcash_number: string;
+  gcash_more: GcashAccount[]; // extra GCash accounts
   bpi_account_name: string;
   bpi_account_number: string;
   qrph_image: string;

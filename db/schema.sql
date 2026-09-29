@@ -370,3 +370,8 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_proof_hash TEXT
   GENERATED ALWAYS AS (CASE WHEN payment_proof = '' THEN '' ELSE md5(payment_proof) END) STORED;
 CREATE INDEX IF NOT EXISTS bookings_payment_ref_key_idx ON bookings (payment_ref_key) WHERE payment_ref_key <> '';
 CREATE INDEX IF NOT EXISTS bookings_payment_proof_hash_idx ON bookings (payment_proof_hash) WHERE payment_proof_hash <> '';
+
+-- v19: more than one GCash account -----------------------------------------------------------
+-- Extra GCash accounts shown to players after the main one (gcash_name / gcash_number):
+-- [{"name": "...", "number": "09..."}, ...]
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS gcash_more JSONB NOT NULL DEFAULT '[]'::jsonb;

@@ -680,3 +680,9 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .auto-check.bad { color: #b07800; }
 .pay-reuse ul { margin: 6px 0; padding-left: 18px; }
 @media (max-width: 560px) { .pay-check { grid-template-columns: 1fr; } .pay-shot img { max-height: 280px; } }
+
+/* Settings: extra GCash accounts */
+.gcash-more { display: grid; gap: 10px; justify-items: start; margin-top: 10px; }
+.gcash-more-row { width: 100%; align-items: end; grid-template-columns: 1fr 1fr auto; }
+@media (max-width: 560px) { .gcash-more-row { grid-template-columns: 1fr; padding-top: 10px; border-top: 1px solid var(--border); } .gcash-more-row > button { justify-self: start; } }
+.gcash-more-row > button { align-self: end; margin-bottom: 2px; }

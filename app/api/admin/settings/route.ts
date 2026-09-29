@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdmin, unauthorized } from "@/lib/admin-auth";
 import { db, getSettings } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
-import { isPaymentMethod, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
+import { isPaymentMethod, MAX_EXTRA_GCASH, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
 import { SPORTS } from "@/lib/sports";
 
 export const dynamic = "force-dynamic";
@@ -93,6 +93,20 @@ export async function POST(req: NextRequest) {
     const payment_methods = [...new Set(methods)];
     if (payment_methods.length === 0) return bad("Turn on at least one payment method.");
     if (payment_methods.includes("gcash") && !s.gcash_number) return bad("Enter the GCash number, or turn GCash off.");
+
+    // Extra GCash accounts. Blank rows are dropped; older admin pages don't send them (keep them).
+    const current = await getSettings();
+    let gcashMore = current.gcash_more;
+    if (b.gcash_more !== undefined) {
+      if (!Array.isArray(b.gcash_more)) return bad("Invalid extra GCash accounts.");
+      gcashMore = b.gcash_more
+        .map((a: { name?: unknown; number?: unknown }) => ({ name: text(a?.name, 80), number: text(a?.number, 40) }))
+        .filter((a) => a.name || a.number);
+      if (gcashMore.some((a) => !a.number)) return bad("Enter the number for each extra GCash account, or remove it.");
+      if (gcashMore.length > MAX_EXTRA_GCASH) return bad(`You can add up to ${MAX_EXTRA_GCASH} extra GCash accounts.`);
+      const numbers = [s.gcash_number, ...gcashMore.map((a) => a.number)].map((x) => x.replace(/\D/g, "")).filter(Boolean);
+      if (new Set(numbers).size !== numbers.length) return bad("The same GCash number is listed twice.");
+    }
     if (payment_methods.includes("bpi") && !s.bpi_account_number)
       return bad("Enter the BPI account number, or turn BPI transfer off.");
     if (payment_methods.includes("qrph") && !s.qrph_image) return bad("Upload the QR Ph code image, or turn QR Ph off.");
@@ -100,7 +114,6 @@ export async function POST(req: NextRequest) {
       return bad("The QR image must be a PNG, JPG or WebP under 500 KB.");
 
     // Membership fees (₱). Missing values keep the current fee (older admin pages don't send them).
-    const current = await getSettings();
     const fee = (v: unknown, keep: number) => (v === undefined || v === null || v === "" ? keep : Number(v));
     const feeStudent = fee(b.membership_fee_student, current.membership_fee_student);
     const feeAdult = fee(b.membership_fee_adult, current.membership_fee_adult);
@@ -114,7 +127,8 @@ export async function POST(req: NextRequest) {
          rate_plans = $7::jsonb,
          member_code = $8, coach_code = $9, payment_methods = $10::text[],
          gcash_name = $11, gcash_number = $12, bpi_account_name = $13, bpi_account_number = $14,
-         qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18
+         qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18,
+         gcash_more = $19::jsonb
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -122,6 +136,7 @@ export async function POST(req: NextRequest) {
         `{${payment_methods.join(",")}}`,
         s.gcash_name, s.gcash_number, s.bpi_account_name, s.bpi_account_number, s.qrph_image, s.payment_note,
         Math.round(feeStudent * 100) / 100, Math.round(feeAdult * 100) / 100,
+        JSON.stringify(gcashMore),
       ]
     );
     return NextResponse.json(await getSettings());

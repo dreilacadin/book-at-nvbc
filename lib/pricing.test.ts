@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   activeBookingStatus,
+  gcashAccounts,
   bookingStatusLabel,
   computePrice,
   formatPeso,
@@ -196,4 +197,16 @@ test("toSportPricing: plans saved with one member & coach switch keep working", 
   assert.equal(toSportPricing({ memberRates: false }, legacy).coachRates, false); // both were off
   assert.equal(toSportPricing({ memberRates: true }, legacy).coachRates, true); // both were on
   assert.equal(toSportPricing({ memberRates: true, coachRates: false }, legacy).coachRates, false);
+});
+
+test("gcashAccounts: main account first, then extras; blank numbers skipped", () => {
+  assert.deepEqual(
+    gcashAccounts({
+      gcash_name: " NVBC ", gcash_number: " 0917 000 0001 ",
+      gcash_more: [{ name: "Front desk", number: "0917 000 0002" }, { name: "No number", number: "  " }],
+    }),
+    [{ name: "NVBC", number: "0917 000 0001" }, { name: "Front desk", number: "0917 000 0002" }]
+  );
+  assert.deepEqual(gcashAccounts({ gcash_name: "", gcash_number: "", gcash_more: [{ name: "", number: "0918" }] }), [{ name: "", number: "0918" }]);
+  assert.deepEqual(gcashAccounts({ gcash_name: "x", gcash_number: "" }), []);
 });

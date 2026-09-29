@@ -36,21 +36,27 @@ export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; me
     }
   };
 
-  if (method === "gcash")
+  if (method === "gcash") {
+    const accounts = info.gcashAccounts;
     return (
       <div className="pay-detail">
-        <p style={{ margin: 0 }}>Send <strong>{formatPeso(amount)}</strong> via GCash to:</p>
-        <div className="acct">
-          <div>
-            <strong>{info.gcashNumber}</strong>
-            {info.gcashName && <div className="muted">{info.gcashName}</div>}
+        <p style={{ margin: 0 }}>
+          Send <strong>{formatPeso(amount)}</strong> via GCash to {accounts.length > 1 ? <><strong>any one</strong> of these:</> : ":"}
+        </p>
+        {accounts.map((a, i) => (
+          <div key={a.number} className="acct">
+            <div>
+              <strong>{a.number}</strong>
+              {a.name && <div className="muted">{a.name}</div>}
+            </div>
+            <button type="button" className="btn small secondary" onClick={() => copy(`gcash${i}`, a.number)}>
+              {copied === `gcash${i}` ? "Copied ✓" : "Copy"}
+            </button>
           </div>
-          <button type="button" className="btn small secondary" onClick={() => copy("gcash", info.gcashNumber)}>
-            {copied === "gcash" ? "Copied ✓" : "Copy"}
-          </button>
-        </div>
+        ))}
       </div>
     );
+  }
 
   if (method === "bpi")
     return (
