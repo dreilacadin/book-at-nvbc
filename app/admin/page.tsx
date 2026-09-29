@@ -37,6 +37,7 @@ export default function AdminPage() {
   const [me, setMe] = useState<{ name: string; id: number | null } | null>(null);
   const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "staff" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
+  const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
   // A booking opened from a notification (or /admin?booking=NV-…), shown in a pop-up card.
   const [openCode, setOpenCode] = useState<string | null>(null);
   const [openBooking, setOpenBooking] = useState<AdminBooking | null>(null);
@@ -100,21 +101,24 @@ export default function AdminPage() {
       </div>
       <div className="tabs" role="tablist">
         {(["overview", "bookings", "members", "courts", "staff", "settings"] as const).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => { setTab(t); setBookingsOpen(null); }}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
       {tab === "overview" && (
         <Overview
-          onOpenDay={(d) => {
+          onOpenDay={(d, bookingId) => {
             setBookingsDate(d);
+            setBookingsOpen(bookingId ?? null);
             setTab("bookings");
           }}
           onAuthError={onAuthError}
         />
       )}
-      {tab === "bookings" && <BookingsTab initialDate={bookingsDate} onDateChange={setBookingsDate} onAuthError={onAuthError} />}
+      {tab === "bookings" && (
+        <BookingsTab initialDate={bookingsDate} initialOpen={bookingsOpen} onDateChange={setBookingsDate} onAuthError={onAuthError} />
+      )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
       {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
       {tab === "staff" && <StaffTab onAuthError={onAuthError} />}

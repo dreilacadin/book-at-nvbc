@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDateLong, formatHour, halfHours, SLOT_HOURS } from "@/lib/format";
-import { bookingStatusLabel, formatPeso } from "@/lib/pricing";
+import { bookingStatusLabel, formatPeso, paymentLabel } from "@/lib/pricing";
 import { SPORTS, sportEmoji, type Sport } from "@/lib/sports";
 import { blockedSlots, type CourtBlock } from "@/lib/blocks";
 import { api, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
@@ -45,6 +45,80 @@ function rangeFor(view: View, anchor: string): { from: string; to: string; label
 
 const hoursOf = (b: AdminBooking) => b.end_hour - b.start_hour;
 
+type TileFilter = "verify" | "cancelled";
+const TILE_FILTERS: Record<TileFilter, (b: AdminBooking) => boolean> = {
+  verify: (b) => b.status !== "cancelled" && b.payment_status === "for_verification",
+  cancelled: (b) => b.status === "cancelled",
+};
+
+/** A stat tile that filters the bookings below — styled so it's clearly a button. */
+function FilterTile({ n, label, active, warn, onClick }: { n: number; label: string; active: boolean; warn?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className={`stat stat-link${active ? " active" : ""}${warn ? " warn" : ""}`} aria-pressed={active} onClick={onClick}
+      title={active ? "Show the calendar again" : `Show the ${label} for this period`}>
+      <div className="n">{n}</div>
+      <div className="l">{label}</div>
+      <span className="stat-cta">{active ? "✕ Showing" : "View →"}</span>
+    </button>
+  );
+}
+
+/** Bookings picked by a tile, for the period on screen. Click one to open it in the Bookings tab. */
+function FilteredList({
+  title,
+  period,
+  list,
+  empty,
+  onOpen,
+  onClose,
+}: {
+  title: string;
+  period: string;
+  list: AdminBooking[];
+  empty: string;
+  onOpen: (b: AdminBooking) => void;
+  onClose: () => void;
+}) {
+  const dayLabel = (d: string) =>
+    new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  return (
+    <div className="filtered">
+      <div className="filtered-head">
+        <strong>{title} · {period} <span className="muted">({list.length})</span></strong>
+        <button type="button" className="btn small secondary" onClick={onClose}>✕ Show calendar</button>
+      </div>
+      {list.length === 0 ? (
+        <p className="muted" style={{ margin: 0 }}>{empty} in this period.</p>
+      ) : (
+        <div className="bk-list">
+          {list.map((b) => {
+            const status = b.status === "cancelled" ? (b.cancelled_by === "system" ? "released" : "cancelled") : b.status;
+            return (
+              <button key={b.id} type="button" className={`bk-row status-${status} filtered-row`} onClick={() => onOpen(b)}>
+                <span className="bk-time">
+                  {dayLabel(b.date)}
+                  <small>{formatHour(b.start_hour)} – {formatHour(b.end_hour)}</small>
+                </span>
+                <span className="bk-main">
+                  <strong className="bk-name">{b.name}</strong>
+                  <span className="bk-sub">
+                    {sportEmoji(b.sport)} {b.court_name} · {formatPeso(b.amount)} · {paymentLabel(b.payment_method)}
+                    {b.payment_ref ? ` · ref ${b.payment_ref}` : ""}{b.has_proof ? " · 📷 screenshot" : ""}
+                    {b.status === "cancelled" && b.cancelled_by && b.cancelled_by !== "system" ? ` · by ${b.cancelled_by}` : ""}
+                  </span>
+                </span>
+                <span className={`pill status-${status}`}>
+                  {status === "released" ? "Released" : bookingStatusLabel(status)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Totals for a set of bookings. Cancelled bookings only count toward `cancelled`. */
 function summarize(list: AdminBooking[]) {
   const active = list.filter((b) => b.status !== "cancelled");
@@ -65,10 +139,12 @@ export default function Overview({
   onOpenDay,
   onAuthError,
 }: {
-  onOpenDay: (date: string) => void; // open the Bookings tab on that date
+  onOpenDay: (date: string, bookingId?: string) => void; // open the Bookings tab on that date (and that booking)
   onAuthError: (e: unknown) => void;
 }) {
   const [view, setView] = useState<View>("week");
+  // A clicked "payments to verify" / "cancelled" tile: list just those bookings for the period.
+  const [tileFilter, setTileFilter] = useState<TileFilter | null>(null);
   const [anchor, setAnchor] = useState(todayManila());
   const [sport, setSport] = useState<Sport | "all">("all");
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
@@ -162,16 +238,27 @@ export default function Overview({
         <div className="stat"><div className="n">{formatPeso(t.billed)}</div><div className="l">billed</div></div>
         <div className="stat"><div className="n">{formatPeso(t.collected)}</div><div className="l">collected (paid)</div></div>
         <div className="stat"><div className="n">{formatPeso(t.unpaid)}</div><div className="l">still unpaid</div></div>
-        <div className="stat"><div className="n">{t.toVerify}</div><div className="l">payments to verify</div></div>
-        <div className="stat"><div className="n">{t.cancelled}</div><div className="l">cancelled</div></div>
+        <FilterTile n={t.toVerify} label="payments to verify" warn={t.toVerify > 0}
+          active={tileFilter === "verify"} onClick={() => setTileFilter(tileFilter === "verify" ? null : "verify")} />
+        <FilterTile n={t.cancelled} label="cancelled & released"
+          active={tileFilter === "cancelled"} onClick={() => setTileFilter(tileFilter === "cancelled" ? null : "cancelled")} />
       </div>
 
       {error && <div className="error">{error}</div>}
       {loading && <FullScreenLoader label="Loading bookings…" />}
-      {loading && bookings.length === 0 ? null : view === "month" ? (
+      {tileFilter ? (
+        <FilteredList
+          title={tileFilter === "verify" ? "Payments to verify" : "Cancelled & released"}
+          period={range.label}
+          list={shown.filter(TILE_FILTERS[tileFilter]).sort((a, b) => a.date.localeCompare(b.date) || a.start_hour - b.start_hour)}
+          empty={tileFilter === "verify" ? "No payments waiting to be verified" : "No cancelled or released bookings"}
+          onOpen={(b) => onOpenDay(b.date, b.id)}
+          onClose={() => setTileFilter(null)}
+        />
+      ) : loading && bookings.length === 0 ? null : view === "month" ? (
         <MonthGrid from={range.from} to={range.to} today={today} byDate={byDate} onPick={showDay} />
       ) : view === "week" ? (
-        <WeekColumns from={range.from} today={today} byDate={byDate} onPick={showDay} />
+        <WeekColumns from={range.from} today={today} byDate={byDate} onPick={showDay} onOpenBooking={(b) => onOpenDay(b.date, b.id)} />
       ) : (
         <DaySchedule
           date={anchor}
@@ -180,7 +267,7 @@ export default function Overview({
           reserved={blockedSlots(blocks, anchor)}
           open={hours.open}
           close={hours.close}
-          onOpen={() => onOpenDay(anchor)}
+          onOpen={(id) => onOpenDay(anchor, id)}
         />
       )}
     </div>
@@ -245,11 +332,13 @@ function WeekColumns({
   today,
   byDate,
   onPick,
+  onOpenBooking,
 }: {
   from: string;
   today: string;
   byDate: Map<string, AdminBooking[]>;
-  onPick: (date: string) => void;
+  onPick: (date: string) => void; // the day's header: that day's schedule
+  onOpenBooking: (b: AdminBooking) => void; // a booking: straight to it in the Bookings tab
 }) {
   return (
     <div className="week-cols">
@@ -267,7 +356,7 @@ function WeekColumns({
               .slice()
               .sort((a, b) => a.start_hour - b.start_hour || a.court_name.localeCompare(b.court_name))
               .map((b) => (
-                <button type="button" key={b.id} className={`week-item ${b.status}`} onClick={() => onPick(d)}
+                <button type="button" key={b.id} className={`week-item ${b.status}`} onClick={() => onOpenBooking(b)}
                   title={`${b.court_name} · ${b.name} · ${bookingStatusLabel(b.status)}`}>
                   <span className="week-time">{formatHour(b.start_hour).replace(":00", "")}–{formatHour(b.end_hour).replace(":00", "")}</span>
                   <span>{sportEmoji(b.sport)} {b.court_name}</span>
@@ -298,7 +387,7 @@ function DaySchedule({
   reserved: Map<string, string>; // "courtId:hour" → label (Open Play, …)
   open: number;
   close: number;
-  onOpen: () => void;
+  onOpen: (bookingId?: string) => void;
 }) {
   const active = bookings.filter((b) => b.status !== "cancelled");
   // Show opening hours, stretched to fit any staff bookings outside them.
@@ -312,7 +401,7 @@ function DaySchedule({
     <div className="stack">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
         <span className="muted">Click a booking to edit, cancel or verify payment.</span>
-        <button type="button" className="btn small" onClick={onOpen}>Open in Bookings →</button>
+        <button type="button" className="btn small" onClick={() => onOpen()}>Open in Bookings →</button>
       </div>
       <div className="card table-wrap" style={{ padding: 0 }}>
         <table className="day-schedule">
@@ -336,7 +425,7 @@ function DaySchedule({
                   const span = (b.end_hour - h) / SLOT_HOURS;
                   return (
                     <td key={c.id} rowSpan={span} className="day-cell">
-                      <button type="button" className={`day-booking ${b.status}`} onClick={onOpen}
+                      <button type="button" className={`day-booking ${b.status}`} onClick={() => onOpen(b.id)}
                         title={`${b.name} · ${formatHour(b.start_hour)}–${formatHour(b.end_hour)}`}>
                         <strong>{b.name}</strong>
                         <span>{formatHour(b.start_hour)} – {formatHour(b.end_hour)}</span>

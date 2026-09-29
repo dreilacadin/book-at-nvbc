@@ -47,10 +47,12 @@ const byTime = (a: AdminBooking, b: AdminBooking) =>
  */
 export default function BookingsTab({
   initialDate,
+  initialOpen = null,
   onDateChange,
   onAuthError,
 }: {
   initialDate: string;
+  initialOpen?: string | null; // a booking to open straight away (e.g. clicked in the Overview)
   onDateChange: (date: string) => void; // remembered while switching tabs
   onAuthError: (e: unknown) => void;
 }) {
@@ -66,7 +68,8 @@ export default function BookingsTab({
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [showScan, setShowScan] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(initialOpen);
+  const [scrollTo, setScrollTo] = useState<string | null>(initialOpen);
   const [filter, setFilter] = useState<Filter>("all");
   const [bySport, setBySport] = useState(false);
   const [, setTick] = useState(0); // re-render every 30 s: In progress / Completed follow the clock
@@ -136,6 +139,22 @@ export default function BookingsTab({
     if (filter === "in_progress" || filter === "completed") return d === filter;
     return true;
   };
+  // Opened from the Overview: show all bookings (not a filter that hides it), expand the cancelled
+  // section if it's in there, and scroll it into view once the list has loaded.
+  useEffect(() => {
+    if (!scrollTo || loading) return;
+    const b = bookings.find((x) => x.id === scrollTo);
+    if (!b) return setScrollTo(null);
+    setFilter("all");
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`bk-${scrollTo}`);
+      const gone = el?.closest("details");
+      if (gone) gone.open = true;
+      el?.scrollIntoView({ block: "start", behavior: "smooth" });
+      setScrollTo(null);
+    });
+  }, [scrollTo, loading, bookings]);
+
   const shown = useMemo(() => active.filter(matches).sort(byTime), [bookings, filter, now.time]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups: { key: string; title?: string; list: AdminBooking[] }[] = bySport
     ? SPORTS.map((sp) => ({ key: sp.id, title: `${sp.emoji} ${sp.label}`, list: shown.filter((b) => b.sport === sp.id) })).filter((g) => g.list.length)
@@ -240,7 +259,7 @@ function BookingRow({
   if (b.expired_member_id && !b.expired_member_reminded) flags.push("⚠ Membership expired");
   if (b.ref_reused > 0) flags.push("⚠ Reference used before");
   return (
-    <div className={`bk-item${open ? " open" : ""}`}>
+    <div className={`bk-item${open ? " open" : ""}`} id={`bk-${b.id}`}>
       <button type="button" className={`bk-row status-${d}`} aria-expanded={open} onClick={onToggle}>
         <span className="bk-time">
           {formatHour(b.start_hour)}

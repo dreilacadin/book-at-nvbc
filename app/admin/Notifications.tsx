@@ -269,7 +269,10 @@ export default function Notifications({
         <div className="notify-panel" role="dialog" aria-label="Notifications">
           <div className="notify-head">
             <strong>Notifications</strong>
-            <button type="button" className="link-btn" onClick={() => setSettings((v) => !v)}>{settings ? "Back" : "⚙ Settings"}</button>
+            <span className="notify-head-actions">
+              <button type="button" className="link-btn" onClick={() => setSettings((v) => !v)}>{settings ? "Back" : "⚙ Settings"}</button>
+              <button type="button" className="link-btn notify-close" aria-label="Close notifications" onClick={() => setOpen(false)}>✕</button>
+            </span>
           </div>
 
           {settings ? (

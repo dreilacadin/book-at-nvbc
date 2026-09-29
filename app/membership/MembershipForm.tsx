@@ -6,6 +6,7 @@ import { GENDERS, MEMBER_TYPES, type MemberType } from "@/lib/membership";
 import { formatPeso } from "@/lib/pricing";
 import { forgetMembership, loadMembership, saveMembership } from "@/lib/saved-membership";
 import { SPORTS } from "@/lib/sports";
+import MembershipScope from "@/components/MembershipScope";
 import FullScreenLoader from "@/components/FullScreenLoader";
 
 export default function MembershipForm() {
@@ -87,9 +88,10 @@ export default function MembershipForm() {
     <>
       <h1>Become an NVBC Member</h1>
       <p className="lead">
-        Members book courts at the member rate using their member code. Fill in the form, pay the yearly fee, and once the front desk
-        approves it you&apos;ll get your personal member QR code. Membership is valid for 365 days.
+        Members book badminton courts at the member rate using their member code. Fill in the form, pay the yearly fee, and
+        once the front desk approves it you&apos;ll get your personal member QR code. Membership is valid for 365 days.
       </p>
+      <MembershipScope />
 
       {declined && (
         <div className="notice" style={{ marginBottom: 16 }}>

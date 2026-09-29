@@ -20,6 +20,9 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Membership covers badminton — pickleball is coming soon.** The membership page and your member
+  card page now say that membership (and member rates) currently applies to badminton, and that
+  pickleball membership and perks are on the way.
 - **Staff:** **Notifications for staff.** A 🔔 bell in the admin panel shows new bookings, payment
   proof sent (needs verifying), bookings cancelled by the player or released, and new membership
   applications — with a pop-up, an optional chime, and the unread count in the browser tab title.
@@ -55,6 +58,13 @@ Earlier changes (before this file existed) are in the git history.
   being released again, and for who restored a booking and when.
 
 ### Changed
+- **Staff:** In the Overview, the **Payments to verify** and **Cancelled & released** tiles are now
+  buttons (marked "View →"). Clicking one lists just those bookings for the day, week or month on
+  screen, in time order; ‹ › and Today keep the filter, clicking a booking opens it in the Bookings
+  tab, and clicking the tile again (or ✕ Show calendar) brings the calendar back.
+- **Staff:** In the Overview, clicking a booking in the **Week** view (or in the Day view's schedule)
+  now opens that booking straight away in the Bookings tab, scrolled into view — instead of just
+  showing the day. Clicking a day's heading in the Week view still opens that day's schedule.
 - **Staff:** **Bookings tab redesigned for phones.** The wide table is replaced by compact rows
   (time, name, court, amount, a status pill and any warnings) in time order — no sideways
   scrolling. Tap a row to manage the booking. Cancelled and released bookings are collapsed at
@@ -70,6 +80,8 @@ Earlier changes (before this file existed) are in the git history.
   been played.
 
 ### Fixed
+- **Staff:** On phones, the notifications panel (and its ⚙ Settings) was cut off at the left edge
+  of the screen. It now opens as a full-width panel with a ✕ to close it.
 - **Menu links stay tidy on phones.** The links at the top of the page no longer break onto two
   lines on small screens; if they don't all fit, you can swipe the row sideways.
 - **Staff:** Older bookings that were confirmed before payment was required, but never paid, are

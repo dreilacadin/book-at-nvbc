@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import MembershipScope from "@/components/MembershipScope";
 import { PaymentDetails, ProofFields, usePaymentInfo } from "@/components/PaymentPanel";
 import { memberTypeLabel, type MemberType } from "@/lib/membership";
 import { formatPeso, paymentLabel, type PaymentMethod, type PaymentStatus } from "@/lib/pricing";
@@ -110,6 +111,7 @@ export default function MembershipStatus({ token }: { token: string }) {
           {v.state === "expired" && <div className="member-expired-tag">Expired</div>}
         </div>
 
+        <MembershipScope />
         <p className="muted member-tip">
           📱 Take a screenshot of this card and keep it on your phone. Show the QR code at the front desk — staff scan it
           to check your membership. You can also come back to this page anytime: it&apos;s saved on this device, and you
