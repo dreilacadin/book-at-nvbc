@@ -24,7 +24,7 @@ export const maxDuration = 60; // sending a batch of reminder emails can take a 
 
 // Admin only: all applications and members, or one member by code (?code=, from a QR scan).
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     const code = req.nextUrl.searchParams.get("code");
     if (code !== null) return respond(await findByMemberCode(code));
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 // | { action: "email", ids, subject, body }  (reminders to expired members, up to 10 per call)
 // | { action: "email-test", id, subject, body }  (one filled-in reminder to the club's own address)  (existing members from a spreadsheet)
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     const b = await readJson(req);
     const id = String(b.id ?? "");

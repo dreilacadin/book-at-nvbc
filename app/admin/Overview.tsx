@@ -55,7 +55,7 @@ function summarize(list: AdminBooking[]) {
     collected: list.filter((b) => b.payment_status === "paid").reduce((s, b) => s + b.amount, 0),
     unpaid: active.filter((b) => b.payment_status === "unpaid").reduce((s, b) => s + b.amount, 0),
     toVerify: active.filter((b) => b.payment_status === "for_verification").length,
-    pending: active.filter((b) => b.status === "pending").length,
+    pending: active.filter((b) => b.status === "pending" || b.status === "reserved").length,
     cancelled: list.length - active.length,
   };
 }
@@ -273,6 +273,7 @@ function WeekColumns({
                   <span>{sportEmoji(b.sport)} {b.court_name}</span>
                   <span className="week-name">{b.name}</span>
                   {b.status === "pending" && <span className="badge pending">Pending</span>}
+                  {b.status === "reserved" && <span className="badge coach-reserved">Reserved</span>}
                 </button>
               ))}
           </div>
@@ -340,7 +341,7 @@ function DaySchedule({
                         <strong>{b.name}</strong>
                         <span>{formatHour(b.start_hour)} – {formatHour(b.end_hour)}</span>
                         <span>
-                          {formatPeso(b.amount)} · {b.status === "pending" ? "Pending" : b.payment_status === "paid" ? "Paid" : b.payment_status === "waived" ? "No charge" : "Unpaid"}
+                          {formatPeso(b.amount)} · {b.status === "pending" ? "Pending" : b.status === "reserved" ? "Reserved" : b.payment_status === "paid" ? "Paid" : b.payment_status === "waived" ? "No charge" : "Unpaid"}
                         </span>
                       </button>
                     </td>

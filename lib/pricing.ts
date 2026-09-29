@@ -30,18 +30,24 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]["id"];
 export const isPaymentStatus = (v: unknown): v is PaymentStatus => PAYMENT_STATUSES.some((s) => s.id === v);
 export const paymentStatusLabel = (id: string) => PAYMENT_STATUSES.find((s) => s.id === id)?.label ?? id;
 
-export type BookingStatus = "pending" | "confirmed" | "cancelled";
+export type BookingStatus = "pending" | "reserved" | "confirmed" | "cancelled";
+export type ActiveStatus = "pending" | "reserved" | "confirmed";
 
 /**
- * Every booking is "pending" until staff record the payment as received (Paid, or No charge) —
- * whatever the payment method, cash included. Nothing to pay (₱0) → confirmed.
+ * A booking is confirmed only once staff record the payment as received (Paid, or No charge).
+ * Until then: "reserved" when it's to be paid in cash at the desk (coaches), otherwise "pending"
+ * (waiting for / verifying an online payment). Nothing to pay (₱0) → confirmed.
  */
-export function activeBookingStatus(paymentStatus: PaymentStatus, amount: number): "pending" | "confirmed" {
-  return amount > 0 && paymentStatus !== "paid" && paymentStatus !== "waived" ? "pending" : "confirmed";
+export function activeBookingStatus(method: PaymentMethod, paymentStatus: PaymentStatus, amount: number): ActiveStatus {
+  if (amount <= 0 || paymentStatus === "paid" || paymentStatus === "waived") return "confirmed";
+  return method === "cash" ? "reserved" : "pending";
 }
 
 export const bookingStatusLabel = (s: string) =>
-  s === "pending" ? "Pending" : s === "confirmed" ? "Confirmed" : s === "cancelled" ? "Cancelled" : s;
+  ({ pending: "Pending", reserved: "Reserved", confirmed: "Confirmed", cancelled: "Cancelled" })[s] ?? s;
+
+/** Booking statuses that hold a court (everything except cancelled). */
+export const isActiveStatus = (s: string): s is ActiveStatus => s === "pending" || s === "reserved" || s === "confirmed";
 
 /** Hourly prices for one sport: regular, member and coach (₱ per court per hour). */
 export type SportRates = { regular: number; member: number; coach: number };

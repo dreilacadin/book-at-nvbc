@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 const MAX_QR_CHARS = 700_000; // ~500 KB image; the admin page shrinks uploads well below this
 
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     return NextResponse.json(await getSettings());
   } catch (e) {
@@ -22,7 +22,7 @@ const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     const b = await readJson(req);
     const n = (k: string) => Number(b[k]);

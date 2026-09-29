@@ -21,16 +21,19 @@ import {
   PAYMENT_METHODS,
   RATE_TYPES,
   rateTypeLabel,
+  type ActiveStatus,
   type PaymentMethod,
   type PaymentStatus,
   type RateType,
 } from "@/lib/pricing";
 import { saveCode } from "@/lib/saved-codes";
 import { loadMembership } from "@/lib/saved-membership";
-import { minutesUntilStart, RELEASE_MINUTES } from "@/lib/booking-policy";
+import { minutesUntilStart, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
 import BookingQr from "./BookingQr";
-import PaymentPanel, { PaymentDetails, ProofFields, usePaymentInfo } from "./PaymentPanel";
+import PaymentPanel from "./PaymentPanel";
+import { AdminBookingCard } from "@/app/admin/BookingLookup";
+import { AuthError, type AdminBooking } from "@/app/admin/shared";
 import { isSport, sportLabel, type Sport } from "@/lib/sports";
 import FullScreenLoader from "./FullScreenLoader";
 
@@ -54,16 +57,18 @@ type Availability = {
     coachCodeRequired: boolean;
   };
   paymentMethods: PaymentMethod[];
-  courts: { id: number; name: string }[];
+  cashForCoaches: boolean; // cash (at the desk) is only for the coach rate + coach code
+  courts: { id: number; name: string; notes: string }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
-  bookings: { courtId: number; start: number; end: number; name: string; status: "pending" | "confirmed" }[];
+  bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
   blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
 };
 
 type GridCell = {
-  kind: "booking" | "reserved";
-  label: string; // "Ana C." or "Open Play"
-  status?: "pending" | "confirmed";
+  kind: "booking" | "blocked";
+  label: string; // "Ana C." (full name in staff mode) or "Open Play"
+  status?: ActiveStatus;
+  admin?: AdminBooking; // staff mode: the full booking, opened on click
   start: number;
   end: number;
   span: number; // rows (half hours) the cell covers
@@ -86,7 +91,8 @@ type Confirmed = {
   paymentStatus: PaymentStatus;
   paymentRef: string;
   hasProof: boolean;
-  status: "pending" | "confirmed";
+  status: ActiveStatus;
+  payBy: string | null; // online: pay within the window or the slot is released
 };
 
 // The sport is already shown in the tab, so "Badminton Court 1" → "Court 1" in the grid header.
@@ -108,6 +114,39 @@ export default function BookingBoard() {
   const [data, setData] = useState<Availability | null>(null);
   const [loadError, setLoadError] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
+  // Staff mode: a logged-in admin sees full names and can open any booking right here.
+  const [staff, setStaff] = useState<{ name: string } | null>(null);
+  const [staffBookings, setStaffBookings] = useState<AdminBooking[]>([]);
+  const [staffOpen, setStaffOpen] = useState<AdminBooking | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/login", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => setStaff(j.loggedIn ? { name: j.name } : null))
+      .catch(() => {});
+  }, []);
+
+  const loadStaffBookings = useCallback(async (d: string) => {
+    const res = await fetch(`/api/admin/bookings?date=${d}`, { cache: "no-store" });
+    if (res.status === 401) {
+      setStaff(null); // logged out (or session ended) — back to the public view
+      setStaffBookings([]);
+      return;
+    }
+    if (res.ok) setStaffBookings((await res.json()).bookings);
+  }, []);
+
+  useEffect(() => {
+    if (staff && data?.date) loadStaffBookings(data.date);
+    if (!staff) setStaffBookings([]);
+  }, [staff, data, loadStaffBookings]);
+
+  async function staffLogout() {
+    await fetch("/api/admin/logout", { method: "POST" }).catch(() => {});
+    setStaff(null);
+    setStaffBookings([]);
+    setStaffOpen(null);
+  }
 
   // Allow links like /?sport=badminton
   useEffect(() => {
@@ -185,7 +224,13 @@ export default function BookingBoard() {
     if (b) {
       const top = Math.max(b.start, first);
       if (h !== top) return "covered";
-      return { kind: "booking", label: b.name, status: b.status, start: b.start, end: b.end, span: (Math.min(b.end, last + SLOT_HOURS) - top) / SLOT_HOURS };
+      const admin = staff
+        ? staffBookings.find((x) => x.court_id === courtId && x.start_hour === b.start && x.status !== "cancelled")
+        : undefined;
+      return {
+        kind: "booking", label: admin?.name ?? b.name, status: b.status, admin,
+        start: b.start, end: b.end, span: (Math.min(b.end, last + SLOT_HOURS) - top) / SLOT_HOURS,
+      };
     }
     const label = reservedFor(courtId, h);
     if (!label) return null;
@@ -193,13 +238,26 @@ export default function BookingBoard() {
     if (h > first && same(h - SLOT_HOURS)) return "covered";
     let end = h + SLOT_HOURS;
     while (end <= last && same(end)) end += SLOT_HOURS;
-    return { kind: "reserved", label, start: h, end, span: (end - h) / SLOT_HOURS };
+    return { kind: "blocked", label, start: h, end, span: (end - h) / SLOT_HOURS };
   };
   // Taken = booked or reserved; either way it can't be part of a new booking.
   const isBooked = (courtId: number, h: number) => bookedSet.has(`${courtId}:${h}`) || blockedMap.has(`${courtId}:${h}`);
 
+  const courtNotes = data.courts.filter((c) => c.notes);
+
   return (
     <>
+      {staff && (
+        <div className="staff-bar" role="status">
+          <span>
+            👤 <strong>Staff mode</strong> — {staff.name}. Full names are shown; click a booking to view, confirm, edit or cancel it.
+          </span>
+          <span className="staff-bar-actions">
+            <Link href="/admin" className="btn small secondary">Admin panel</Link>
+            <button type="button" className="btn small secondary" onClick={staffLogout}>Log out</button>
+          </span>
+        </div>
+      )}
       <h1>Reserve a court</h1>
       <p className="lead">
         Choose a sport and date, tap an open slot, and you&apos;re set — no account needed. Booked slots
@@ -251,12 +309,20 @@ export default function BookingBoard() {
           <span><i className="swatch open" /> Open</span>
           <span><i className="swatch confirmed" /> Booked</span>
           <span><i className="swatch pending" /> Pending payment</span>
-          {data.blocked.length > 0 && <span><i className="swatch reserved" /> Reserved</span>}
+          <span><i className="swatch reserved" /> Reserved (coach)</span>
+          {data.blocked.length > 0 && <span><i className="swatch blocked" /> Blocked</span>}
           <span><i className="swatch past" /> Past</span>
         </div>
       </div>
 
       {loadError && <div className="error" style={{ marginBottom: 12 }}>{loadError}</div>}
+      {courtNotes.length > 0 && (
+        <div className="court-notes">
+          {courtNotes.map((c) => (
+            <div key={c.id}><strong>ⓘ {shortName(c.name, data.sport)}:</strong> {c.notes}</div>
+          ))}
+        </div>
+      )}
 
       {data.courts.length === 0 ? (
         <div className="card">No {sportLabel(data.sport).toLowerCase()} courts are open for booking right now.</div>
@@ -267,7 +333,10 @@ export default function BookingBoard() {
               <tr>
                 <th className="time" scope="col">Time</th>
                 {data.courts.map((c) => (
-                  <th key={c.id} scope="col">{shortName(c.name, data.sport)}</th>
+                  <th key={c.id} scope="col">
+                    {shortName(c.name, data.sport)}
+                    {c.notes && <span className="court-note-icon" title={c.notes} aria-label={`Note: ${c.notes}`}> ⓘ</span>}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -280,17 +349,27 @@ export default function BookingBoard() {
                     if (cell === "covered") return null; // part of a merged cell above
                     if (cell) {
                       const style = { minHeight: cell.span * ROW_PX - 9 };
+                      const statusWord = cell.status === "pending" ? "Pending" : cell.status === "reserved" ? "Reserved" : "";
                       return cell.kind === "booking" ? (
                         <td key={c.id} rowSpan={cell.span}>
-                          <div className={`slot booked ${cell.status}`} style={style}
-                            aria-label={`${c.name} ${formatRange(cell.start, cell.end)} booked by ${cell.label}${cell.status === "pending" ? ", pending payment" : ""}`}>
-                            <span className="slot-name">{cell.label}</span>
-                            {cell.status === "pending" && <small>Pending</small>}
-                          </div>
+                          {cell.admin ? (
+                            <button type="button" className={`slot booked ${cell.status} staff-click`} style={style}
+                              onClick={() => setStaffOpen(cell.admin!)}
+                              aria-label={`${c.name} ${formatRange(cell.start, cell.end)}: ${cell.label}${statusWord ? `, ${statusWord}` : ""} — open booking`}>
+                              <span className="slot-name">{cell.label}</span>
+                              {statusWord && <small>{statusWord}</small>}
+                            </button>
+                          ) : (
+                            <div className={`slot booked ${cell.status}`} style={style}
+                              aria-label={`${c.name} ${formatRange(cell.start, cell.end)} booked by ${cell.label}${statusWord ? `, ${statusWord.toLowerCase()}` : ""}`}>
+                              <span className="slot-name">{cell.label}</span>
+                              {statusWord && <small>{statusWord}</small>}
+                            </div>
+                          )}
                         </td>
                       ) : (
                         <td key={c.id} rowSpan={cell.span}>
-                          <div className="slot reserved" style={style} title={cell.label}
+                          <div className="slot blocked" style={style} title={cell.label}
                             aria-label={`${c.name} ${formatRange(cell.start, cell.end)} reserved for ${cell.label}`}>
                             {cell.label}
                           </div>
@@ -319,6 +398,29 @@ export default function BookingBoard() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {staffOpen && (
+        <div className="backdrop" onClick={() => setStaffOpen(null)}>
+          <div className="card modal staff-modal" role="dialog" aria-modal="true" aria-label={`Booking ${staffOpen.code}`}
+            onClick={(e) => e.stopPropagation()}>
+            <AdminBookingCard
+              key={staffOpen.id + staffOpen.status + staffOpen.payment_status}
+              b={staffOpen}
+              onAuthError={(e) => { if (e instanceof AuthError) { setStaff(null); setStaffOpen(null); } }}
+              onChanged={async () => {
+                await load(data.date, data.sport);
+                const res = await fetch(`/api/admin/bookings?code=${staffOpen.code}`, { cache: "no-store" });
+                if (res.ok) setStaffOpen(await res.json());
+                else setStaffOpen(null);
+              }}
+            />
+            <div className="actions">
+              <Link href="/admin" className="btn secondary">Open admin panel</Link>
+              <button type="button" className="btn" onClick={() => setStaffOpen(null)}>Close</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -364,14 +466,17 @@ function BookingDialog({
   const [rateType, setRateType] = useState<RateType>("regular");
   // A member's code is saved on their phone when they open their member page: fill it in.
   const [rateCode, setRateCode] = useState(() => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? ""));
-  // A cash booking this close to the start can't be held for payment at the desk (it'd be released).
+  // Unpaid bookings are released RELEASE_MINUTES before the start: too late to book online.
   const startsSoon = minutesUntilStart(data.date, selection.hour, { date: data.today, time: data.currentHour }) <= RELEASE_MINUTES;
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
-    (startsSoon ? data.paymentMethods.find((m) => m !== "cash") : undefined) ?? data.paymentMethods[0] ?? "cash"
-  );
-  const [paymentRef, setPaymentRef] = useState("");
-  const [paymentProof, setPaymentProof] = useState("");
-  const { info: payInfo } = usePaymentInfo();
+  // Online payment for everyone; cash at the desk only for coaches (coach rate + coach code).
+  const onlineMethods = data.paymentMethods.filter((m) => m !== "cash");
+  const cashOk = rateType === "coach" && data.cashForCoaches;
+  const methodChoices = PAYMENT_METHODS.filter((m) => (m.id === "cash" ? cashOk : onlineMethods.includes(m.id)));
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(onlineMethods[0] ?? "cash");
+  useEffect(() => {
+    if (paymentMethod === "cash" && !cashOk) setPaymentMethod(onlineMethods[0] ?? "cash");
+  }, [cashOk, paymentMethod, onlineMethods]);
+  const court = data.courts.find((c) => c.id === selection.courtId);
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
   const [notes, setNotes] = useState("");
@@ -386,8 +491,7 @@ function BookingDialog({
   const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
   const standardOnly = p.rateTypes.length === 1;
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
-  // Online payments are paid before booking; the booking goes through only with proof.
-  const payFirst = hasPrices && paymentMethod !== "cash" && price.total > 0;
+  const noWayToPay = hasPrices && price.total > 0 && methodChoices.length === 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
 
   useEffect(() => {
@@ -398,8 +502,6 @@ function BookingDialog({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (payFirst && !paymentRef.trim() && !paymentProof)
-      return setError(`Please pay by ${paymentLabel(paymentMethod)}, then enter the reference number or upload a screenshot of the receipt.`);
     setBusy(true);
     setError("");
     try {
@@ -418,8 +520,6 @@ function BookingDialog({
           rateType,
           rateCode: codeRequired ? rateCode : "",
           paymentMethod,
-          paymentRef: payFirst ? paymentRef : "",
-          paymentProof: payFirst ? paymentProof : "",
         }),
       });
       const json = await res.json();
@@ -465,22 +565,30 @@ function BookingDialog({
       >
         {done ? (
           <div>
-            {done.status === "pending" ? (
+            {done.status === "reserved" ? (
               <>
-                <h2 id="dlg-title">Booking received — pending payment</h2>
+                <h2 id="dlg-title">Slot reserved 🏸</h2>
+                <p className="notice info" style={{ marginTop: 0 }}>
+                  Your slot is <strong>Reserved</strong>. Please pay <strong>{formatPeso(done.amount)}</strong> in cash at the
+                  front desk by <strong>{payByLabel(done.date, done.startHour)}</strong> — reserved slots that aren&apos;t paid
+                  by then are released for other players.
+                </p>
+              </>
+            ) : done.status === "pending" && done.paymentStatus === "unpaid" ? (
+              <>
+                <h2 id="dlg-title">Complete your payment</h2>
                 <p className="notice" style={{ marginTop: 0 }}>
-                  {done.paymentStatus === "for_verification" ? (
-                    <>
-                      Thank you! We&apos;ve received your {paymentLabel(done.paymentMethod)} payment details. Your booking is{" "}
-                      <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
-                    </>
-                  ) : (
-                    <>
-                      Your slot is held as <strong>Pending</strong>. Please pay by{" "}
-                      <strong>{payByLabel(done.date, done.startHour)}</strong> — unpaid bookings are released at that time.
-                      Your booking is <strong>Confirmed</strong> once staff receive your payment.
-                    </>
-                  )}
+                  We&apos;re holding this slot for you. Please send <strong>{formatPeso(done.amount)}</strong> by{" "}
+                  {paymentLabel(done.paymentMethod)} and upload your receipt or reference number before the timer runs out —
+                  otherwise the slot will be released for other players.
+                </p>
+              </>
+            ) : done.status === "pending" ? (
+              <>
+                <h2 id="dlg-title">Booking received — pending verification</h2>
+                <p className="notice" style={{ marginTop: 0 }}>
+                  Thank you! We&apos;ve received your {paymentLabel(done.paymentMethod)} payment details. Your booking is{" "}
+                  <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
                 </p>
               </>
             ) : (
@@ -498,11 +606,7 @@ function BookingDialog({
                 </>
               )}
             </div>
-            <BookingQr code={done.code} />
-            <p className="muted" style={{ fontSize: 14, marginTop: 0 }}>
-              Take a screenshot of this QR code or save your booking code. You&apos;ll need it to view, pay or cancel your
-              booking on the <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
-            </p>
+            {court?.notes && <div className="court-note">ⓘ {court.notes}</div>}
             {done.amount > 0 && (
               <PaymentPanel
                 code={done.code}
@@ -512,8 +616,15 @@ function BookingDialog({
                 reference={done.paymentRef}
                 hasProof={done.hasProof}
                 payBy={payByLabel(done.date, done.startHour)}
+                deadline={done.payBy}
+                onUpdated={(u) => setDone({ ...done, paymentStatus: u.paymentStatus, paymentRef: u.paymentRef, hasProof: u.hasProof, payBy: null })}
               />
             )}
+            <BookingQr code={done.code} />
+            <p className="muted" style={{ fontSize: 14, marginTop: 0 }}>
+              Take a screenshot of this QR code or save your booking code. You&apos;ll need it to view, pay or cancel your
+              booking on the <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
+            </p>
             {done.amount > 0 && <BookingPolicy title="Good to know" />}
             <div className="actions">
               <button className="btn secondary" onClick={copy}>{copied ? "Copied ✓" : "Copy code"}</button>
@@ -529,6 +640,17 @@ function BookingDialog({
               <br />
               {formatRange(selection.hour, selection.hour + hours)}
             </div>
+            {court?.notes && (
+              <div className="court-note">
+                <strong>Please note:</strong> {court.notes}
+              </div>
+            )}
+            {startsSoon && (
+              <div className="error" style={{ marginTop: 12 }}>
+                This slot starts in less than {RELEASE_MINUTES} minutes and can&apos;t be booked online — please book it at the
+                front desk.
+              </div>
+            )}
 
             <div className="field">
               <label htmlFor="hours">How long?</label>
@@ -615,24 +737,28 @@ function BookingDialog({
                 <div className="field">
                   <label id="pay-label">How will you pay?</label>
                   <div className="pay-options" role="radiogroup" aria-labelledby="pay-label">
-                    {PAYMENT_METHODS.filter((m) => data.paymentMethods.includes(m.id)).map((m) => (
+                    {methodChoices.map((m) => (
                       <button
                         key={m.id}
                         type="button"
                         role="radio"
                         aria-checked={paymentMethod === m.id}
-                        disabled={startsSoon && m.id === "cash"}
                         onClick={() => setPaymentMethod(m.id)}
                       >
                         <strong>{m.label}</strong>
-                        <small>{startsSoon && m.id === "cash" ? `Not available — starts in under ${RELEASE_MINUTES} min` : m.hint}</small>
+                        <small>{m.id === "cash" ? "Coaches: pay at the front desk" : m.hint}</small>
                       </button>
                     ))}
                   </div>
-                  {startsSoon && data.paymentMethods.every((m) => m === "cash") && (
+                  <p className="hint" style={{ margin: "6px 0 0" }}>
+                    {paymentMethod === "cash"
+                      ? `Your slot will be Reserved — please pay at the front desk at least ${RELEASE_MINUTES} minutes before your start time.`
+                      : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number.`}
+                    {!cashOk && data.cashForCoaches && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}
+                  </p>
+                  {noWayToPay && (
                     <p className="error" style={{ marginTop: 8 }}>
-                      This slot starts in under {RELEASE_MINUTES} minutes and can only be paid at the front desk — please book
-                      it there.
+                      Online payment isn&apos;t available right now — please book at the front desk.
                     </p>
                   )}
                 </div>
@@ -656,17 +782,6 @@ function BookingDialog({
                   </div>
                 </div>
 
-                {payFirst && (
-                  <div className="pay-box">
-                    <strong>Pay now to book</strong>
-                    {payInfo && <PaymentDetails info={payInfo} method={paymentMethod} amount={price.total} />}
-                    <p className="muted" style={{ fontSize: 14, margin: "10px 0 8px" }}>
-                      After paying, enter the reference number or upload a screenshot of the receipt. Staff confirm
-                      your booking once they verify the payment.
-                    </p>
-                    <ProofFields reference={paymentRef} onReference={setPaymentRef} proof={paymentProof} onProof={setPaymentProof} />
-                  </div>
-                )}
               </>
             )}
 
@@ -683,8 +798,11 @@ function BookingDialog({
 
             <div className="actions">
               <button type="button" className="btn secondary" onClick={onClose}>Cancel</button>
-              <button type="submit" className="btn" disabled={busy}>
-                {busy ? "Booking…" : hasPrices ? `Confirm · ${formatPeso(price.total)}` : "Confirm booking"}
+              <button type="submit" className="btn" disabled={busy || startsSoon || noWayToPay}>
+                {busy ? "Booking…"
+                  : !hasPrices || price.total <= 0 ? "Confirm booking"
+                  : paymentMethod === "cash" ? `Reserve · ${formatPeso(price.total)}`
+                  : `Book & pay · ${formatPeso(price.total)}`}
               </button>
             </div>
           </form>

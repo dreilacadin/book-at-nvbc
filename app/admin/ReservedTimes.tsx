@@ -88,7 +88,7 @@ export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]
               {current.map((b) => (
                 <tr key={b.id}>
                   <td>
-                    <span className="badge reserved">{b.label}</span>
+                    <span className="badge blocked">{b.label}</span>
                     {b.notes && <div className="muted" style={{ fontSize: 13 }}>{b.notes}</div>}
                   </td>
                   <td style={{ fontSize: 14 }}>{when(b)}</td>

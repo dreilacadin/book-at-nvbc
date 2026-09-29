@@ -24,6 +24,7 @@ export type AdminBooking = {
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
   payment_ref: string;
+  pay_by: string | null; // online booking: pay by this time or it is released
   has_proof: boolean;
   member_code: string | null; // member-rate bookings: whose member code was used
   member_name: string | null;
@@ -33,7 +34,15 @@ export type AdminBooking = {
   expired_member_reminded: string | null;
   ref_reused: number;
 };
-export type Court = { id: number; name: string; sport: Sport; is_active: boolean; sort_order: number; upcoming: number };
+export type Court = {
+  id: number;
+  name: string;
+  sport: Sport;
+  is_active: boolean;
+  sort_order: number;
+  upcoming: number;
+  notes: string; // shown to players (e.g. rain policy for an outdoor court)
+};
 export type Settings = {
   open_hour: number;
   close_hour: number;

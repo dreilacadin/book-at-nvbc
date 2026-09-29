@@ -41,7 +41,7 @@ const round = (n: number) => Math.round(n * 100) / 100;
 // Admin only: download bookings for a period as Excel (.xlsx) or CSV.
 // ?from=YYYY-MM-DD&to=YYYY-MM-DD&format=xlsx|csv[&sport=badminton|pickleball]
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   const q = req.nextUrl.searchParams;
   const from = q.get("from") ?? "";
   const to = q.get("to") ?? from;

@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 // Admin only: reserved times (Open Play, Queueing, …).
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     return NextResponse.json({ blocks: await listBlocks() }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
 
 // { action: "create", label, courtIds, weekdays, startDate, endDate?, startHour, endHour, notes? } | { action: "delete", id }
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     const body = await readJson(req);
     if (body.action === "create") return respond(await createBlock(body), 201);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdmin, unauthorized } from "@/lib/admin-auth";
+import { getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { cancelById, createBooking, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 // or for a range of up to 6 weeks (?from=&to=, inclusive) for the overview,
 // or one booking by its code (?code=, from scanning the booking QR).
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   const q = req.nextUrl.searchParams;
   const rawCode = q.get("code");
   const code = rawCode === null ? null : normalizeCode(rawCode);
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
       `SELECT b.id, b.cancel_code AS code, c.name AS court_name, c.sport, b.court_id, b.booking_date AS date,
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
-              b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof,
+              b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof, b.pay_by,
               mb.member_code, mb.full_name AS member_name,
               ex.id AS expired_member_id, ex.full_name AS expired_member_name,
               ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,
@@ -69,10 +69,11 @@ export async function GET(req: NextRequest) {
 //           | { action: "update", id, courtId, date, startHour, endHour, name, contact, notes,
 //               rateType, hourlyRate, paymentMethod, paymentRef }
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  const me = await getAdmin(req);
+  if (!me) return unauthorized();
   try {
     const body = await readJson(req);
-    if (body.action === "cancel") return respond(await cancelById(String(body.id ?? "")));
+    if (body.action === "cancel") return respond(await cancelById(String(body.id ?? ""), me.name));
     if (body.action === "payment")
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference));
     if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? "")));

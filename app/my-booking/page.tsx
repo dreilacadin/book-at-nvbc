@@ -38,6 +38,8 @@ type Booking = {
   paymentRef: string;
   hasProof: boolean;
   cancelledBy: string | null; // "system" = released (not paid in time)
+  payBy: string | null; // online booking: pay by this time (ISO) or it's released
+  courtNotes: string;
 };
 
 export default function MyBookingPage() {
@@ -150,7 +152,7 @@ export default function MyBookingPage() {
               {booking.courtName}
               <span className="muted" style={{ display: "block", fontSize: 14, fontWeight: 400 }}>{sportLabel(booking.sport)}</span>
             </h2>
-            <span className={`badge ${booking.status === "pending" ? "pending" : booking.status === "cancelled" ? "grey" : ""}`}>
+            <span className={`badge ${booking.status === "pending" ? "pending" : booking.status === "reserved" ? "coach-reserved" : booking.status === "cancelled" ? "grey" : ""}`}>
               {booking.status === "cancelled" && booking.cancelledBy === "system" ? "Released" : bookingStatusLabel(booking.status)}
             </span>
           </div>
@@ -176,6 +178,7 @@ export default function MyBookingPage() {
             )}
           </p>
 
+          {booking.courtNotes && booking.status !== "cancelled" && <div className="court-note">ⓘ {booking.courtNotes}</div>}
           {booking.status === "pending" && (
             <div className="notice" style={{ marginTop: 12 }}>
               {booking.paymentStatus === "for_verification" ? (
@@ -185,17 +188,23 @@ export default function MyBookingPage() {
                 </>
               ) : (
                 <>
-                  Your slot is held as <strong>Pending</strong>. Please pay by{" "}
-                  <strong>{payByLabel(booking.date, booking.startHour)}</strong> — unpaid bookings are released at that
-                  time. Your booking is <strong>Confirmed</strong> once staff receive your payment.
+                  We&apos;re holding this slot for you. Please pay and send your receipt or reference number before the
+                  timer below runs out — otherwise the slot will be released for other players.
                 </>
               )}
             </div>
           )}
+          {booking.status === "reserved" && (
+            <div className="notice info" style={{ marginTop: 12 }}>
+              Your slot is <strong>Reserved</strong>. Please pay {formatPeso(booking.amount)} in cash at the front desk by{" "}
+              <strong>{payByLabel(booking.date, booking.startHour)}</strong> — reserved slots that aren&apos;t paid by then are
+              released for other players.
+            </div>
+          )}
           {booking.status === "cancelled" && booking.cancelledBy === "system" && (
             <div className="notice" style={{ marginTop: 12 }}>
-              This booking was released because it wasn&apos;t paid {RELEASE_MINUTES} minutes before the start time, so the
-              court could be offered to other players. You&apos;re welcome to book another slot.
+              This booking was released because it wasn&apos;t paid in time, so the court could be offered to other
+              players. You&apos;re welcome to book another slot.
             </div>
           )}
           {booking.status !== "cancelled" && <BookingQr code={booking.code} />}
@@ -210,7 +219,8 @@ export default function MyBookingPage() {
               reference={booking.paymentRef}
               hasProof={booking.hasProof}
               payBy={payByLabel(booking.date, booking.startHour)}
-              onUpdated={(u) => setBooking({ ...booking, ...u, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
+              deadline={booking.payBy}
+              onUpdated={(u) => setBooking({ ...booking, ...u, payBy: null, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
             />
           )}
           {booking.status === "cancelled" && booking.paymentStatus === "paid" && booking.paymentMethod !== "cash" && (

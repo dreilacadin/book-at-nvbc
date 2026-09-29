@@ -152,6 +152,19 @@ export function ProofFields({
  * Shows how to pay for a booking and lets the player send their reference number and/or
  * a screenshot of the receipt. Used on the booking confirmation and on the My booking page.
  */
+/** Seconds left until `deadline` (ISO), ticking every second; null without a deadline. */
+function useSecondsLeft(deadline: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!deadline) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [deadline]);
+  return deadline ? Math.max(0, Math.floor((Date.parse(deadline) - now) / 1000)) : null;
+}
+
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
 export default function PaymentPanel({
   code,
   amount,
@@ -160,6 +173,7 @@ export default function PaymentPanel({
   reference: initialRef = "",
   hasProof: initialHasProof = false,
   payBy,
+  deadline = null,
   onUpdated,
 }: {
   code: string;
@@ -169,6 +183,7 @@ export default function PaymentPanel({
   reference?: string;
   hasProof?: boolean;
   payBy?: string; // "9:50 AM on Thu, Oct 1": unpaid bookings are released then
+  deadline?: string | null; // online booking: send the payment by this time (ISO) or the slot is released
   onUpdated?: (p: { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; paymentRef: string; hasProof: boolean }) => void;
 }) {
   const { info, error: infoError } = usePaymentInfo();
@@ -179,6 +194,8 @@ export default function PaymentPanel({
   const [hasProof, setHasProof] = useState(initialHasProof);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const secondsLeft = useSecondsLeft(status === "unpaid" ? deadline : null);
+  const timeUp = secondsLeft === 0;
 
   if (status === "paid" || status === "waived" || status === "refunded") {
     return (
@@ -192,7 +209,20 @@ export default function PaymentPanel({
     );
   }
 
+  // Online methods; cash only for a booking already made as cash (coaches).
   const eMethods = (info?.methods ?? []).filter((m) => m !== "cash");
+  const choices: PaymentMethod[] = initialMethod === "cash" ? ["cash", ...eMethods] : eMethods;
+
+  if (timeUp)
+    return (
+      <div className="pay-box">
+        <div className="pay-timer expired">⏱ Time&apos;s up</div>
+        <p style={{ margin: "10px 0 0" }}>
+          The time to pay for this booking has ended, so the slot has been released for other players. You&apos;re welcome to
+          book again. If you already sent a payment, please contact the front desk.
+        </p>
+      </div>
+    );
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -222,14 +252,19 @@ export default function PaymentPanel({
 
   return (
     <div className="pay-box">
+      {secondsLeft !== null && (
+        <div className={`pay-timer${secondsLeft <= 120 ? " urgent" : ""}`} role="timer" aria-live={secondsLeft <= 60 ? "assertive" : "off"}>
+          ⏱ Time left to pay: <strong>{mmss(secondsLeft)}</strong>
+        </div>
+      )}
       <div className="pay-row">
         <span>Amount to pay</span>
         <strong style={{ fontSize: 22 }}>{formatPeso(amount)}</strong>
       </div>
 
-      {info && eMethods.length > 0 && (
+      {info && choices.length > 1 && (
         <div className="method-pills" role="radiogroup" aria-label="Payment method">
-          {(info.methods.includes("cash") ? (["cash", ...eMethods] as PaymentMethod[]) : eMethods).map((m) => (
+          {choices.map((m) => (
             <button
               key={m}
               type="button"

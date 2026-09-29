@@ -1,4 +1,4 @@
-import { REFUND_HOURS, RELEASE_MINUTES, releaseAt } from "@/lib/booking-policy";
+import { PAY_WINDOW_MINUTES, REFUND_HOURS, RELEASE_MINUTES, releaseAt } from "@/lib/booking-policy";
 import { formatClock } from "@/lib/format";
 
 /** "9:50 AM on Thu, Oct 1" — when an unpaid booking is released. */
@@ -20,9 +20,13 @@ export default function BookingPolicy({ title = "Before you book" }: { title?: s
       <strong>{title}</strong>
       <ul>
         <li>
-          Your booking stays <strong>Pending</strong> until your payment is received. Please settle your payment at least{" "}
-          <strong>{RELEASE_MINUTES} minutes before your start time</strong> — unpaid bookings are automatically released at
-          that point so other players can use the court.
+          After booking, you have <strong>{PAY_WINDOW_MINUTES} minutes</strong> to pay by GCash, QR Ph or bank transfer and
+          send your receipt or reference number. Bookings not paid within that time are released automatically so other
+          players can book the court.
+        </li>
+        <li>
+          Coaches paying in cash: your slot is <strong>Reserved</strong>. Please settle your payment at the front desk at
+          least <strong>{RELEASE_MINUTES} minutes before your start time</strong>, or the slot will be released.
         </li>
         <li>
           Paid by GCash, QR Ph or bank transfer? You&apos;re eligible for a refund if you cancel at least{" "}

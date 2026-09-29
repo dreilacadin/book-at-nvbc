@@ -18,8 +18,9 @@ import {
 } from "@/lib/pricing";
 import { imageToDataUrl } from "@/lib/image";
 import { payByLabel } from "@/components/BookingPolicy";
-import BookingLookup, { refundNote } from "./BookingLookup";
+import BookingLookup, { refundNote, releaseNote } from "./BookingLookup";
 import EditBooking from "./EditBooking";
+import StaffTab from "./StaffTab";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
@@ -32,12 +33,18 @@ const shortDate = (d: string | null) =>
 
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "settings">("overview");
+  const [me, setMe] = useState<{ name: string; id: number | null } | null>(null);
+  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "staff" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
 
   useEffect(() => {
-    api<{ loggedIn: boolean }>("/api/admin/login").then((r) => setLoggedIn(r.loggedIn)).catch(() => setLoggedIn(false));
-  }, []);
+    api<{ loggedIn: boolean; name?: string; id?: number | null }>("/api/admin/login")
+      .then((r) => {
+        setLoggedIn(r.loggedIn);
+        setMe(r.loggedIn ? { name: r.name ?? "", id: r.id ?? null } : null);
+      })
+      .catch(() => setLoggedIn(false));
+  }, [loggedIn]);
 
   const onAuthError = useCallback((e: unknown) => {
     if (e instanceof AuthError) setLoggedIn(false);
@@ -50,6 +57,8 @@ export default function AdminPage() {
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1>Staff dashboard</h1>
+        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {me && <span className="muted" style={{ fontSize: 14 }}>Logged in as <strong>{me.name}</strong></span>}
         <button
           className="btn small secondary"
           onClick={async () => {
@@ -59,9 +68,10 @@ export default function AdminPage() {
         >
           Log out
         </button>
+        </span>
       </div>
       <div className="tabs" role="tablist">
-        {(["overview", "bookings", "members", "courts", "settings"] as const).map((t) => (
+        {(["overview", "bookings", "members", "courts", "staff", "settings"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
@@ -79,12 +89,14 @@ export default function AdminPage() {
       {tab === "bookings" && <BookingsTab initialDate={bookingsDate} onDateChange={setBookingsDate} onAuthError={onAuthError} />}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
       {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
+      {tab === "staff" && <StaffTab onAuthError={onAuthError} />}
       {tab === "settings" && <SettingsTab onAuthError={onAuthError} />}
     </>
   );
 }
 
 function Login({ onDone }: { onDone: () => void }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,7 +109,7 @@ function Login({ onDone }: { onDone: () => void }) {
         setBusy(true);
         setError("");
         try {
-          await api("/api/admin/login", { password });
+          await api("/api/admin/login", { username, password });
           onDone();
         } catch (err) {
           setError(err instanceof Error ? err.message : "Login failed");
@@ -107,6 +119,11 @@ function Login({ onDone }: { onDone: () => void }) {
       }}
     >
       <h2>Staff login</h2>
+      <div className="field">
+        <label htmlFor="un">Username</label>
+        <input id="un" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} required value={username}
+          onChange={(e) => setUsername(e.target.value)} />
+      </div>
       <div className="field">
         <label htmlFor="pw">Password</label>
         <input id="pw" type="password" autoComplete="current-password" required value={password}
@@ -210,7 +227,7 @@ function BookingsTab({
   }
 
   const confirmed = bookings.filter((b) => b.status !== "cancelled"); // pending + confirmed
-  const pendingCount = bookings.filter((b) => b.status === "pending").length;
+  const pendingCount = bookings.filter((b) => b.status === "pending" || b.status === "reserved").length;
   const hoursBooked = confirmed.reduce((s, b) => s + b.end_hour - b.start_hour, 0);
   const billed = confirmed.filter((b) => b.payment_status !== "waived").reduce((s, b) => s + b.amount, 0);
   const collected = bookings.filter((b) => b.payment_status === "paid").reduce((s, b) => s + b.amount, 0);
@@ -359,13 +376,14 @@ function BookingsTab({
                     <td>
                       {b.status !== "cancelled" ? (
                         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-                          <span className={`badge ${b.status === "pending" ? "pending" : ""}`}
-                            title={b.status === "pending" ? "Waiting for payment — set the payment to Paid to confirm" : undefined}>
+                          <span className={`badge ${b.status === "pending" ? "pending" : b.status === "reserved" ? "coach-reserved" : ""}`}
+                            title={b.status === "pending" ? "Waiting for payment — set the payment to Paid to confirm"
+                              : b.status === "reserved" ? "Coach paying cash at the desk — set the payment to Paid to confirm" : undefined}>
                             {bookingStatusLabel(b.status)}
                           </span>
-                          {b.status === "pending" && b.payment_status === "unpaid" && b.amount > 0 && (
+                          {releaseNote(b) && (
                             <span className="muted" style={{ fontSize: 12 }} title="Unpaid bookings are released automatically">
-                              Releases {payByLabel(b.date, b.start_hour).replace(/ on .*/, "")} if unpaid
+                              {releaseNote(b)}
                             </span>
                           )}
                           <div style={{ display: "flex", gap: 6 }}>
@@ -694,13 +712,17 @@ function SportCourts({
 function CourtRow({ court, onSave }: { court: Court; onSave: (p: Partial<Court>) => void }) {
   const [name, setName] = useState(court.name);
   const [order, setOrder] = useState(String(court.sort_order));
+  const [notes, setNotes] = useState(court.notes);
+  const [editingNote, setEditingNote] = useState(false);
   useEffect(() => {
     setName(court.name);
     setOrder(String(court.sort_order));
+    setNotes(court.notes);
   }, [court]);
   const dirty = name !== court.name || order !== String(court.sort_order);
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap", opacity: court.is_active ? 1 : 0.65 }}>
+    <div style={{ padding: "8px 0", borderBottom: "1px solid var(--border)", opacity: court.is_active ? 1 : 0.65 }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <input type="number" aria-label="Order" title="Display order" value={order} style={{ width: 64 }}
         onChange={(e) => setOrder(e.target.value)} />
       <input type="text" aria-label="Court name" value={name} maxLength={40} style={{ flex: 1, minWidth: 140 }}
@@ -717,6 +739,22 @@ function CourtRow({ court, onSave }: { court: Court; onSave: (p: Partial<Court>)
       </button>
       {!court.is_active && <span className="badge grey">Hidden</span>}
       {court.upcoming > 0 && <span className="badge" title="Confirmed bookings from today onward">{court.upcoming} upcoming</span>}
+      {!editingNote && (
+        <button className="btn small secondary" onClick={() => setEditingNote(true)}>{court.notes ? "✎ Note" : "+ Note"}</button>
+      )}
+    </div>
+    {court.notes && !editingNote && <div className="court-note" style={{ marginTop: 6 }}>ⓘ {court.notes}</div>}
+    {editingNote && (
+      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+        <input type="text" aria-label={`Note for ${court.name}`} maxLength={300} value={notes} style={{ flex: 1, minWidth: 220 }}
+          placeholder="e.g. If it rains, this outdoor court may be moved to an indoor court." onChange={(e) => setNotes(e.target.value)} />
+        <button className="btn small" onClick={() => { onSave({ notes: notes.trim() }); setEditingNote(false); }}>Save note</button>
+        {court.notes && (
+          <button className="btn small secondary" onClick={() => { onSave({ notes: "" }); setEditingNote(false); }}>Remove</button>
+        )}
+        <button className="btn small secondary" onClick={() => { setNotes(court.notes); setEditingNote(false); }}>Cancel</button>
+      </div>
+    )}
     </div>
   );
 }

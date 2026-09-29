@@ -11,7 +11,7 @@ const MAX_COURTS_PER_SPORT = 30;
 
 async function listCourts() {
   const { rows } = await db().query(
-    `SELECT c.id, c.name, c.sport, c.is_active, c.sort_order,
+    `SELECT c.id, c.name, c.sport, c.is_active, c.sort_order, c.notes,
             (SELECT count(*)::int FROM bookings b
               WHERE b.court_id = c.id AND b.status <> 'cancelled' AND b.booking_date >= $1) AS upcoming
        FROM courts c ORDER BY c.sort_order, c.id`,
@@ -33,7 +33,7 @@ async function upcomingOn(ids: number[]): Promise<number> {
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     return NextResponse.json({ courts: await listCourts() });
   } catch (e) {
@@ -44,10 +44,10 @@ export async function GET(req: NextRequest) {
 /**
  * { action: "set_count", sport, count }  — show/hide/create courts so exactly `count` are bookable
  * { action: "add", name, sport }
- * { action: "update", id, name?, sport?, is_active?, sort_order? }
+ * { action: "update", id, name?, sport?, is_active?, sort_order?, notes? }
  */
 export async function POST(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   try {
     const body = await readJson(req);
     const name = typeof body.name === "string" ? body.name.trim() : undefined;
@@ -122,6 +122,8 @@ export async function POST(req: NextRequest) {
       if (!Number.isInteger(id)) return bad("Invalid court.");
       const sortOrder = body.sort_order === undefined ? null : Number(body.sort_order);
       if (sortOrder !== null && !Number.isInteger(sortOrder)) return bad("Order must be a whole number.");
+      // Note shown to players for this court (e.g. rain policy). "" clears it.
+      const notes = typeof body.notes === "string" ? body.notes.trim().replace(/\s+/g, " ").slice(0, 300) : null;
       const { rows } = await db().query<{ sport: string }>(`SELECT sport FROM courts WHERE id = $1`, [id]);
       if (!rows[0]) return bad("Court not found.");
       await db().query(
@@ -129,7 +131,8 @@ export async function POST(req: NextRequest) {
            name       = COALESCE($2, name),
            is_active  = COALESCE($3, is_active),
            sort_order = COALESCE($4, sort_order),
-           sport      = COALESCE($5, sport)
+           sport      = COALESCE($5, sport),
+           notes      = COALESCE($6, notes)
          WHERE id = $1`,
         [
           id,
@@ -137,6 +140,7 @@ export async function POST(req: NextRequest) {
           typeof body.is_active === "boolean" ? body.is_active : null,
           sortOrder,
           isSport(body.sport) ? body.sport : null,
+          notes,
         ]
       );
       const n = await upcomingOn([id]);

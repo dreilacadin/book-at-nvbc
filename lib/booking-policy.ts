@@ -4,6 +4,8 @@
 export const RELEASE_MINUTES = 10;
 /** Online payments are refundable when the booking is cancelled at least this many hours before it starts. */
 export const REFUND_HOURS = 12;
+/** After booking online, players have this long to pay and send their receipt or reference number. */
+export const PAY_WINDOW_MINUTES = 15;
 
 type Now = { date: string; time: number }; // time of day in hours, e.g. 9.75 = 9:45 AM
 
@@ -24,17 +26,26 @@ export function releaseAt(date: string, startHour: number): { date: string; time
 }
 
 /**
- * An active booking with nothing paid is released once it is within RELEASE_MINUTES of its start.
- * Bookings whose online payment was sent (for verification) are kept: the player has paid.
+ * When an online booking must be paid by (ms since epoch): PAY_WINDOW_MINUTES after booking, or
+ * RELEASE_MINUTES before the start if that comes first.
+ */
+export function paymentDeadline(nowMs: number, date: string, startHour: number, now: Now): number {
+  const untilRelease = (minutesUntilStart(date, startHour, now) - RELEASE_MINUTES) * 60_000;
+  return nowMs + Math.min(PAY_WINDOW_MINUTES * 60_000, untilRelease);
+}
+
+/**
+ * A pending or reserved booking with nothing paid is released once it is within RELEASE_MINUTES
+ * of its start, or once its online payment window (pay_by) has run out. Bookings whose online
+ * payment was sent (for verification) are kept: the player has paid.
  */
 export function shouldRelease(
-  b: { status: string; payment_status: string; amount: number; date: string; start_hour: number },
-  now: Now
+  b: { status: string; payment_status: string; amount: number; date: string; start_hour: number; pay_by?: string | null },
+  now: Now,
+  nowMs: number = Date.now()
 ): boolean {
-  return (
-    b.status === "pending" && b.payment_status === "unpaid" && b.amount > 0 &&
-    minutesUntilStart(b.date, b.start_hour, now) <= RELEASE_MINUTES
-  );
+  if ((b.status !== "pending" && b.status !== "reserved") || b.payment_status !== "unpaid" || b.amount <= 0) return false;
+  return minutesUntilStart(b.date, b.start_hour, now) <= RELEASE_MINUTES || (!!b.pay_by && Date.parse(b.pay_by) <= nowMs);
 }
 
 /**

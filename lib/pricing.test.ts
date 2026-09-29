@@ -72,13 +72,16 @@ test("rateFor picks the price for the rate type", () => {
   assert.equal(rateFor(rates, "coach"), 150);
 });
 
-test("activeBookingStatus: every booking is pending until the payment is received", () => {
-  assert.equal(activeBookingStatus("unpaid", 250), "pending");
-  assert.equal(activeBookingStatus("for_verification", 250), "pending");
-  assert.equal(activeBookingStatus("refunded", 250), "pending");
-  assert.equal(activeBookingStatus("paid", 250), "confirmed");
-  assert.equal(activeBookingStatus("waived", 250), "confirmed");
-  assert.equal(activeBookingStatus("unpaid", 0), "confirmed"); // nothing to pay
+test("activeBookingStatus: confirmed only once paid; cash-at-desk is reserved, online is pending", () => {
+  assert.equal(activeBookingStatus("gcash", "unpaid", 250), "pending");
+  assert.equal(activeBookingStatus("qrph", "for_verification", 250), "pending");
+  assert.equal(activeBookingStatus("bpi", "refunded", 250), "pending");
+  assert.equal(activeBookingStatus("cash", "unpaid", 250), "reserved"); // coach paying at the desk
+  assert.equal(activeBookingStatus("cash", "paid", 250), "confirmed");
+  assert.equal(activeBookingStatus("gcash", "paid", 250), "confirmed");
+  assert.equal(activeBookingStatus("gcash", "waived", 250), "confirmed");
+  assert.equal(activeBookingStatus("cash", "unpaid", 0), "confirmed"); // nothing to pay
+  assert.equal(bookingStatusLabel("reserved"), "Reserved");
 });
 
 test("formatPeso: whole amounts have no decimals, fractional show two", () => {

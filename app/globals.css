@@ -127,8 +127,8 @@ h2 { font-size: 20px; margin: 0 0 12px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--border); display: inline-block; }
 .swatch.open { background: var(--brand-soft); border-color: var(--brand); }
-.swatch.reserved { background: #efe9fb; }
-@media (prefers-color-scheme: dark) { .swatch.reserved { background: #2a2440; } }
+.swatch.blocked { background: #efe9fb; }
+@media (prefers-color-scheme: dark) { .swatch.blocked { background: #2a2440; } }
 .swatch.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 3px, transparent 3px, transparent 6px); }
 
 /* Grid */
@@ -156,16 +156,17 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-widt
 .slot.booked .slot-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot.booked small { font-size: 11px; font-weight: 500; }
 /* Booking status colors (confirmed = blue, pending payment = amber); pending also says "Pending". */
-.slot.booked.confirmed, .swatch.confirmed { background: #e3ecfb; color: #1d3f7a; border-color: #b9cdf0; }
+.slot.booked.confirmed, .swatch.confirmed { background: var(--booked); color: var(--text); border-color: var(--border); }
+.slot.booked.reserved, .swatch.reserved { background: #e3ecfb; color: #1d3f7a; border-color: #b9cdf0; }
 .slot.booked.pending, .swatch.pending { background: #fff4d6; color: #6b4200; border-color: #f0d58a; }
 @media (prefers-color-scheme: dark) {
-  .slot.booked.confirmed, .swatch.confirmed { background: #1b2a44; color: #b9cdf5; border-color: #2c4470; }
+  .slot.booked.reserved, .swatch.reserved { background: #1b2a44; color: #b9cdf5; border-color: #2c4470; }
   .slot.booked.pending, .swatch.pending { background: #3a2e12; color: #ffd98a; border-color: #5c4a1d; }
 }
 .grid tr.half th.time { font-size: 11px; opacity: .75; }
 .grid tr:not(.half) > th, .grid tr:not(.half) > td { border-bottom-style: dashed; } /* :00 → :30 */
-.slot.reserved { background: #efe9fb; color: #4b3a78; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (prefers-color-scheme: dark) { .slot.reserved { background: #2a2440; color: #cfc2f5; } }
+.slot.blocked { background: #efe9fb; color: #4b3a78; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { .slot.blocked { background: #2a2440; color: #cfc2f5; } }
 .slot.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 4px, transparent 4px, transparent 8px); color: var(--booked-text); font-weight: 400; }
 
 /* Forms */
@@ -328,6 +329,7 @@ legend { font-weight: 700; padding: 0 6px; }
 .week-head .muted { font-size: 12px; }
 .week-item { font-size: 13px; border-left: 3px solid var(--brand); }
 .week-item.pending { border-left-color: #e0a800; }
+.week-item.reserved { border-left-color: #3b6fd4; }
 .week-item:hover, .week-head:hover { border-color: var(--brand); }
 .week-time { font-weight: 700; }
 .week-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
@@ -342,6 +344,8 @@ legend { font-weight: 700; padding: 0 6px; }
   font: inherit; color: var(--text); background: var(--brand-soft); border: 0; border-left: 3px solid var(--brand); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 .day-booking.pending { background: #fff4d6; color: #5c3900; border-left-color: #e0a800; }
 @media (prefers-color-scheme: dark) { .day-booking.pending { background: #3a2e12; color: #ffd98a; } }
+.day-booking.reserved { background: #e3ecfb; color: #1d3f7a; border-left-color: #3b6fd4; }
+@media (prefers-color-scheme: dark) { .day-booking.reserved { background: #1b2a44; color: #b9cdf5; } }
 .day-booking span { font-size: 12px; opacity: .85; }
 
 @media (max-width: 700px) {
@@ -353,8 +357,8 @@ legend { font-weight: 700; padding: 0 6px; }
 .btn.secondary.danger-text:hover { background: var(--danger-soft); }
 
 /* Admin: reserved times */
-.badge.reserved { background: #efe9fb; color: #4b3a78; }
-@media (prefers-color-scheme: dark) { .badge.reserved { background: #2a2440; color: #cfc2f5; } }
+.badge.blocked { background: #efe9fb; color: #4b3a78; }
+@media (prefers-color-scheme: dark) { .badge.blocked { background: #2a2440; color: #cfc2f5; } }
 label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: center; margin: 0; }
 .day-schedule td.day-reserved { background: #efe9fb; color: #4b3a78; font-size: 12px; padding: 0 8px; }
 @media (prefers-color-scheme: dark) { .day-schedule td.day-reserved { background: #2a2440; color: #cfc2f5; } }
@@ -477,3 +481,36 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 @keyframes fs-spin { to { transform: rotate(360deg); } }
 @keyframes fs-fade { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .fs-spinner { animation-duration: 2.4s; } }
+
+/* Coach "Reserved" (cash at the desk): blue */
+.badge.coach-reserved { background: #e3ecfb; color: #1d3f7a; }
+.notice.info { background: #e3ecfb; color: #1d3f7a; }
+.lookup-result.booking-reserved { border-color: #3b6fd4; }
+.lookup-result.booking-reserved .lookup-icon { background: #3b6fd4; }
+@media (prefers-color-scheme: dark) {
+  .badge.coach-reserved, .notice.info { background: #1b2a44; color: #b9cdf5; }
+}
+
+/* Court notes */
+.court-notes { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: 10px;
+  padding: 8px 12px; margin-bottom: 12px; font-size: 14px; display: grid; gap: 4px; }
+.court-note { background: var(--bg); border: 1px solid var(--border); border-left: 4px solid var(--brand); border-radius: 10px;
+  padding: 8px 12px; margin-top: 12px; font-size: 14px; }
+.court-note-icon { color: var(--brand); cursor: help; }
+
+/* Payment countdown */
+.pay-timer { display: flex; align-items: center; gap: 6px; justify-content: center; font-size: 15px; background: #fff4d6; color: #6b4200;
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+.pay-timer strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.pay-timer.urgent { background: var(--danger-soft); color: var(--danger); }
+.pay-timer.expired { background: var(--danger-soft); color: var(--danger); font-weight: 700; }
+@media (prefers-color-scheme: dark) { .pay-timer { background: #3a2e12; color: #ffd98a; } }
+
+/* Staff mode on the booking page */
+.staff-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px;
+  background: var(--brand-soft); color: var(--brand-dark); border: 1px solid var(--brand); border-radius: 10px; padding: 8px 12px; margin-bottom: 16px; }
+.staff-bar-actions { display: flex; gap: 6px; }
+.slot.staff-click { cursor: pointer; font: inherit; }
+.slot.staff-click:hover, .slot.staff-click:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.modal.staff-modal { max-width: 760px; }
+.modal.staff-modal .lookup-result { margin-top: 0; }

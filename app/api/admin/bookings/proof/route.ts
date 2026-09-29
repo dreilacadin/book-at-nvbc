@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 // Admin only: the payment screenshot a player uploaded, served as an image (?id=<booking id>).
 export async function GET(req: NextRequest) {
-  if (!isAdmin(req)) return unauthorized();
+  if (!(await isAdmin(req))) return unauthorized();
   const id = req.nextUrl.searchParams.get("id") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: "Invalid booking id." }, { status: 400 });
   try {

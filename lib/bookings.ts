@@ -6,6 +6,7 @@ import {
   hasPaymentProof,
   isPaymentMethod,
   isProofImage,
+  type ActiveStatus,
   type BookingStatus,
   isWeekend,
   rateFor,
@@ -22,7 +23,7 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { minutesUntilStart, RELEASE_MINUTES } from "./booking-policy";
+import { minutesUntilStart, paymentDeadline, RELEASE_MINUTES } from "./booking-policy";
 import { formatDateLong, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
@@ -50,24 +51,22 @@ export function normalizeCode(code: unknown): string | null {
 }
 
 /**
- * Public, anonymous availability for one date and sport. Never includes who booked.
- * If no sport is given, the first sport that has courts is used.
- */
-/**
- * Releases unpaid bookings that are within RELEASE_MINUTES of their start (see shouldRelease): they
- * are cancelled by "system" and their slots open up. Runs whenever bookings are looked at or made
- * (at most every 15 seconds per server), so no scheduled job is needed.
+ * Releases unpaid bookings (see shouldRelease): pending or reserved bookings within
+ * RELEASE_MINUTES of their start, and online bookings whose 15-minute payment window (pay_by) ran
+ * out. They are cancelled by "system" and their slots open up. Runs whenever bookings are looked
+ * at or made (at most every 10 seconds per server), so no scheduled job is needed.
  */
 let lastRelease = 0;
 export async function releaseUnpaidBookings(): Promise<number> {
-  if (Date.now() - lastRelease < 15_000) return 0;
+  if (Date.now() - lastRelease < 10_000) return 0;
   lastRelease = Date.now();
   const now = nowAtFacility();
   const { rows } = await db().query<{ released: number }>(
     `WITH rel AS (
        UPDATE bookings SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
-        WHERE status = 'pending' AND payment_status = 'unpaid' AND amount > 0
-          AND (booking_date - $1::date) * 1440 + (start_hour - $2::numeric) * 60 <= $3
+        WHERE status IN ('pending', 'reserved') AND payment_status = 'unpaid' AND amount > 0
+          AND ((booking_date - $1::date) * 1440 + (start_hour - $2::numeric) * 60 <= $3
+               OR pay_by <= now())
         RETURNING id
      ), freed AS (
        DELETE FROM booking_slots WHERE booking_id IN (SELECT id FROM rel)
@@ -78,13 +77,17 @@ export async function releaseUnpaidBookings(): Promise<number> {
   return rows[0]?.released ?? 0;
 }
 
+/**
+ * Public, anonymous availability for one date and sport: bookers show as first name + last
+ * initial only. If no sport is given, the booking page's default sport (or the first with courts).
+ */
 export async function getAvailability(date: string, requestedSport?: Sport) {
   await releaseUnpaidBookings();
   const settings = await getSettings();
   const today = nowAtFacility();
   const [allCourts, taken, blocks] = await Promise.all([
-    db().query<{ id: number; name: string; sport: Sport }>(
-      `SELECT id, name, sport FROM courts WHERE is_active ORDER BY sort_order, id`
+    db().query<{ id: number; name: string; sport: Sport; notes: string }>(
+      `SELECT id, name, sport, notes FROM courts WHERE is_active ORDER BY sort_order, id`
     ),
     db().query<{ court_id: number; start_hour: number; end_hour: number; player_name: string; status: BookingStatus }>(
       `SELECT court_id, start_hour, end_hour, player_name, status FROM bookings
@@ -105,7 +108,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     requestedSport ?? sports.find((s) => s.courtCount > 0)?.id ?? BOOKING_DEFAULT_SPORT;
   const courts = allCourts.rows
     .filter((c) => c.sport === sport)
-    .map(({ id, name }) => ({ id, name }));
+    .map(({ id, name, notes }) => ({ id, name, notes }));
   const courtIds = new Set(courts.map((c) => c.id));
   return {
     sport,
@@ -127,7 +130,9 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
       memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
       coachCodeRequired: settings.coach_code.trim() !== "",
     },
+    // GCash / QR Ph / bank transfer for everyone; cash only with the coach rate and coach code.
     paymentMethods: enabledMethods(settings),
+    cashForCoaches: cashAllowedForCoaches(settings),
     courts,
     // Booked times, shown with the booker's first name and last initial only ("Ana C.").
     bookings: taken.rows
@@ -137,7 +142,7 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
         start: r.start_hour,
         end: r.end_hour,
         name: publicName(r.player_name),
-        status: r.status as "pending" | "confirmed",
+        status: r.status as "pending" | "reserved" | "confirmed",
       })),
     // Reserved times (Open Play, Queueing, …) with their label, so players see why.
     blocked: [...blockedSlots(blocks, date)]
@@ -164,6 +169,14 @@ export function enabledMethods(s: Settings): PaymentMethod[] {
   };
   const list = PAYMENT_METHODS.map((m) => m.id).filter((id) => on.includes(id) && ready[id]);
   return list.length ? list : ["cash"];
+}
+
+/**
+ * Cash (paid at the desk) is only for coaches: it needs the coach rate AND the coach code, so a
+ * coach code must be set in /admin and cash switched on. Everyone else pays online.
+ */
+export function cashAllowedForCoaches(s: Settings): boolean {
+  return enabledMethods(s).includes("cash") && s.coach_code.trim() !== "";
 }
 
 /** Payment instructions players see after booking. */
@@ -249,7 +262,8 @@ export async function createBooking(
     paymentStatus: PaymentStatus;
     paymentRef: string;
     hasProof: boolean;
-    status: "pending" | "confirmed";
+    status: ActiveStatus;
+    payBy: string | null; // online bookings: pay (send reference/screenshot) by this time, or the slot is released
   }>
 > {
   const admin = !!opts.admin;
@@ -291,6 +305,9 @@ export async function createBooking(
     // The coach rate can be protected with a shared code set by staff in /admin.
     if (rateType === "coach" && settings.coach_code.trim() && !sameCode(str(input.rateCode), settings.coach_code))
       return fail(400, "That coach code isn't right. Choose Regular, or ask the front desk for the coach code.");
+    // Cash at the desk is only for coaches (coach rate + coach code); everyone else pays online.
+    if (paymentMethod === "cash" && !(rateType === "coach" && cashAllowedForCoaches(settings)))
+      return fail(400, "Cash payment is reserved for coaches. Please pay by GCash, QR Ph or bank transfer.");
   }
 
   // Is this rate offered for the court's sport? Checked first, so a switched-off Member rate
@@ -332,13 +349,9 @@ export async function createBooking(
     if (startHour < settings.open_hour || endHour > settings.close_hour)
       return fail(400, "That time is outside opening hours.");
     if (isPastSlot(date, startHour)) return fail(400, "That time slot has already started.");
-    // A cash booking this close to the start would be released right away (not paid in time).
-    if (paymentMethod === "cash" && minutesUntilStart(date, startHour, nowAtFacility()) <= RELEASE_MINUTES)
-      return fail(
-        400,
-        `This slot starts in less than ${RELEASE_MINUTES} minutes, so it can't be held for payment at the desk. ` +
-          "Please pay online (GCash, QR Ph or bank transfer), or book at the front desk."
-      );
+    // Unpaid bookings are released RELEASE_MINUTES before the start, so there'd be no time to pay.
+    if (minutesUntilStart(date, startHour, nowAtFacility()) <= RELEASE_MINUTES)
+      return fail(400, `This slot starts in less than ${RELEASE_MINUTES} minutes — please book it at the front desk.`);
   }
 
   const client = await db().connect();
@@ -378,19 +391,19 @@ export async function createBooking(
     }
     const rates = ratesForDate(plan, date);
     const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
-    // Players paying online must pay first and show it: a reference number, a screenshot, or both.
+    // Payment proof (reference number and/or screenshot) may come with the booking, or within the
+    // payment window afterwards.
     const proven = paymentMethod !== "cash" && hasPaymentProof(paymentRef, paymentProof);
-    if (!admin && !noCharge && paymentMethod !== "cash" && price.total > 0 && !proven) {
-      await client.query("ROLLBACK");
-      return fail(
-        400,
-        `Please pay by ${paymentLabel(paymentMethod)} first, then enter the reference number or upload a screenshot of the receipt.`
-      );
-    }
     let paymentStatus: PaymentStatus = proven ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
-    const status = activeBookingStatus(paymentStatus, price.total);
+    const status = activeBookingStatus(paymentMethod, paymentStatus, price.total);
+    // Online bookings get PAY_WINDOW_MINUTES (at most until 10 minutes before the start) to pay,
+    // like an airline booking; after that the slot is released.
+    const payBy =
+      !admin && paymentMethod !== "cash" && paymentStatus === "unpaid" && price.total > 0
+        ? new Date(paymentDeadline(Date.now(), date, startHour, nowAtFacility())).toISOString()
+        : null;
 
     // Fair-use limit per person per day (matched on their contact number/email).
     const used = await client.query<{ total: number }>(
@@ -420,14 +433,15 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status, payment_proof, membership_id)
+                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18) RETURNING id`,
+                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
             rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
             paymentMethod === "cash" ? "" : paymentProof,
             rateType === "member" ? membershipId : null,
+            payBy,
           ]
         );
         bookingId = ins.rows[0].id;
@@ -454,7 +468,7 @@ export async function createBooking(
       data: {
         code, courtName: court.rows[0].name, sport, date, startHour, endHour,
         rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: price.total,
-        paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status,
+        paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status, payBy,
       },
     };
   } catch (e: unknown) {
@@ -487,6 +501,8 @@ export type BookingView = {
   hasProof: boolean; // a payment screenshot was uploaded
   canCancel: boolean;
   cancelledBy: string | null; // "system" = released automatically (not paid in time)
+  payBy: string | null; // online booking: pay by this time (ISO) or it's released
+  courtNotes: string;
 };
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
@@ -497,7 +513,8 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
   const { rows } = await db().query(
     `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
             b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
-            b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by
+            b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
+            b.pay_by, c.notes AS court_notes
        FROM bookings b JOIN courts c ON c.id = b.court_id
       WHERE b.cancel_code = $1`,
     [code]
@@ -525,11 +542,13 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       hasProof: r.has_proof,
       canCancel: r.status !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
       cancelledBy: r.cancelled_by,
+      payBy: r.pay_by && r.payment_status === "unpaid" && r.status === "pending" ? new Date(r.pay_by).toISOString() : null,
+      courtNotes: r.court_notes,
     },
   };
 }
 
-async function cancelWhere(whereSql: string, param: string, by: "player" | "admin", allowStarted: boolean) {
+async function cancelWhere(whereSql: string, param: string, by: string, allowStarted: boolean) {
   const client = await db().connect();
   try {
     await client.query("BEGIN");
@@ -571,9 +590,10 @@ export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: strin
   return cancelWhere("cancel_code = $1", code, "player", false);
 }
 
-export async function cancelById(id: string): Promise<Result<{ id: string }>> {
+/** Staff cancel. `by` is recorded on the booking (the staff member's name). */
+export async function cancelById(id: string, by = "admin"): Promise<Result<{ id: string }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
-  return cancelWhere("id = $1", id, "admin", true);
+  return cancelWhere("id = $1", id, by.slice(0, 60) || "admin", true);
 }
 
 /**
@@ -600,7 +620,9 @@ export async function submitPayment(
   const settings = await getSettings();
   if (!enabledMethods(settings).includes(method))
     return fail(400, "That payment method isn't available right now.");
+  await releaseUnpaidBookings();
 
+  // Accepted while the booking is active and, for a first payment, within its payment window.
   const { rows } = await db().query<{ payment_ref: string; has_proof: boolean }>(
     `UPDATE bookings SET payment_method = $2,
             payment_ref   = CASE WHEN $3 = '' THEN payment_ref ELSE $3 END,
@@ -608,19 +630,21 @@ export async function submitPayment(
             payment_status = 'for_verification',
             status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
       WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification')
+        AND (pay_by IS NULL OR pay_by > now() OR payment_status = 'for_verification')
       RETURNING payment_ref, (payment_proof <> '') AS has_proof`,
     [code, method, paymentRef, paymentProof]
   );
   if (!rows[0]) {
     const b = await findByCode(code);
     if (!b.ok) return b;
-    if (b.data.status === "cancelled")
+    const windowOver = b.data.payBy !== null && Date.parse(b.data.payBy) <= Date.now();
+    if (windowOver || (b.data.status === "cancelled" && b.data.cancelledBy === "system"))
       return fail(
         400,
-        b.data.cancelledBy === "system"
-          ? `This booking was released because it wasn't paid ${RELEASE_MINUTES} minutes before the start time.`
-          : "This booking was cancelled."
+        "The time to pay for this booking has ended, so the slot was released for other players. " +
+          "You're welcome to book again. If you already sent a payment, please contact the front desk."
       );
+    if (b.data.status === "cancelled") return fail(400, "This booking was cancelled.");
     return fail(400, `This booking is already marked "${b.data.paymentStatus === "paid" ? "paid" : b.data.paymentStatus}".`);
   }
   return {
@@ -645,10 +669,12 @@ export async function setPaymentStatus(
         payment_method = COALESCE($3, payment_method),
         payment_ref    = COALESCE($4, payment_ref),
         paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END,
-        -- Pending ⇄ confirmed follows the payment (see activeBookingStatus); cancelled stays cancelled.
+        pay_by = NULL, -- staff handle the payment from here: no online payment window
+        -- Status follows the payment (see activeBookingStatus); cancelled stays cancelled.
         status = CASE
           WHEN status = 'cancelled' THEN status
-          WHEN amount > 0 AND $2 NOT IN ('paid', 'waived') THEN 'pending'
+          WHEN amount > 0 AND $2 NOT IN ('paid', 'waived')
+            THEN CASE WHEN COALESCE($3, payment_method) = 'cash' THEN 'reserved' ELSE 'pending' END
           ELSE 'confirmed' END
       WHERE id = $1 RETURNING id, status`,
     [id, status, method ?? null, ref === undefined ? null : cleanRef(ref)]
@@ -724,7 +750,7 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
       return fail(400, "That court doesn't exist.");
     }
 
-    const status = activeBookingStatus(b.payment_status, price.total);
+    const status = activeBookingStatus(paymentMethod, b.payment_status, price.total);
     await client.query(
       `UPDATE bookings SET court_id = $2, booking_date = $3, start_hour = $4, end_hour = $5,
               player_name = $6, contact = $7, notes = $8, rate_type = $9, hourly_rate = $10,

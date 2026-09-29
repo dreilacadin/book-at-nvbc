@@ -144,7 +144,8 @@ ALTER TABLE settings ALTER COLUMN coach_rates  SET NOT NULL;
 -- A booking paid by GCash / QR Ph / BPI stays "pending" (the slot is held) until staff
 -- mark the payment Paid; then it becomes "confirmed". Cash bookings are confirmed at once.
 ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
-ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK (status IN ('pending', 'confirmed', 'cancelled'));
+-- ('reserved' is from v15 — listed here too so re-running this file never rejects existing rows.)
+ALTER TABLE bookings ADD CONSTRAINT bookings_status_check CHECK (status IN ('pending', 'reserved', 'confirmed', 'cancelled'));
 UPDATE bookings SET status = 'pending'
  WHERE status = 'confirmed' AND payment_method <> 'cash' AND amount > 0
    AND payment_status IN ('unpaid', 'for_verification');
@@ -286,3 +287,31 @@ ALTER TABLE memberships ADD COLUMN IF NOT EXISTS forfeited_on DATE;
 -- v14: reminder emails ---------------------------------------------------------------------
 -- When staff last emailed an expired member a "please renew" reminder.
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS emailed_on DATE;
+
+-- v15: staff accounts, court notes, "reserved" coach bookings, 15-minute payment window ---------
+-- Staff log in to /admin with their own username and password (ADMIN_PASSWORD still works as
+-- the "owner" login). token_version changes when a password changes or an account is disabled,
+-- which logs out that account's old sessions.
+CREATE TABLE IF NOT EXISTS admin_users (
+  id             SERIAL PRIMARY KEY,
+  username       TEXT NOT NULL UNIQUE,
+  display_name   TEXT NOT NULL,
+  password_hash  TEXT NOT NULL,           -- scrypt, salted
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  token_version  INT NOT NULL DEFAULT 0,
+  created_by     TEXT NOT NULL DEFAULT '',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login_at  TIMESTAMPTZ
+);
+
+-- A note players see for a court (e.g. "If it rains, this outdoor court may be moved indoors").
+ALTER TABLE courts ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+
+-- 'reserved' = a coach paying in cash at the desk (still released if unpaid 10 minutes before).
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
+  CHECK (status IN ('pending', 'reserved', 'confirmed', 'cancelled'));
+
+-- Online bookings must be paid (reference or screenshot sent) by pay_by — 15 minutes after
+-- booking — or the slot is released. NULL for staff bookings and coach cash bookings.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_by TIMESTAMPTZ;
