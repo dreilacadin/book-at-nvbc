@@ -2,16 +2,18 @@
 
 import { useCallback, useRef, useState } from "react";
 import { payByLabel } from "@/components/BookingPolicy";
-import { REFUND_HOURS, refundOnCancel } from "@/lib/booking-policy";
+import { bookingPhase, phaseLabel, REFUND_HOURS, refundOnCancel, startedUnverified, type Phase } from "@/lib/booking-policy";
 import { formatClock, formatDateLong, formatRange } from "@/lib/format";
 import {
   bookingStatusLabel,
   formatPeso,
   PAYMENT_METHODS,
+  PAYMENT_STATUSES,
   paymentLabel,
   paymentStatusLabel,
   rateTypeLabel,
   type PaymentMethod,
+  type PaymentStatus,
 } from "@/lib/pricing";
 import { sportEmoji } from "@/lib/sports";
 import { nowAtFacility } from "@/lib/time";
@@ -36,9 +38,22 @@ export function clockFromIso(iso: string): string {
   return formatClock(h + m / 60);
 }
 
+/**
+ * What to show for a booking right now: its progress (in progress / completed) if it has one,
+ * otherwise its status — with "released" for bookings released automatically.
+ */
+export type DisplayStatus = "pending" | "reserved" | "confirmed" | "in_progress" | "completed" | "cancelled" | "released";
+export function displayStatus(b: AdminBooking): DisplayStatus {
+  if (b.status === "cancelled") return b.cancelled_by === "system" ? "released" : "cancelled";
+  return bookingPhase(b, nowAtFacility()) ?? b.status;
+}
+export const displayLabel = (d: DisplayStatus) =>
+  d === "in_progress" || d === "completed" ? phaseLabel(d) : d === "released" ? "Released" : bookingStatusLabel(d);
+
 /** When an unpaid active booking is released, in words. */
 export function releaseNote(b: AdminBooking): string | null {
   if ((b.status !== "pending" && b.status !== "reserved") || b.payment_status !== "unpaid" || b.amount <= 0) return null;
+  if (b.phase || !b.auto_release) return null; // marked in progress/completed, or restored: kept
   if (b.pay_by) return `Released at ${clockFromIso(b.pay_by)} if not paid online`;
   return `Released at ${payByLabel(b.date, b.start_hour)} if unpaid`;
 }
@@ -63,6 +78,8 @@ export function AdminBookingCard({
   const [error, setError] = useState("");
   const [courts, setCourts] = useState<Court[] | null>(null); // loaded when editing
   const [editing, setEditing] = useState(false);
+  const shown = displayStatus(b);
+  const phase = bookingPhase(b, nowAtFacility());
 
   async function run(body: Record<string, unknown>) {
     setBusy(true);
@@ -88,9 +105,26 @@ export function AdminBookingCard({
     }
   }
 
-  const released = b.status === "cancelled" && b.cancelled_by === "system";
+  const released = shown === "released";
   const release = releaseNote(b);
-  const cancel = () => window.confirm(`Cancel ${b.name}'s booking (${b.code})?${refundNote(b)}`) && run({ action: "cancel", id: b.id });
+  const played = phase ? `\n\nThis booking is marked ${phaseLabel(phase).toLowerCase()} — it has already been played.` : "";
+  const cancel = () => window.confirm(`Cancel ${b.name}'s booking (${b.code})?${refundNote(b)}${played}`) && run({ action: "cancel", id: b.id });
+  const setPhase = (p: Phase | null) => run({ action: "phase", id: b.id, phase: p });
+  const restore = (p: Phase | null) =>
+    window.confirm(
+      `Restore ${b.name}'s booking (${b.code}) as ${p ? phaseLabel(p) : "upcoming"}? It takes its time slot back and won't be released for non-payment again.`
+    ) && run({ action: "restore", id: b.id, phase: p });
+  const remove = () =>
+    window.confirm(`Permanently delete ${b.name}'s cancelled booking (${b.code})? This can't be undone.`) && run({ action: "delete", id: b.id });
+  const remind = async () => {
+    try {
+      await api("/api/admin/members", { action: "remind", id: b.expired_member_id });
+      onChanged();
+    } catch (e) {
+      onAuthError(e);
+      setError(e instanceof Error ? e.message : "Update failed");
+    }
+  };
 
   if (editing && courts)
     return (
@@ -101,16 +135,18 @@ export function AdminBookingCard({
     );
 
   return (
-    <div className={`lookup-result booking-${released ? "released" : b.status}`}>
+    <div className={`lookup-result booking-${shown}`}>
       <div className="lookup-status">
         <span className="lookup-icon" aria-hidden="true">
-          {b.status === "confirmed" ? "✓" : b.status === "pending" ? "…" : b.status === "reserved" ? "R" : "×"}
+          {shown === "confirmed" || shown === "completed" ? "✓" : shown === "in_progress" ? "▶" : shown === "pending" ? "…" : shown === "reserved" ? "R" : "×"}
         </span>
         <div>
           <strong>
-            {b.status === "confirmed" ? "Confirmed"
-              : b.status === "pending" ? (b.payment_status === "for_verification" ? "Pending — payment sent, please verify" : "Pending — waiting for payment")
-              : b.status === "reserved" ? "Reserved — coach paying cash at the desk"
+            {shown === "in_progress" ? `In progress${b.phase ? " (marked by staff)" : ""}`
+              : shown === "completed" ? `Completed${b.phase ? " (marked by staff)" : ""}`
+              : shown === "confirmed" ? "Confirmed"
+              : shown === "pending" ? (b.payment_status === "for_verification" ? "Pending — payment sent, please verify" : "Pending — waiting for payment")
+              : shown === "reserved" ? "Reserved — coach paying cash at the desk"
               : released ? "Released (not paid in time)"
               : `Cancelled${b.cancelled_by ? ` by ${b.cancelled_by}` : ""}`}
           </strong>
@@ -145,17 +181,29 @@ export function AdminBookingCard({
         {b.notes && <div><dt>Notes</dt><dd>{b.notes}</dd></div>}
       </dl>
 
+      {startedUnverified(b, nowAtFacility()) && (
+        <div className="notice" style={{ marginTop: 10 }}>⚠ This booking has started, but its payment hasn&apos;t been verified yet.</div>
+      )}
+      {b.ref_reused > 0 && (
+        <div className="notice" style={{ marginTop: 10 }}>⚠ This reference number is also on {b.ref_reused} other booking(s) — worth a second look.</div>
+      )}
       {b.expired_member_id && (
         <div className="expired-flag" style={{ marginTop: 10 }}>
-          ⚠ {b.expired_member_name}&apos;s membership expired — remind them to renew or forfeit.
+          ⚠ {b.expired_member_name}&apos;s membership expired — remind them to renew or forfeit.{" "}
+          {b.expired_member_reminded ? <span className="muted">Reminded.</span> : (
+            <button type="button" className="link-btn" onClick={remind}>Mark reminded</button>
+          )}
         </div>
+      )}
+      {b.restored_by && b.status !== "cancelled" && (
+        <p className="hint" style={{ margin: "8px 0 0" }}>Restored by {b.restored_by} after an automatic release — it won&apos;t be released again.</p>
       )}
       {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
 
       {b.status !== "cancelled" && (
-        <div className="confirm-pay">
+        <>
           {b.status !== "confirmed" && (
-            <>
+            <div className="confirm-pay">
               <label htmlFor={`bl-method-${b.id}`} style={{ margin: 0 }}>Paid by</label>
               <select id={`bl-method-${b.id}`} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} style={{ width: "auto" }}>
                 {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -163,13 +211,47 @@ export function AdminBookingCard({
               <button className="btn" disabled={busy} onClick={() => run({ action: "payment", id: b.id, status: "paid", method })}>
                 ✓ Payment received — confirm ({formatPeso(b.amount)})
               </button>
-            </>
+            </div>
           )}
-          <button className="btn secondary" disabled={busy} onClick={startEdit}>✎ Edit</button>
-          <button className="btn secondary danger-text" disabled={busy} onClick={cancel}>Cancel booking</button>
+          <div className="card-actions">
+            <div className="segmented phase-switch" role="radiogroup" aria-label="Progress">
+              <button type="button" role="radio" aria-checked={!b.phase} disabled={busy} onClick={() => setPhase(null)}
+                title="Paid bookings are In progress during their time and Completed after">
+                Automatic{!b.phase && phase ? ` · ${phaseLabel(phase)}` : ""}
+              </button>
+              <button type="button" role="radio" aria-checked={b.phase === "in_progress"} disabled={busy} onClick={() => setPhase("in_progress")}>
+                ▶ In progress
+              </button>
+              <button type="button" role="radio" aria-checked={b.phase === "completed"} disabled={busy} onClick={() => setPhase("completed")}>
+                ✓ Completed
+              </button>
+            </div>
+            <label className="pay-status-pick">
+              Payment
+              <select aria-label="Payment status" className={`pay-status ${b.payment_status}`} value={b.payment_status} disabled={busy}
+                onChange={(e) => run({ action: "payment", id: b.id, status: e.target.value as PaymentStatus })}>
+                {PAYMENT_STATUSES.map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}
+              </select>
+            </label>
+            <button className="btn small secondary" disabled={busy} onClick={startEdit}>✎ Edit</button>
+            <button className="btn small secondary danger-text" disabled={busy} onClick={cancel}>Cancel booking</button>
+          </div>
+        </>
+      )}
+
+      {released && (
+        <div className="card-actions">
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Undo release:</span>
+          <button className="btn small" disabled={busy} onClick={() => restore(null)}>↺ Restore</button>
+          <button className="btn small secondary" disabled={busy} onClick={() => restore("in_progress")}>↺ Restore as In progress</button>
+          <button className="btn small secondary" disabled={busy} onClick={() => restore("completed")}>↺ Restore as Completed</button>
         </div>
       )}
-      <p className="hint" style={{ margin: "8px 0 0" }}>Status: {bookingStatusLabel(b.status)}</p>
+      {b.status === "cancelled" && (
+        <div className="card-actions">
+          <button className="btn small secondary danger-text" disabled={busy} onClick={remove}>Delete permanently</button>
+        </div>
+      )}
     </div>
   );
 }

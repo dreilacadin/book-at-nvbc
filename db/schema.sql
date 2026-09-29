@@ -315,3 +315,14 @@ ALTER TABLE bookings ADD CONSTRAINT bookings_status_check
 -- Online bookings must be paid (reference or screenshot sent) by pay_by — 15 minutes after
 -- booking — or the slot is released. NULL for staff bookings and coach cash bookings.
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_by TIMESTAMPTZ;
+
+-- v16: in progress / completed, and restoring released bookings ---------------------------
+-- phase: set by staff by hand (NULL = automatic: a paid booking is "in progress" during its
+-- time and "completed" after). auto_release = FALSE keeps a booking from being released for
+-- non-payment (set when staff restore a released booking). Bookings with a phase are never released.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS phase TEXT;
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_phase_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_phase_check CHECK (phase IS NULL OR phase IN ('in_progress', 'completed'));
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS auto_release BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS restored_by TEXT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ;

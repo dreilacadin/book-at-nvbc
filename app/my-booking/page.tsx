@@ -40,6 +40,7 @@ type Booking = {
   cancelledBy: string | null; // "system" = released (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
   courtNotes: string;
+  phase: "in_progress" | "completed" | null;
 };
 
 export default function MyBookingPage() {
@@ -153,7 +154,10 @@ export default function MyBookingPage() {
               <span className="muted" style={{ display: "block", fontSize: 14, fontWeight: 400 }}>{sportLabel(booking.sport)}</span>
             </h2>
             <span className={`badge ${booking.status === "pending" ? "pending" : booking.status === "reserved" ? "coach-reserved" : booking.status === "cancelled" ? "grey" : ""}`}>
-              {booking.status === "cancelled" && booking.cancelledBy === "system" ? "Released" : bookingStatusLabel(booking.status)}
+              {booking.status === "cancelled" && booking.cancelledBy === "system" ? "Released"
+                : booking.phase === "in_progress" ? "In progress"
+                : booking.phase === "completed" ? "Completed"
+                : bookingStatusLabel(booking.status)}
             </span>
           </div>
           <p style={{ margin: "8px 0 0" }}>

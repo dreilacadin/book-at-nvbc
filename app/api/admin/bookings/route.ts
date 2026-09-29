@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
-import { cancelById, createBooking, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
 import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof, b.pay_by,
+              b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
               mb.member_code, mb.full_name AS member_name,
               ex.id AS expired_member_id, ex.full_name AS expired_member_name,
               ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,
@@ -76,6 +77,8 @@ export async function POST(req: NextRequest) {
     if (body.action === "cancel") return respond(await cancelById(String(body.id ?? ""), me.name));
     if (body.action === "payment")
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference));
+    if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null));
+    if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? "")));
     if (body.action === "update") return respond(await updateBooking(String(body.id ?? ""), body));
     if (body.action === "create") return respond(await createBooking(body, { admin: true }), 201);

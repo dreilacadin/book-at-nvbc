@@ -25,6 +25,10 @@ export type AdminBooking = {
   payment_status: PaymentStatus;
   payment_ref: string;
   pay_by: string | null; // online booking: pay by this time or it is released
+  phase: "in_progress" | "completed" | null; // set by staff by hand (null = automatic)
+  auto_release: boolean; // false once restored by staff: never released for non-payment
+  restored_by: string | null;
+  court_order: number;
   has_proof: boolean;
   member_code: string | null; // member-rate bookings: whose member code was used
   member_name: string | null;

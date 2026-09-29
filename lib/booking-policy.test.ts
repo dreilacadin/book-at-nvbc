@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease } from "./booking-policy.ts";
+import { bookingPhase, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified } from "./booking-policy.ts";
 import { formatClock } from "./format.ts";
 
 test("minutesUntilStart across days and half hours", () => {
@@ -63,4 +63,51 @@ test("formatClock", () => {
   assert.equal(formatClock(9 + 50 / 60), "9:50 AM");
   assert.equal(formatClock(12.25), "12:15 PM");
   assert.equal(formatClock(23 + 50 / 60), "11:50 PM");
+});
+
+test("bookingPhase: paid bookings go in progress at the start and completed at the end", () => {
+  const b = { status: "confirmed", phase: null, payment_status: "paid", amount: 400, date: "2026-10-01", start_hour: 10, end_hour: 11.5 };
+  assert.equal(bookingPhase(b, { date: "2026-10-01", time: 9.9 }), null); // upcoming
+  assert.equal(bookingPhase(b, { date: "2026-10-01", time: 10 }), "in_progress");
+  assert.equal(bookingPhase(b, { date: "2026-10-01", time: 11.49 }), "in_progress");
+  assert.equal(bookingPhase(b, { date: "2026-10-01", time: 11.5 }), "completed");
+  assert.equal(bookingPhase(b, { date: "2026-10-02", time: 8 }), "completed"); // next day
+  assert.equal(bookingPhase(b, { date: "2026-09-30", time: 23 }), null); // day before
+  // Ends at midnight
+  const late = { ...b, start_hour: 23, end_hour: 24 };
+  assert.equal(bookingPhase(late, { date: "2026-10-01", time: 23.99 }), "in_progress");
+  assert.equal(bookingPhase(late, { date: "2026-10-02", time: 0 }), "completed");
+});
+
+test("bookingPhase: unpaid bookings have no automatic phase; staff can set one; cancelled never", () => {
+  const b = { status: "pending", phase: null, payment_status: "unpaid", amount: 400, date: "2026-10-01", start_hour: 10, end_hour: 11 };
+  assert.equal(bookingPhase(b, { date: "2026-10-01", time: 10.5 }), null);
+  assert.equal(bookingPhase({ ...b, status: "reserved" }, { date: "2026-10-02", time: 9 }), null);
+  assert.equal(bookingPhase({ ...b, phase: "in_progress" }, { date: "2026-10-01", time: 10.5 }), "in_progress");
+  // A manual mark wins over the clock, both ways (e.g. finished early, or still playing)
+  assert.equal(bookingPhase({ ...b, status: "confirmed", phase: "completed" }, { date: "2026-10-01", time: 10.2 }), "completed");
+  assert.equal(bookingPhase({ ...b, status: "confirmed", phase: "in_progress" }, { date: "2026-10-01", time: 12 }), "in_progress");
+  assert.equal(bookingPhase({ ...b, status: "cancelled", phase: "completed" }, { date: "2026-10-01", time: 12 }), null);
+  // Older bookings could be "confirmed" but unpaid: no automatic phase for those.
+  assert.equal(bookingPhase({ ...b, status: "confirmed" }, { date: "2026-10-01", time: 12 }), null);
+  // Free (No charge / ₱0) bookings do follow the clock.
+  assert.equal(bookingPhase({ ...b, status: "confirmed", payment_status: "waived" }, { date: "2026-10-01", time: 12 }), "completed");
+  assert.equal(bookingPhase({ ...b, status: "confirmed", amount: 0 }, { date: "2026-10-01", time: 10.5 }), "in_progress");
+});
+
+test("shouldRelease: never for bookings marked in progress/completed or restored by staff", () => {
+  const b = { status: "pending", payment_status: "unpaid", amount: 400, date: "2026-10-01", start_hour: 10 };
+  const late = { date: "2026-10-01", time: 10.5 };
+  assert.equal(shouldRelease(b, late), true);
+  assert.equal(shouldRelease({ ...b, phase: "in_progress" }, late), false);
+  assert.equal(shouldRelease({ ...b, phase: "completed" }, late), false);
+  assert.equal(shouldRelease({ ...b, auto_release: false }, late), false);
+});
+
+test("startedUnverified flags started bookings whose online payment wasn't verified", () => {
+  const b = { status: "pending", payment_status: "for_verification", phase: null, date: "2026-10-01", start_hour: 10 };
+  assert.equal(startedUnverified(b, { date: "2026-10-01", time: 9.5 }), false);
+  assert.equal(startedUnverified(b, { date: "2026-10-01", time: 10 }), true);
+  assert.equal(startedUnverified({ ...b, phase: "in_progress" }, { date: "2026-10-01", time: 10.5 }), false);
+  assert.equal(startedUnverified({ ...b, payment_status: "unpaid" }, { date: "2026-10-01", time: 10.5 }), false);
 });

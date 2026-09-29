@@ -5,7 +5,8 @@ import { serverError } from "@/lib/http";
 import { bookingStatusLabel, paymentLabel, paymentStatusLabel, rateTypeLabel } from "@/lib/pricing";
 import { toCsv, toXlsx, type Cell } from "@/lib/spreadsheet";
 import { isSport, sportLabel } from "@/lib/sports";
-import { daysBetween, isValidDate } from "@/lib/time";
+import { bookingPhase, phaseLabel } from "@/lib/booking-policy";
+import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ type Row = {
   payment_ref: string;
   has_proof: boolean;
   member_code: string | null;
+  phase: string | null;
   status: string;
   created_at: Date;
   cancelled_by: string | null;
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
       `SELECT b.cancel_code AS code, b.booking_date AS date, b.start_hour, b.end_hour, c.name AS court_name, c.sport,
               b.player_name AS name, b.contact, b.notes, b.rate_type, b.hourly_rate, b.amount, b.payment_method,
               b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.status, b.created_at, b.cancelled_by,
-              mb.member_code
+              mb.member_code, b.phase
          FROM bookings b JOIN courts c ON c.id = b.court_id
          LEFT JOIN memberships mb ON mb.id = b.membership_id
         WHERE b.booking_date BETWEEN $1 AND $2 AND ($3::text IS NULL OR c.sport = $3)
@@ -66,14 +68,17 @@ export async function GET(req: NextRequest) {
 
     const header = [
       "Date", "Day", "Start", "End", "Hours", "Court", "Sport", "Name", "Contact", "Notes", "Rate", "Member code", "₱ per hour",
-      "Amount", "Payment method", "Payment status", "Reference no.", "Screenshot", "Booking status", "Booking code",
+      "Amount", "Payment method", "Payment status", "Reference no.", "Screenshot", "Booking status", "Progress", "Booking code",
       "Booked at", "Cancelled by",
     ];
+    const now = nowAtFacility();
     const bookingRows: Cell[][] = rows.map((b) => [
       b.date, dow(b.date), time(b.start_hour), time(b.end_hour), b.end_hour - b.start_hour, b.court_name,
       sportLabel(b.sport), b.name, b.contact === "(admin)" ? "" : b.contact, b.notes, rateTypeLabel(b.rate_type), b.member_code ?? "",
       b.hourly_rate, b.amount, paymentLabel(b.payment_method), paymentStatusLabel(b.payment_status), b.payment_ref,
-      b.has_proof ? "Yes" : "", bookingStatusLabel(b.status), b.code, manila(new Date(b.created_at)), b.cancelled_by ?? "",
+      b.has_proof ? "Yes" : "",
+      b.status === "cancelled" && b.cancelled_by === "system" ? "Released" : bookingStatusLabel(b.status),
+      (() => { const p = bookingPhase(b, now); return p ? phaseLabel(p) : ""; })(), b.code, manila(new Date(b.created_at)), b.cancelled_by ?? "",
     ]);
 
     const period = from === to ? from : `${from}_to_${to}`;
@@ -116,7 +121,7 @@ export async function GET(req: NextRequest) {
       {
         name: "Bookings",
         rows: [header, ...bookingRows],
-        widths: [11, 6, 7, 7, 7, 20, 11, 22, 16, 24, 9, 16, 11, 11, 14, 15, 18, 11, 14, 12, 17, 12],
+        widths: [11, 6, 7, 7, 7, 20, 11, 22, 16, 24, 9, 16, 11, 11, 14, 15, 18, 11, 14, 12, 12, 17, 12],
         moneyCols: [12, 13],
       },
     ]);

@@ -23,8 +23,8 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { minutesUntilStart, paymentDeadline, RELEASE_MINUTES } from "./booking-policy";
-import { formatDateLong, isHalfHour, publicName, SLOT_HOURS } from "./format";
+import { bookingPhase, minutesUntilStart, paymentDeadline, RELEASE_MINUTES, type Phase } from "./booking-policy";
+import { formatDateLong, formatRange, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { BOOKING_DEFAULT_SPORT, SPORTS, sportLabel, type Sport } from "./sports";
@@ -65,6 +65,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
     `WITH rel AS (
        UPDATE bookings SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
         WHERE status IN ('pending', 'reserved') AND payment_status = 'unpaid' AND amount > 0
+          AND phase IS NULL AND auto_release -- marked in progress/completed or restored by staff: keep
           AND ((booking_date - $1::date) * 1440 + (start_hour - $2::numeric) * 60 <= $3
                OR pay_by <= now())
         RETURNING id
@@ -503,6 +504,7 @@ export type BookingView = {
   cancelledBy: string | null; // "system" = released automatically (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
   courtNotes: string;
+  phase: Phase | null; // in progress / completed (by the clock for paid bookings, or set by staff)
 };
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
@@ -514,7 +516,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
     `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
             b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
             b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
-            b.pay_by, c.notes AS court_notes
+            b.pay_by, c.notes AS court_notes, b.phase
        FROM bookings b JOIN courts c ON c.id = b.court_id
       WHERE b.cancel_code = $1`,
     [code]
@@ -544,6 +546,10 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       cancelledBy: r.cancelled_by,
       payBy: r.pay_by && r.payment_status === "unpaid" && r.status === "pending" ? new Date(r.pay_by).toISOString() : null,
       courtNotes: r.court_notes,
+      phase: bookingPhase(
+        { status: r.status, phase: r.phase, payment_status: r.payment_status, amount: r.amount, date: r.booking_date, start_hour: r.start_hour, end_hour: r.end_hour },
+        nowAtFacility()
+      ),
     },
   };
 }
@@ -754,7 +760,9 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
     await client.query(
       `UPDATE bookings SET court_id = $2, booking_date = $3, start_hour = $4, end_hour = $5,
               player_name = $6, contact = $7, notes = $8, rate_type = $9, hourly_rate = $10,
-              discount_pct = 0, amount = $11, payment_method = $12, payment_ref = $13, status = $14
+              discount_pct = 0, amount = $11, payment_method = $12, payment_ref = $13, status = $14,
+              -- A booking moved to another date or time starts over: its manual in progress/completed mark is cleared.
+              phase = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 OR end_hour <> $5 THEN NULL ELSE phase END
         WHERE id = $1`,
       [id, courtId, date, startHour, endHour, name, contact || "(admin)", notes, rateType, price.hourlyRate,
         price.total, paymentMethod, paymentMethod === "cash" ? "" : paymentRef, status]
@@ -790,4 +798,90 @@ export async function deleteCancelledBooking(id: string): Promise<Result<{ id: s
   if (r.deleted) return { ok: true, data: { id } };
   if (!r.status) return fail(404, "Booking not found.");
   return fail(400, "Cancel the booking first. Only cancelled bookings can be deleted.");
+}
+
+
+/**
+ * Staff: mark a booking "in_progress" or "completed" by hand, or null to go back to automatic
+ * (paid bookings follow the clock). A marked booking is never released for non-payment.
+ */
+export async function setBookingPhase(id: string, phase: unknown): Promise<Result<{ id: string; phase: Phase | null }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  if (phase !== null && phase !== "in_progress" && phase !== "completed") return fail(400, "Unknown progress status.");
+  const { rows } = await db().query<{ status: BookingStatus }>(`SELECT status FROM bookings WHERE id = $1`, [id]);
+  if (!rows[0]) return fail(404, "Booking not found.");
+  if (rows[0].status === "cancelled") return fail(400, "Restore this booking first — it's cancelled.");
+  await db().query(`UPDATE bookings SET phase = $2 WHERE id = $1`, [id, phase]);
+  return { ok: true, data: { id, phase: phase as Phase | null } };
+}
+
+/**
+ * Staff: undo an automatic release. The booking takes its hours back (refused if someone else has
+ * booked them since), keeps its payment status, and won't be released for non-payment again.
+ * `phase` optionally marks it in progress or completed straight away.
+ */
+export async function restoreBooking(id: string, phase: unknown, by: string): Promise<Result<{ id: string; status: BookingStatus }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  if (phase !== null && phase !== undefined && phase !== "in_progress" && phase !== "completed")
+    return fail(400, "Unknown progress status.");
+  const client = await db().connect();
+  try {
+    await client.query("BEGIN");
+    const cur = await client.query<{
+      status: BookingStatus; cancelled_by: string | null; court_id: number; booking_date: string;
+      start_hour: number; end_hour: number; payment_method: PaymentMethod; payment_status: PaymentStatus; amount: number;
+    }>(
+      `SELECT status, cancelled_by, court_id, booking_date, start_hour, end_hour, payment_method, payment_status, amount
+         FROM bookings WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const b = cur.rows[0];
+    if (!b) {
+      await client.query("ROLLBACK");
+      return fail(404, "Booking not found.");
+    }
+    if (b.status !== "cancelled" || b.cancelled_by !== "system") {
+      await client.query("ROLLBACK");
+      return fail(400, "Only bookings released automatically (not paid in time) can be restored.");
+    }
+    // Take the hours back; the primary key on booking_slots refuses them if they're taken.
+    await client.query("SAVEPOINT slots");
+    try {
+      await client.query(
+        `INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
+         SELECT $1, $2, h, $3 FROM generate_series($4::numeric, $5::numeric - 0.5, 0.5) AS h`,
+        [b.court_id, b.booking_date, id, b.start_hour, b.end_hour]
+      );
+    } catch (e) {
+      if ((e as { code?: string }).code !== "23505") throw e;
+      await client.query("ROLLBACK TO SAVEPOINT slots");
+      const taken = await client.query<{ player_name: string; cancel_code: string; start_hour: number; end_hour: number }>(
+        `SELECT DISTINCT o.player_name, o.cancel_code, o.start_hour, o.end_hour FROM booking_slots s JOIN bookings o ON o.id = s.booking_id
+          WHERE s.court_id = $1 AND s.slot_date = $2 AND s.slot_hour >= $3 AND s.slot_hour < $4 LIMIT 1`,
+        [b.court_id, b.booking_date, b.start_hour, b.end_hour]
+      );
+      await client.query("ROLLBACK");
+      const t = taken.rows[0];
+      return fail(
+        409,
+        t
+          ? `Can't restore: ${t.player_name} (${t.cancel_code}) has booked ${formatRange(t.start_hour, t.end_hour)} on this court since. Move one of the bookings first.`
+          : "Can't restore: that time on this court has been booked since."
+      );
+    }
+    const status = activeBookingStatus(b.payment_method, b.payment_status, b.amount);
+    await client.query(
+      `UPDATE bookings SET status = $2, cancelled_by = NULL, cancelled_at = NULL, pay_by = NULL, auto_release = FALSE,
+              phase = $3, restored_by = $4, restored_at = now()
+        WHERE id = $1`,
+      [id, status, phase ?? null, by.slice(0, 60) || "admin"]
+    );
+    await client.query("COMMIT");
+    return { ok: true, data: { id, status } };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
