@@ -470,9 +470,10 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by)
+                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19) RETURNING id`,
+                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19,
+                   CASE WHEN $15 <> '' OR $17 <> '' THEN now() END) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
             rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
@@ -695,6 +696,7 @@ export async function submitPayment(
             payment_ref   = CASE WHEN $3 = '' THEN payment_ref ELSE $3 END,
             payment_proof = CASE WHEN $4 = '' THEN payment_proof ELSE $4 END,
             payment_status = 'for_verification',
+            payment_sent_at = now(),
             status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
       WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification')
         AND (pay_by IS NULL OR pay_by > now() OR payment_status = 'for_verification')

@@ -36,7 +36,19 @@ export type AdminBooking = {
   expired_member_name: string | null;
   expired_member_on: string | null;
   expired_member_reminded: string | null;
-  ref_reused: number;
+  payment_sent_at: string | null; // when the player sent their reference / screenshot
+  payment_reuse: PaymentReuse[]; // other bookings with the same reference number or screenshot
+  pay_to: string; // where this payment method's money should have gone (from Settings)
+};
+export type PaymentReuse = {
+  code: string;
+  name: string;
+  date: string;
+  start_hour: number;
+  amount: number;
+  status: BookingStatus;
+  same_ref: boolean;
+  same_proof: boolean;
 };
 export type Court = {
   id: number;

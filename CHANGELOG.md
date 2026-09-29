@@ -36,6 +36,8 @@ Earlier changes (before this file existed) are in the git history.
   icon and opens it like an app.
 - **Database:** New tables for staff notifications, each staff member's notification settings,
   and the devices that turned on push notifications.
+- **Database:** Bookings record when the payment proof was sent, plus a normalised reference number
+  and a fingerprint of the screenshot, for spotting reuse.
 - **Internal:** New settings `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` for push
   notifications (see .env.example); new dependency `web-push`.
 - **A "What's new" page.** See what's new and improved at NVBC Courts — it's the new
@@ -58,6 +60,15 @@ Earlier changes (before this file existed) are in the git history.
   being released again, and for who restored a booking and when.
 
 ### Changed
+- **Staff:** **Checking online payments is quicker and safer.** A booking waiting for payment
+  verification now shows the player's screenshot right on its card, next to a checklist of what it
+  should say: the amount, the GCash/BPI account it should have gone to, the date and time, and the
+  reference number. Staff tick each one; confirming with boxes unticked asks first.
+- **Staff:** **Reused payment proof is spotted automatically.** If the same reference number (even
+  typed with different spaces or dashes) or the exact same screenshot was sent for another booking,
+  the card lists those bookings with a ⚠ warning, and the Bookings list flags "Screenshot used
+  before" or "Reference used before". When it's the same person, it shows the total the one payment
+  should cover.
 - **Staff:** In the Overview, the **Payments to verify** and **Cancelled & released** tiles are now
   buttons (marked "View →"). Clicking one lists just those bookings for the day, week or month on
   screen, in time order; ‹ › and Today keep the filter, clicking a booking opens it in the Bookings

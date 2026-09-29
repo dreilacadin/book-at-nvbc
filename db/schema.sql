@@ -358,3 +358,15 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   device      TEXT NOT NULL DEFAULT '',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- v18: payment checks for staff ----------------------------------------------------------------
+-- When the player last sent payment proof (NULL on older bookings: created_at is used instead).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_sent_at TIMESTAMPTZ;
+-- For spotting a reference number or screenshot that was also sent for another booking. The
+-- reference is compared without spaces/dashes and ignoring case; the screenshot by its MD5.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_ref_key TEXT
+  GENERATED ALWAYS AS (upper(regexp_replace(payment_ref, '[^A-Za-z0-9]', '', 'g'))) STORED;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_proof_hash TEXT
+  GENERATED ALWAYS AS (CASE WHEN payment_proof = '' THEN '' ELSE md5(payment_proof) END) STORED;
+CREATE INDEX IF NOT EXISTS bookings_payment_ref_key_idx ON bookings (payment_ref_key) WHERE payment_ref_key <> '';
+CREATE INDEX IF NOT EXISTS bookings_payment_proof_hash_idx ON bookings (payment_proof_hash) WHERE payment_proof_hash <> '';

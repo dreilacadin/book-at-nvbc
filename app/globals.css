@@ -664,3 +664,19 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .bk-row.filtered-row { grid-template-columns: 96px minmax(0, 1fr) auto; }
 .bk-row.filtered-row .bk-time { font-size: 13px; white-space: normal; }
 .bk-row.status-released, .bk-row.status-cancelled { border-left-color: var(--muted); }
+
+/* Payment check on the booking card: screenshot beside a checklist */
+.mono { font-family: ui-monospace, monospace; }
+.pay-check { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 14px; margin-top: 12px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+.pay-shot { display: grid; gap: 4px; justify-items: center; font-size: 13px; text-decoration: none; }
+.pay-shot img { width: 100%; max-height: 360px; object-fit: contain; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); }
+.pay-shot.none { align-content: center; text-align: center; color: var(--muted); padding: 12px; border: 1px dashed var(--border); border-radius: 8px; }
+.pay-checklist { display: grid; gap: 8px; align-content: start; font-size: 14px; }
+.check-row { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-weight: 400; cursor: pointer; }
+.check-row input { width: 18px; height: 18px; margin-top: 1px; flex: none; }
+.auto-check { font-size: 13px; font-weight: 600; }
+.auto-check.good { color: var(--brand); }
+.auto-check.bad { color: #b07800; }
+.pay-reuse ul { margin: 6px 0; padding-left: 18px; }
+@media (max-width: 560px) { .pay-check { grid-template-columns: 1fr; } .pay-shot img { max-height: 280px; } }

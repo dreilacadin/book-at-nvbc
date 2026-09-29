@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
-import { db } from "@/lib/db";
+import { db, getSettings } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
 import { daysBetween, isValidDate, nowAtFacility } from "@/lib/time";
 
@@ -36,10 +36,20 @@ export async function GET(req: NextRequest) {
               mb.member_code, mb.full_name AS member_name,
               ex.id AS expired_member_id, ex.full_name AS expired_member_name,
               ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,
-              -- Same reference number used on another booking? Worth a second look.
-              CASE WHEN b.payment_ref = '' THEN 0 ELSE
-                (SELECT count(*)::int FROM bookings o WHERE o.payment_ref = b.payment_ref AND o.id <> b.id) END
-                AS ref_reused
+              COALESCE(b.payment_sent_at, CASE WHEN b.payment_ref <> '' OR b.payment_proof <> '' THEN b.created_at END)
+                AS payment_sent_at,
+              -- Same reference number or screenshot sent for another booking? Worth a second look.
+              (SELECT COALESCE(json_agg(json_build_object(
+                        'code', o.cancel_code, 'name', o.player_name, 'date', o.booking_date,
+                        'start_hour', o.start_hour, 'amount', o.amount, 'status', o.status,
+                        'same_ref', b.payment_ref_key <> '' AND o.payment_ref_key = b.payment_ref_key,
+                        'same_proof', b.payment_proof_hash <> '' AND o.payment_proof_hash = b.payment_proof_hash)
+                      ORDER BY o.created_at), '[]'::json)
+                 FROM bookings o
+                WHERE o.id <> b.id
+                  AND ((b.payment_ref_key <> '' AND o.payment_ref_key = b.payment_ref_key)
+                    OR (b.payment_proof_hash <> '' AND o.payment_proof_hash = b.payment_proof_hash))
+              ) AS payment_reuse
          FROM bookings b JOIN courts c ON c.id = b.court_id
          LEFT JOIN memberships mb ON mb.id = b.membership_id
          -- The booker is an expired member (same mobile, last 10 digits): remind them to renew or forfeit.
@@ -54,6 +64,14 @@ export async function GET(req: NextRequest) {
         ORDER BY b.booking_date, (b.status = 'cancelled'), c.sport, b.start_hour, c.sort_order, c.id`,
       [from, to, nowAtFacility().date, code]
     );
+    // Where online payments should have gone, for staff to compare with the screenshot.
+    const s = await getSettings();
+    const payTo = (m: string) =>
+      m === "gcash" ? [s.gcash_name, s.gcash_number].filter(Boolean).join(" · ")
+      : m === "bpi" ? [s.bpi_account_name, s.bpi_account_number].filter(Boolean).join(" · ")
+      : m === "qrph" ? "NVBC's QR Ph code"
+      : "";
+    for (const r of rows) r.pay_to = payTo(r.payment_method);
     if (code) {
       if (!rows[0]) return NextResponse.json({ error: `No booking found with code ${code}.` }, { status: 404 });
       return NextResponse.json(rows[0], { headers: { "Cache-Control": "no-store" } });

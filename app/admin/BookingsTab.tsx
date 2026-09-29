@@ -257,7 +257,8 @@ function BookingRow({
   else if (b.payment_status === "for_verification") flags.push("⚠ Verify payment");
   if (release) flags.push(release.replace(/^Released at /, "Releases "));
   if (b.expired_member_id && !b.expired_member_reminded) flags.push("⚠ Membership expired");
-  if (b.ref_reused > 0) flags.push("⚠ Reference used before");
+  if (b.payment_reuse.some((o) => o.same_proof)) flags.push("⚠ Screenshot used before");
+  else if (b.payment_reuse.length > 0) flags.push("⚠ Reference used before");
   return (
     <div className={`bk-item${open ? " open" : ""}`} id={`bk-${b.id}`}>
       <button type="button" className={`bk-row status-${d}`} aria-expanded={open} onClick={onToggle}>

@@ -113,7 +113,7 @@ Open /admin → **Settings**:
 | **No charge** | Tournament blocks, maintenance, staff use |
 | **Refunded** | Paid booking that was cancelled and refunded |
 
-Staff change the status from the dropdown in each booking row. The top of the Bookings tab shows billed / collected / unpaid totals for the day and how many payments are waiting to be verified. If the same reference number is entered on two bookings it is flagged with ⚠.
+Staff change the status from the dropdown in each booking row. The top of the Bookings tab shows billed / collected / unpaid totals for the day and how many payments are waiting to be verified. When a booking is For verification, its card shows the screenshot beside a **Check the payment** checklist: the amount it should show, the account it should have gone to (from Settings), the date and time it should be dated (when the player sent it), and the reference number. Staff tick each one; confirming with boxes unticked asks first. The site also checks automatically whether the same reference number (ignoring spaces, dashes and case) or the exact same screenshot was sent for another booking, and lists those bookings with ⚠ — with a note when it's the same name, since one transfer may cover several bookings.
 
 Payments are verified by hand — the site does not connect to GCash or BPI. If you later want automatic confirmation, a gateway like PayMongo or Xendit (which support GCash and QR Ph) can be added.
 

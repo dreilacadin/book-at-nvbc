@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { payByLabel } from "@/components/BookingPolicy";
 import { bookingPhase, phaseLabel, REFUND_HOURS, refundOnCancel, startedUnverified, type Phase } from "@/lib/booking-policy";
-import { formatClock, formatDateLong, formatRange } from "@/lib/format";
+import { formatClock, formatDateLong, formatHour, formatRange } from "@/lib/format";
 import {
   bookingStatusLabel,
   formatPeso,
@@ -19,7 +19,7 @@ import { sportEmoji } from "@/lib/sports";
 import { nowAtFacility } from "@/lib/time";
 import EditBooking from "./EditBooking";
 import QrScanner from "./QrScanner";
-import { api, type AdminBooking, type Court } from "./shared";
+import { api, type AdminBooking, type Court, type PaymentReuse } from "./shared";
 
 /** Refund wording for cancelling this booking now (online payments: 12-hour rule). */
 export function refundNote(b: AdminBooking): string {
@@ -58,6 +58,102 @@ export function releaseNote(b: AdminBooking): string | null {
   return `Released at ${payByLabel(b.date, b.start_hour)} if unpaid`;
 }
 
+/** "Tue, Sep 29" in Manila time, from an ISO timestamp. */
+const dayFromIso = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", weekday: "short", month: "short", day: "numeric" });
+
+/** The online payment proof (reference and/or screenshot) to check, if any. */
+export const hasOnlineProof = (b: AdminBooking) => b.payment_method !== "cash" && (b.payment_ref !== "" || b.has_proof);
+
+/** What staff should see on the screenshot, one line each, for the checklist. */
+function paymentChecks(b: AdminBooking): { id: string; label: ReactNode }[] {
+  const checks: { id: string; label: ReactNode }[] = [
+    { id: "amount", label: <>The amount is <strong>{formatPeso(b.amount)}</strong></> },
+  ];
+  if (b.pay_to) checks.push({ id: "to", label: <>It was sent to <strong>{b.pay_to}</strong></> });
+  if (b.payment_sent_at)
+    checks.push({
+      id: "when",
+      label: (
+        <>
+          It&apos;s dated <strong>{dayFromIso(b.payment_sent_at)}</strong>, at or a little before{" "}
+          <strong>{clockFromIso(b.payment_sent_at)}</strong>
+          <span className="muted"> (sent to us then; booked {dayFromIso(b.created_at) === dayFromIso(b.payment_sent_at) ? "" : `${dayFromIso(b.created_at)} `}at {clockFromIso(b.created_at)})</span>
+        </>
+      ),
+    });
+  if (b.payment_ref)
+    checks.push({ id: "ref", label: <>Its reference number is <strong className="mono">{b.payment_ref}</strong></> });
+  return checks;
+}
+
+/** Other bookings that used the same reference number or screenshot — shown whatever the payment status. */
+function ReuseWarning({ b }: { b: AdminBooking }) {
+  const others = b.payment_reuse;
+  if (others.length === 0) return null;
+  const what = (o: PaymentReuse) => (o.same_ref && o.same_proof ? "same reference and screenshot" : o.same_proof ? "same screenshot" : "same reference");
+  const active = others.filter((o) => o.status !== "cancelled");
+  // One transfer covering several bookings by the same person is fine if the amount covers them all.
+  const samePerson = others.every((o) => o.name.trim().toLowerCase() === b.name.trim().toLowerCase());
+  const total = b.amount + active.reduce((n, o) => n + o.amount, 0);
+  return (
+    <div className="notice pay-reuse" style={{ marginTop: 10 }}>
+      <strong>⚠ {others.some((o) => o.same_proof) ? "This payment was also sent" : "This reference number was also used"} for {others.length} other booking{others.length > 1 ? "s" : ""}:</strong>
+      <ul>
+        {others.map((o) => (
+          <li key={o.code}>
+            <span className="mono">{o.code}</span> · {o.name} · {formatDateLong(o.date)} {formatHour(o.start_hour)} ·{" "}
+            {formatPeso(o.amount)} · {o.status === "cancelled" ? "cancelled" : bookingStatusLabel(o.status).toLowerCase()} — <em>{what(o)}</em>
+          </li>
+        ))}
+      </ul>
+      {samePerson && active.length > 0 ? (
+        <span>Same name — this may be one payment for several bookings. If so, the amount on it should be <strong>{formatPeso(total)}</strong> in total.</span>
+      ) : (
+        <span>{samePerson ? "Same name, but on a cancelled booking" : "A different name"} — check carefully; it may be a reused screenshot or reference.</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Online payment waiting to be verified: the screenshot beside a checklist of what it should show.
+ * Amounts and dates on a screenshot can't be read automatically, so staff tick them off; reuse of
+ * the same reference number or screenshot is found automatically (ReuseWarning).
+ */
+function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<string>; onTick: (id: string) => void }) {
+  const proof = `/api/admin/bookings/proof?id=${b.id}`;
+  return (
+    <div className="pay-check">
+      {b.has_proof ? (
+        <a href={proof} target="_blank" rel="noopener noreferrer" className="pay-shot" title="Open the screenshot full size">
+          {/* eslint-disable-next-line @next/next/no-img-element -- private, auth-protected image */}
+          <img src={proof} alt={`${b.name}'s payment screenshot`} />
+          <span>🔍 Open full size</span>
+        </a>
+      ) : (
+        <div className="pay-shot none">
+          No screenshot — reference number only. Look it up in the {paymentLabel(b.payment_method)} app&apos;s history.
+        </div>
+      )}
+      <div className="pay-checklist">
+        <strong>Check the payment</strong>
+        {paymentChecks(b).map((c) => (
+          <label key={c.id} className="check-row">
+            <input type="checkbox" checked={ticked.has(c.id)} onChange={() => onTick(c.id)} />
+            <span>{c.label}</span>
+          </label>
+        ))}
+        <div className={`auto-check ${b.payment_reuse.length ? "bad" : "good"}`}>
+          {b.payment_reuse.length
+            ? "⚠ Reference or screenshot also sent for another booking (see below)"
+            : `✓ ${b.payment_ref && b.has_proof ? "Reference and screenshot" : b.payment_ref ? "Reference" : "Screenshot"} not used on any other booking`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * One booking with staff actions: confirm payment, edit, cancel. Used by the booking scanner in
  * /admin and by staff mode on the public booking grid.
@@ -78,7 +174,27 @@ export function AdminBookingCard({
   const [error, setError] = useState("");
   const [courts, setCourts] = useState<Court[] | null>(null); // loaded when editing
   const [editing, setEditing] = useState(false);
+  const [ticked, setTicked] = useState<Set<string>>(new Set()); // payment checklist
   const shown = displayStatus(b);
+  const verifying = b.status !== "cancelled" && b.payment_status === "for_verification" && hasOnlineProof(b);
+  const tick = (id: string) =>
+    setTicked((t) => {
+      const n = new Set(t);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const confirmPayment = () => {
+    if (verifying) {
+      const left = paymentChecks(b).filter((c) => !ticked.has(c.id)).length;
+      const warn = [
+        left ? `${left} check${left > 1 ? "s aren't" : " isn't"} ticked yet.` : "",
+        b.payment_reuse.length ? "This reference number or screenshot was also sent for another booking." : "",
+      ].filter(Boolean);
+      if (warn.length && !window.confirm(`${warn.join("\n")}\n\nConfirm ${b.name}'s payment of ${formatPeso(b.amount)} anyway?`)) return;
+    }
+    run({ action: "payment", id: b.id, status: "paid", method });
+  };
   const phase = bookingPhase(b, nowAtFacility());
 
   async function run(body: Record<string, unknown>) {
@@ -184,9 +300,8 @@ export function AdminBookingCard({
       {startedUnverified(b, nowAtFacility()) && (
         <div className="notice" style={{ marginTop: 10 }}>⚠ This booking has started, but its payment hasn&apos;t been verified yet.</div>
       )}
-      {b.ref_reused > 0 && (
-        <div className="notice" style={{ marginTop: 10 }}>⚠ This reference number is also on {b.ref_reused} other booking(s) — worth a second look.</div>
-      )}
+      {verifying && <PaymentCheck b={b} ticked={ticked} onTick={tick} />}
+      <ReuseWarning b={b} />
       {b.expired_member_id && (
         <div className="expired-flag" style={{ marginTop: 10 }}>
           ⚠ {b.expired_member_name}&apos;s membership expired — remind them to renew or forfeit.{" "}
@@ -208,7 +323,7 @@ export function AdminBookingCard({
               <select id={`bl-method-${b.id}`} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} style={{ width: "auto" }}>
                 {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
-              <button className="btn" disabled={busy} onClick={() => run({ action: "payment", id: b.id, status: "paid", method })}>
+              <button className="btn" disabled={busy} onClick={confirmPayment}>
                 ✓ Payment received — confirm ({formatPeso(b.amount)})
               </button>
             </div>
