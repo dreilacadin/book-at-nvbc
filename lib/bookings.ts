@@ -30,6 +30,8 @@ import { formatDateLong, formatRange, isHalfHour, publicName, SLOT_HOURS } from 
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { notifyStaff } from "./notify";
+import { notifyCustomer, scheduleReminders } from "./customer-notify";
+import { isEmail } from "./customer-messages";
 import { BOOKING_DEFAULT_SPORT, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
@@ -81,6 +83,7 @@ export function normalizeCode(code: unknown): string | null {
  */
 let lastRelease = 0;
 export async function releaseUnpaidBookings(): Promise<number> {
+  scheduleReminders(); // "coming up" reminders for customers (throttled, after the response)
   if (Date.now() - lastRelease < 10_000) return 0;
   lastRelease = Date.now();
   const now = nowAtFacility();
@@ -92,7 +95,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
        UPDATE bookings b SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
          FROM courts c
         WHERE c.id = b.court_id
-          AND b.status IN ('pending', 'reserved') AND b.payment_status = 'unpaid' AND b.amount > 0
+          AND b.status IN ('pending', 'reserved') AND b.payment_status IN ('unpaid', 'rejected') AND b.amount > 0
           AND b.phase IS NULL AND b.auto_release -- marked in progress/completed or restored by staff: keep
           AND ((b.booking_date - $1::date) * 1440 + (b.start_hour - $2::numeric) * 60 <= $3
                OR b.pay_by <= now())
@@ -274,6 +277,7 @@ export type NewBookingInput = {
   name?: unknown;
   contact?: unknown;
   notes?: unknown;
+  email?: unknown; // optional: for booking updates by email
   website?: unknown; // honeypot — real people never fill this in
 };
 
@@ -314,6 +318,7 @@ export async function createBooking(
   const name = str(input.name).replace(/\s+/g, " ");
   const contact = str(input.contact);
   const notes = str(input.notes);
+  const email = str(input.email);
 
   if (!Number.isInteger(courtId)) return fail(400, "Please choose a court.");
   if (!isValidDate(date)) return fail(400, "Please choose a valid date.");
@@ -323,6 +328,7 @@ export async function createBooking(
   if (!admin && (contact.length < 7 || contact.length > 60 || !/[0-9@]/.test(contact)))
     return fail(400, "Please enter a mobile number or email so we can reach you.");
   if (notes.length > 200) return fail(400, "Notes must be 200 characters or fewer.");
+  if (email && !isEmail(email)) return fail(400, "Please check your email address (or leave it blank).");
 
   let rateType: RateType = input.rateType === undefined || input.rateType === "" ? "regular" : (input.rateType as RateType);
   if (!isRateType(rateType)) return fail(400, "Please choose Regular, Member or Coach.");
@@ -470,16 +476,17 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at)
+                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at, customer_email)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19,
-                   CASE WHEN $15 <> '' OR $17 <> '' THEN now() END) RETURNING id`,
+                   CASE WHEN $15 <> '' OR $17 <> '' THEN now() END, $20) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
             rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
             paymentMethod === "cash" ? "" : paymentProof,
             rateType === "member" ? membershipId : null,
             payBy,
+            email,
           ]
         );
         bookingId = ins.rows[0].id;
@@ -555,6 +562,7 @@ export type BookingView = {
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
   courtNotes: string;
   phase: Phase | null; // in progress / completed (by the clock for paid bookings, or set by staff)
+  rejectedNote: string; // payment rejected by staff: why (empty otherwise)
 };
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
@@ -566,7 +574,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
     `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
             b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
             b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
-            b.pay_by, c.notes AS court_notes, b.phase
+            b.pay_by, c.notes AS court_notes, b.phase, b.rejected_note
        FROM bookings b JOIN courts c ON c.id = b.court_id
       WHERE b.cancel_code = $1`,
     [code]
@@ -594,7 +602,9 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       hasProof: r.has_proof,
       canCancel: r.status !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
       cancelledBy: r.cancelled_by,
-      payBy: r.pay_by && r.payment_status === "unpaid" && r.status === "pending" ? new Date(r.pay_by).toISOString() : null,
+      payBy: r.pay_by && (r.payment_status === "unpaid" || r.payment_status === "rejected") && r.status === "pending"
+        ? new Date(r.pay_by).toISOString() : null,
+      rejectedNote: r.payment_status === "rejected" ? r.rejected_note : "",
       courtNotes: r.court_notes,
       phase: bookingPhase(
         { status: r.status, phase: r.phase, payment_status: r.payment_status, amount: r.amount, date: r.booking_date, start_hour: r.start_hour, end_hour: r.end_hour },
@@ -698,7 +708,7 @@ export async function submitPayment(
             payment_status = 'for_verification',
             payment_sent_at = now(),
             status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
-      WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification')
+      WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification', 'rejected')
         AND (pay_by IS NULL OR pay_by > now() OR payment_status = 'for_verification')
       RETURNING payment_ref, (payment_proof <> '') AS has_proof`,
     [code, method, paymentRef, paymentProof]
@@ -731,15 +741,22 @@ export async function submitPayment(
   };
 }
 
-/** Staff: mark a booking paid / unpaid / no charge / refunded (optionally correcting method or reference). */
+/**
+ * Staff: mark a booking paid / unpaid / no charge / refunded (optionally correcting method or
+ * reference), or reject its payment with a note. The customer is told when their payment is
+ * confirmed or rejected.
+ */
 export async function setPaymentStatus(
   id: string,
   status: unknown,
   method?: unknown,
-  ref?: unknown
+  ref?: unknown,
+  note?: unknown,
+  by = "admin"
 ): Promise<Result<{ id: string; status: BookingStatus }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   if (!isPaymentStatus(status)) return fail(400, "Unknown payment status.");
+  if (status === "rejected") return rejectPayment(id, note, by);
   if (method !== undefined && !isPaymentMethod(method)) return fail(400, "Unknown payment method.");
   const { rows } = await db().query(
     `UPDATE bookings SET
@@ -754,11 +771,46 @@ export async function setPaymentStatus(
           WHEN amount > 0 AND $2 NOT IN ('paid', 'waived')
             THEN CASE WHEN COALESCE($3, payment_method) = 'cash' THEN 'reserved' ELSE 'pending' END
           ELSE 'confirmed' END
-      WHERE id = $1 RETURNING id, status`,
+       FROM (SELECT id AS old_id, payment_status AS old_status FROM bookings WHERE id = $1 FOR UPDATE) old -- the value before this change
+      WHERE id = old.old_id RETURNING id, status, old.old_status`,
     [id, status, method ?? null, ref === undefined ? null : cleanRef(ref)]
   );
   if (!rows[0]) return fail(404, "Booking not found.");
+  const settled = (s: string) => s === "paid" || s === "waived";
+  if (rows[0].status === "confirmed" && settled(status) && !settled(rows[0].old_status)) notifyCustomer(id, "confirmed");
   return { ok: true, data: { id, status: rows[0].status as BookingStatus } };
+}
+
+/**
+ * Staff couldn't verify an online payment. The booking stays pending with a fresh payment window
+ * (PAY_WINDOW_MINUTES, or until RELEASE_MINUTES before the start) for the customer to send a
+ * correct payment or screenshot; otherwise it's released as usual. The note tells them why.
+ */
+async function rejectPayment(id: string, rawNote: unknown, by: string): Promise<Result<{ id: string; status: BookingStatus }>> {
+  const note = typeof rawNote === "string" ? rawNote.trim().replace(/\s+/g, " ") : "";
+  if (note.length < 3) return fail(400, "Add a short note for the customer saying why the payment was rejected.");
+  if (note.length > 300) return fail(400, "Keep the note under 300 characters.");
+  const { rows: found } = await db().query<{
+    status: string; payment_status: string; payment_method: string; amount: number; booking_date: string; start_hour: number;
+  }>(
+    `SELECT status, payment_status, payment_method, amount, booking_date, start_hour FROM bookings WHERE id = $1`,
+    [id]
+  );
+  const b = found[0];
+  if (!b) return fail(404, "Booking not found.");
+  if (b.status === "cancelled") return fail(400, "This booking is cancelled.");
+  if (b.payment_method === "cash") return fail(400, "Cash payments can't be rejected — set the payment to Unpaid instead.");
+  if (Number(b.amount) <= 0) return fail(400, "This booking has nothing to pay.");
+  if (b.payment_status !== "for_verification") return fail(400, "Only a payment waiting to be verified can be rejected.");
+  const payBy = new Date(paymentDeadline(Date.now(), b.booking_date, Number(b.start_hour), nowAtFacility())).toISOString();
+  await db().query(
+    `UPDATE bookings SET payment_status = 'rejected', status = 'pending', paid_at = NULL, pay_by = $2,
+            rejected_note = $3, rejected_by = $4, rejected_at = now()
+      WHERE id = $1`,
+    [id, payBy, note, by.slice(0, 60) || "admin"]
+  );
+  notifyCustomer(id, "rejected");
+  return { ok: true, data: { id, status: "pending" } };
 }
 
 export type BookingEdit = {
@@ -834,7 +886,9 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
               player_name = $6, contact = $7, notes = $8, rate_type = $9, hourly_rate = $10,
               discount_pct = 0, amount = $11, payment_method = $12, payment_ref = $13, status = $14,
               -- A booking moved to another date or time starts over: its manual in progress/completed mark is cleared.
-              phase = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 OR end_hour <> $5 THEN NULL ELSE phase END
+              phase = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 OR end_hour <> $5 THEN NULL ELSE phase END,
+              -- ... and gets its "coming up" reminder again at the new time.
+              reminder_sent_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 THEN NULL ELSE reminder_sent_at END
         WHERE id = $1`,
       [id, courtId, date, startHour, endHour, name, contact || "(admin)", notes, rateType, price.hourlyRate,
         price.total, paymentMethod, paymentMethod === "cash" ? "" : paymentRef, status]

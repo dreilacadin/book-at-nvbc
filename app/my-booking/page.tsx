@@ -5,6 +5,7 @@ import { formatDateLong, formatRange } from "@/lib/format";
 import { forgetCode, loadCodes, type SavedCode } from "@/lib/saved-codes";
 import { sportLabel } from "@/lib/sports";
 import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
+import BookingAlerts from "@/components/BookingAlerts";
 import BookingQr from "@/components/BookingQr";
 import PaymentPanel from "@/components/PaymentPanel";
 import { REFUND_HOURS, RELEASE_MINUTES, refundOnCancel } from "@/lib/booking-policy";
@@ -41,6 +42,7 @@ type Booking = {
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
   courtNotes: string;
   phase: "in_progress" | "completed" | null;
+  rejectedNote: string; // payment rejected by staff: why
 };
 
 export default function MyBookingPage() {
@@ -53,6 +55,20 @@ export default function MyBookingPage() {
   const [saved, setSaved] = useState<SavedCode[]>([]);
 
   useEffect(() => setSaved(loadCodes()), []);
+  // Links in notifications and emails open /my-booking#NV-ABC123 (after "#", so the code stays
+  // out of server logs).
+  useEffect(() => {
+    const fromHash = () => {
+      const c = decodeURIComponent(window.location.hash.slice(1)).trim().toUpperCase();
+      if (/^NV-[A-Z0-9]{4,}$/.test(c)) {
+        setCode(c);
+        lookup(c);
+      }
+    };
+    fromHash();
+    window.addEventListener("hashchange", fromHash);
+    return () => window.removeEventListener("hashchange", fromHash);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function lookup(c: string) {
     setBusy(true);
@@ -185,7 +201,12 @@ export default function MyBookingPage() {
           {booking.courtNotes && booking.status !== "cancelled" && <div className="court-note">ⓘ {booking.courtNotes}</div>}
           {booking.status === "pending" && (
             <div className="notice" style={{ marginTop: 12 }}>
-              {booking.paymentStatus === "for_verification" ? (
+              {booking.paymentStatus === "rejected" ? (
+                <>
+                  We couldn&apos;t verify the payment you sent, so your booking is still <strong>Pending</strong>. See the note
+                  below and send a correct payment before the timer runs out — otherwise the slot will be released.
+                </>
+              ) : booking.paymentStatus === "for_verification" ? (
                 <>
                   We&apos;ve received your {paymentLabel(booking.paymentMethod)} payment details. Your booking is{" "}
                   <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
@@ -224,6 +245,7 @@ export default function MyBookingPage() {
               hasProof={booking.hasProof}
               payBy={payByLabel(booking.date, booking.startHour)}
               deadline={booking.payBy}
+              rejectedNote={booking.rejectedNote}
               onUpdated={(u) => setBooking({ ...booking, ...u, payBy: null, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
             />
           )}
@@ -258,6 +280,7 @@ export default function MyBookingPage() {
               This booking has already started. Please talk to the front desk for changes.
             </p>
           )}
+          {booking.status !== "cancelled" && !booking.phase && <BookingAlerts key={`alerts-${booking.code}`} code={booking.code} />}
           {booking.status !== "cancelled" && booking.amount > 0 && <BookingPolicy title="Good to know" />}
         </div>
       )}

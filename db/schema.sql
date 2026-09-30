@@ -375,3 +375,28 @@ CREATE INDEX IF NOT EXISTS bookings_payment_proof_hash_idx ON bookings (payment_
 -- Extra GCash accounts shown to players after the main one (gcash_name / gcash_number):
 -- [{"name": "...", "number": "09..."}, ...]
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS gcash_more JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- v20: rejected payments, and notifications for customers ------------------------------------
+-- 'rejected': staff couldn't verify the payment. The booking stays pending with a fresh payment
+-- window (pay_by) for the player to send a correct payment or screenshot; rejected_note tells them why.
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_payment_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_payment_status_check
+  CHECK (payment_status IN ('unpaid', 'for_verification', 'paid', 'waived', 'refunded', 'rejected'));
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rejected_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rejected_by TEXT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
+-- Optional email for booking updates (payment confirmed / rejected, upcoming reminder).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS customer_email TEXT NOT NULL DEFAULT '';
+-- When the "your court time is coming up" reminder went out (at most once per booking).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS bookings_reminder_due_idx ON bookings (booking_date)
+  WHERE reminder_sent_at IS NULL AND status <> 'cancelled';
+-- Customers' devices that asked for push notifications about one booking (from its booking page).
+CREATE TABLE IF NOT EXISTS customer_push_subscriptions (
+  booking_id  UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  endpoint    TEXT NOT NULL,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (booking_id, endpoint)
+);

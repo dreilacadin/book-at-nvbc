@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdmin, unauthorized } from "@/lib/admin-auth";
 import { readJson, serverError } from "@/lib/http";
+import { scheduleReminders } from "@/lib/customer-notify";
 import {
   deletePushSubscription,
   getNotifications,
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
   const me = await getAdmin(req);
   if (!me) return unauthorized();
   try {
+    scheduleReminders(); // staff panels poll often: a good moment to send customers' reminders
     return NextResponse.json(await getNotifications(whoOf(me)), { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return serverError(e);

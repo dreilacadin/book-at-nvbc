@@ -224,7 +224,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                         <select aria-label="Payment status" className={`pay-status ${m.payment_status}`} value={m.payment_status}
                           onChange={(e) => act({ action: "payment", id: m.id, status: e.target.value as PaymentStatus })}
                           style={{ width: "auto", border: 0, fontSize: 13, padding: "4px 8px" }}>
-                          {PAYMENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                          {PAYMENT_STATUSES.filter((s) => s.id !== "rejected").map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                         </select>
                       </td>
                       <td>

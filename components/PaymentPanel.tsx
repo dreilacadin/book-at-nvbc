@@ -180,6 +180,7 @@ export default function PaymentPanel({
   hasProof: initialHasProof = false,
   payBy,
   deadline = null,
+  rejectedNote = "",
   onUpdated,
 }: {
   code: string;
@@ -190,6 +191,7 @@ export default function PaymentPanel({
   hasProof?: boolean;
   payBy?: string; // "9:50 AM on Thu, Oct 1": unpaid bookings are released then
   deadline?: string | null; // online booking: send the payment by this time (ISO) or the slot is released
+  rejectedNote?: string; // staff rejected the payment sent: why
   onUpdated?: (p: { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; paymentRef: string; hasProof: boolean }) => void;
 }) {
   const { info, error: infoError } = usePaymentInfo();
@@ -200,7 +202,7 @@ export default function PaymentPanel({
   const [hasProof, setHasProof] = useState(initialHasProof);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const secondsLeft = useSecondsLeft(status === "unpaid" ? deadline : null);
+  const secondsLeft = useSecondsLeft(status === "unpaid" || status === "rejected" ? deadline : null);
   const timeUp = secondsLeft === 0;
 
   if (status === "paid" || status === "waived" || status === "refunded") {
@@ -300,6 +302,16 @@ export default function PaymentPanel({
             Put <strong>{code}</strong> in the message/notes if your app allows. After paying, enter the reference
             number or upload a screenshot of the receipt so staff can confirm it.
           </p>
+          {status === "rejected" && (
+            <div className="error pay-rejected" style={{ marginTop: 10 }}>
+              <strong>We couldn&apos;t verify your payment.</strong>
+              {rejectedNote && <div style={{ marginTop: 4 }}>“{rejectedNote}”</div>}
+              <div style={{ marginTop: 4 }}>
+                Please send a correct payment and its reference number or screenshot below before the timer runs out. If you think
+                this is a mistake, please contact the front desk.
+              </div>
+            </div>
+          )}
           {status === "for_verification" && (
             <div className="success" style={{ marginTop: 10 }}>
               Payment details received. Staff will confirm your payment shortly. You can correct them below if needed.
@@ -308,7 +320,7 @@ export default function PaymentPanel({
           <form onSubmit={submit} style={{ marginTop: 10 }}>
             <ProofFields reference={reference} onReference={setReference} proof={proof} onProof={setProof} hasProof={hasProof} />
             <button className="btn" disabled={busy} style={{ marginTop: 10 }}>
-              {busy ? "Sending…" : status === "for_verification" ? "Update" : "I've paid"}
+              {busy ? "Sending…" : status === "for_verification" ? "Update" : status === "rejected" ? "Send again" : "I've paid"}
             </button>
           </form>
         </>

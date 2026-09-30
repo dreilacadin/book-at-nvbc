@@ -112,8 +112,15 @@ Open /admin → **Settings**:
 | **Paid** | Staff confirmed it |
 | **No charge** | Tournament blocks, maintenance, staff use |
 | **Refunded** | Paid booking that was cancelled and refunded |
+| **Rejected** | Staff couldn't verify the payment sent (use **✕ Reject payment…** on the booking card, with a note). The booking stays Pending and the player gets 15 more minutes to send a correct payment or screenshot, or it's released |
 
 Staff change the status from the dropdown in each booking row. The top of the Bookings tab shows billed / collected / unpaid totals for the day and how many payments are waiting to be verified. When a booking is For verification, its card shows the screenshot beside a **Check the payment** checklist: the amount it should show, the account it should have gone to (from Settings), the date and time it should be dated (when the player sent it), and the reference number. Staff tick each one; confirming with boxes unticked asks first. The site also checks automatically whether the same reference number (ignoring spaces, dashes and case) or the exact same screenshot was sent for another booking, and lists those bookings with ⚠ — with a note when it's the same name, since one transfer may cover several bookings.
+
+### Updates for customers
+
+Players can get updates about their booking: **payment confirmed**, **payment rejected** (with the staff note and the new deadline), and a reminder **1 hour before** their time. On the booking confirmation and on My booking they can **Turn on notifications** (push to that phone or computer — needs the VAPID keys; on iPhone/iPad only after adding NVBC to the Home Screen) and/or save an email (also an optional field on the booking form; emails use the Gmail sender). The booking card in /admin shows whether a customer turned updates on.
+
+Reminders go out whenever the site is used. For punctual reminders at quiet times, set `CRON_SECRET` and have a scheduler call `GET /api/cron/reminders` with `Authorization: Bearer <CRON_SECRET>` every 5–10 minutes (e.g. a free cron-job.org job, or Vercel Cron on a paid plan). Set `SITE_URL` to your site's address so links in emails point to it (on Vercel the production address is used automatically).
 
 Payments are verified by hand — the site does not connect to GCash or BPI. If you later want automatic confirmation, a gateway like PayMongo or Xendit (which support GCash and QR Ph) can be added.
 

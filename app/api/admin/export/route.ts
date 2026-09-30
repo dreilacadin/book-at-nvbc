@@ -95,7 +95,7 @@ export async function GET(req: NextRequest) {
     const sum = (list: Row[]) => round(list.reduce((s, b) => s + b.amount, 0));
     const billed = (list: Row[]) => sum(list.filter((b) => b.status !== "cancelled" && b.payment_status !== "waived"));
     const paid = (list: Row[]) => sum(list.filter((b) => b.payment_status === "paid"));
-    const unpaid = (list: Row[]) => sum(list.filter((b) => b.status !== "cancelled" && b.payment_status === "unpaid"));
+    const unpaid = (list: Row[]) => sum(list.filter((b) => b.status !== "cancelled" && (b.payment_status === "unpaid" || b.payment_status === "rejected")));
     const days = [...new Set(rows.map((b) => b.date))];
     const summary: Cell[][] = [
       ["NVBC bookings", from === to ? from : `${from} to ${to}`],

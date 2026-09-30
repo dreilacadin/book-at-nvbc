@@ -24,6 +24,14 @@ export function pushConfig(): { publicKey: string } | null {
   return pub && priv ? { publicKey: pub } : null;
 }
 
+/** Sets up web-push with the VAPID keys. False when push isn't configured on the server. */
+export function setupVapid(): boolean {
+  const cfg = pushConfig();
+  if (!cfg) return false;
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT?.trim() || "mailto:admin@example.com", cfg.publicKey, process.env.VAPID_PRIVATE_KEY!.trim());
+  return true;
+}
+
 /**
  * Records events for staff and sends push notifications after the response is sent. Never throws:
  * a notification problem must not break a booking.
@@ -54,13 +62,7 @@ export async function notifyStaff(events: NewEvent[]): Promise<void> {
 }
 
 async function sendPushes(eventIds: number[]): Promise<void> {
-  const cfg = pushConfig();
-  if (!cfg || eventIds.length === 0) return;
-  webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT?.trim() || "mailto:admin@example.com",
-    cfg.publicKey,
-    process.env.VAPID_PRIVATE_KEY!.trim()
-  );
+  if (eventIds.length === 0 || !setupVapid()) return;
   const { rows: events } = await db().query<{ kind: string; push_title: string; body: string; booking_code: string | null; membership_id: string | null }>(
     `SELECT kind, push_title, body, booking_code, membership_id::text FROM admin_events WHERE id = ANY($1::bigint[]) ORDER BY id`,
     [eventIds]
@@ -157,9 +159,7 @@ export async function deletePushSubscription(who: string, endpoint: unknown) {
 
 /** Sends a test push to this staff member's devices. */
 export async function testPush(who: string): Promise<{ sent: number; error?: string }> {
-  const cfg = pushConfig();
-  if (!cfg) return { sent: 0, error: "Push notifications aren't set up on the server (VAPID keys)." };
-  webpush.setVapidDetails(process.env.VAPID_SUBJECT?.trim() || "mailto:admin@example.com", cfg.publicKey, process.env.VAPID_PRIVATE_KEY!.trim());
+  if (!setupVapid()) return { sent: 0, error: "Push notifications aren't set up on the server (VAPID keys)." };
   const { rows } = await db().query<{ endpoint: string; p256dh: string; auth: string }>(
     `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE who = $1`,
     [who]

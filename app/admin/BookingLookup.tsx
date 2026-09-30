@@ -2,7 +2,17 @@
 
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { payByLabel } from "@/components/BookingPolicy";
-import { bookingPhase, phaseLabel, REFUND_HOURS, refundOnCancel, startedUnverified, type Phase } from "@/lib/booking-policy";
+import {
+  awaitingPayment,
+  bookingPhase,
+  minutesUntilStart,
+  phaseLabel,
+  REFUND_HOURS,
+  refundOnCancel,
+  RELEASE_MINUTES,
+  startedUnverified,
+  type Phase,
+} from "@/lib/booking-policy";
 import { formatClock, formatDateLong, formatHour, formatRange } from "@/lib/format";
 import {
   bookingStatusLabel,
@@ -52,7 +62,7 @@ export const displayLabel = (d: DisplayStatus) =>
 
 /** When an unpaid active booking is released, in words. */
 export function releaseNote(b: AdminBooking): string | null {
-  if ((b.status !== "pending" && b.status !== "reserved") || b.payment_status !== "unpaid" || b.amount <= 0) return null;
+  if ((b.status !== "pending" && b.status !== "reserved") || !awaitingPayment(b.payment_status) || b.amount <= 0) return null;
   if (b.phase || !b.auto_release) return null; // marked in progress/completed, or restored: kept
   if (b.pay_by) return `Released at ${clockFromIso(b.pay_by)} if not paid online`;
   return `Released at ${payByLabel(b.date, b.start_hour)} if unpaid`;
@@ -154,6 +164,47 @@ function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<stri
   );
 }
 
+/** Common reasons, to fill the note with one tap (staff can edit it). */
+const REJECT_REASONS = [
+  "The amount on the screenshot doesn't match the booking.",
+  "We haven't received this payment in our account.",
+  "The reference number doesn't match our records.",
+  "The screenshot is unclear or incomplete.",
+  "This screenshot was already used for another booking.",
+];
+
+/** Staff reject an online payment, with a note that's sent to the customer. */
+function RejectPayment({ b, busy, onReject, onCancel }: { b: AdminBooking; busy: boolean; onReject: (note: string) => void; onCancel: () => void }) {
+  const [note, setNote] = useState("");
+  const soon = minutesUntilStart(b.date, b.start_hour, nowAtFacility()) <= RELEASE_MINUTES + 1;
+  const reach = [b.alert_devices > 0 ? "push notification" : "", b.customer_email ? "email" : ""].filter(Boolean).join(" and ");
+  return (
+    <form className="reject-box" onSubmit={(e) => {
+      e.preventDefault();
+      if (soon && !window.confirm(`This booking starts within ${RELEASE_MINUTES} minutes, so rejecting the payment releases the slot right away. Reject anyway?`)) return;
+      onReject(note.trim());
+    }}>
+      <strong>Reject this payment</strong>
+      <p className="hint" style={{ margin: 0 }}>
+        The booking stays held, and the customer gets 15 minutes to send a correct payment or screenshot (or it&apos;s released).
+        They see your note on their booking page{reach ? ` and by ${reach}` : " — they haven't turned on notifications, so you may want to call them"}.
+      </p>
+      <div className="reason-chips">
+        {REJECT_REASONS.map((r) => (
+          <button key={r} type="button" className={`chip${note === r ? " on" : ""}`} onClick={() => setNote(r)}>{r}</button>
+        ))}
+      </div>
+      <textarea aria-label="Note for the customer" required minLength={3} maxLength={300} value={note}
+        placeholder="Note for the customer, e.g. The screenshot shows ₱300, but the booking is ₱400."
+        onChange={(e) => setNote(e.target.value)} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn danger" disabled={busy || note.trim().length < 3}>✕ Reject and tell the customer</button>
+        <button type="button" className="btn secondary" onClick={onCancel}>Back</button>
+      </div>
+    </form>
+  );
+}
+
 /**
  * One booking with staff actions: confirm payment, edit, cancel. Used by the booking scanner in
  * /admin and by staff mode on the public booking grid.
@@ -175,6 +226,7 @@ export function AdminBookingCard({
   const [courts, setCourts] = useState<Court[] | null>(null); // loaded when editing
   const [editing, setEditing] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set()); // payment checklist
+  const [rejecting, setRejecting] = useState(false);
   const shown = displayStatus(b);
   const verifying = b.status !== "cancelled" && b.payment_status === "for_verification" && hasOnlineProof(b);
   const tick = (id: string) =>
@@ -261,7 +313,9 @@ export function AdminBookingCard({
             {shown === "in_progress" ? `In progress${b.phase ? " (marked by staff)" : ""}`
               : shown === "completed" ? `Completed${b.phase ? " (marked by staff)" : ""}`
               : shown === "confirmed" ? "Confirmed"
-              : shown === "pending" ? (b.payment_status === "for_verification" ? "Pending — payment sent, please verify" : "Pending — waiting for payment")
+              : shown === "pending" ? (b.payment_status === "for_verification" ? `Pending — payment ${b.rejected_at ? "sent again" : "sent"}, please verify`
+                : b.payment_status === "rejected" ? "Pending — payment rejected, waiting for the customer"
+                : "Pending — waiting for payment")
               : shown === "reserved" ? "Reserved — coach paying cash at the desk"
               : released ? "Released (not paid in time)"
               : `Cancelled${b.cancelled_by ? ` by ${b.cancelled_by}` : ""}`}
@@ -294,11 +348,27 @@ export function AdminBookingCard({
           </dd>
         </div>
         {release && <div><dt>If unpaid</dt><dd><strong>{release}</strong></dd></div>}
+        {b.status !== "cancelled" && (
+          <div>
+            <dt>Updates</dt>
+            <dd>
+              {b.alert_devices || b.customer_email
+                ? [b.alert_devices ? `🔔 ${b.alert_devices} device${b.alert_devices > 1 ? "s" : ""}` : "", b.customer_email ? `✉ ${b.customer_email}` : ""].filter(Boolean).join(" · ")
+                : <span className="muted">Not turned on</span>}
+            </dd>
+          </div>
+        )}
         {b.notes && <div><dt>Notes</dt><dd>{b.notes}</dd></div>}
       </dl>
 
       {startedUnverified(b, nowAtFacility()) && (
         <div className="notice" style={{ marginTop: 10 }}>⚠ This booking has started, but its payment hasn&apos;t been verified yet.</div>
+      )}
+      {b.rejected_at && b.status !== "cancelled" && (b.payment_status === "rejected" || b.payment_status === "for_verification") && (
+        <div className="rejected-note">
+          <strong>✕ {b.payment_status === "rejected" ? "Payment rejected" : "Rejected earlier"}</strong> by {b.rejected_by ?? "staff"},{" "}
+          {clockFromIso(b.rejected_at)}: “{b.rejected_note}”
+        </div>
       )}
       {verifying && <PaymentCheck b={b} ticked={ticked} onTick={tick} />}
       <ReuseWarning b={b} />
@@ -326,7 +396,16 @@ export function AdminBookingCard({
               <button className="btn" disabled={busy} onClick={confirmPayment}>
                 ✓ Payment received — confirm ({formatPeso(b.amount)})
               </button>
+              {verifying && !rejecting && (
+                <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setRejecting(true)}>
+                  ✕ Reject payment…
+                </button>
+              )}
             </div>
+          )}
+          {verifying && rejecting && (
+            <RejectPayment b={b} busy={busy} onCancel={() => setRejecting(false)}
+              onReject={(note) => run({ action: "payment", id: b.id, status: "rejected", note })} />
           )}
           <div className="card-actions">
             <div className="segmented phase-switch" role="radiogroup" aria-label="Progress">
@@ -345,7 +424,9 @@ export function AdminBookingCard({
               Payment
               <select aria-label="Payment status" className={`pay-status ${b.payment_status}`} value={b.payment_status} disabled={busy}
                 onChange={(e) => run({ action: "payment", id: b.id, status: e.target.value as PaymentStatus })}>
-                {PAYMENT_STATUSES.map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}
+                {PAYMENT_STATUSES.filter((st) => st.id !== "rejected" || b.payment_status === "rejected").map((st) => (
+                  <option key={st.id} value={st.id} disabled={st.id === "rejected"}>{st.label}</option>
+                ))}
               </select>
             </label>
             <button className="btn small secondary" disabled={busy} onClick={startEdit}>✎ Edit</button>

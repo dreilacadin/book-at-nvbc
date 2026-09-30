@@ -25,6 +25,7 @@ export const PAYMENT_STATUSES = [
   { id: "paid", label: "Paid" },
   { id: "waived", label: "No charge" },
   { id: "refunded", label: "Refunded" },
+  { id: "rejected", label: "Rejected" }, // bookings only: staff couldn't verify the payment
 ] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]["id"];
 export const isPaymentStatus = (v: unknown): v is PaymentStatus => PAYMENT_STATUSES.some((s) => s.id === v);

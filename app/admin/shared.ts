@@ -39,6 +39,11 @@ export type AdminBooking = {
   payment_sent_at: string | null; // when the player sent their reference / screenshot
   payment_reuse: PaymentReuse[]; // other bookings with the same reference number or screenshot
   pay_to: string; // where this payment method's money should have gone (from Settings)
+  rejected_note: string; // last time staff rejected the payment: why (kept after a new payment is sent)
+  rejected_by: string | null;
+  rejected_at: string | null;
+  customer_email: string; // customer gets updates by email
+  alert_devices: number; // customer's devices with push notifications on
 };
 export type PaymentReuse = {
   code: string;

@@ -30,6 +30,7 @@ import { saveCode } from "@/lib/saved-codes";
 import { loadMembership } from "@/lib/saved-membership";
 import { minutesUntilStart, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
+import BookingAlerts from "./BookingAlerts";
 import BookingQr from "./BookingQr";
 import PaymentPanel from "./PaymentPanel";
 import { AdminBookingCard } from "@/app/admin/BookingLookup";
@@ -479,6 +480,7 @@ function BookingDialog({
   const court = data.courts.find((c) => c.id === selection.courtId);
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
+  const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
   const [website, setWebsite] = useState("");
   const [busy, setBusy] = useState(false);
@@ -515,6 +517,7 @@ function BookingDialog({
           hours,
           name,
           contact,
+          email,
           notes,
           website,
           rateType,
@@ -621,7 +624,8 @@ function BookingDialog({
               />
             )}
             <BookingQr code={done.code} />
-            <p className="muted" style={{ fontSize: 14, marginTop: 0 }}>
+            <BookingAlerts code={done.code} />
+            <p className="muted" style={{ fontSize: 14 }}>
               Take a screenshot of this QR code or save your booking code. You&apos;ll need it to view, pay or cancel your
               booking on the <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
             </p>
@@ -724,6 +728,14 @@ function BookingDialog({
               </label>
               <input id="contact" type="tel" required minLength={7} maxLength={60} autoComplete="tel"
                 placeholder="09XX XXX XXXX" value={contact} onChange={(e) => setContact(e.target.value)} />
+            </div>
+
+            <div className="field">
+              <label htmlFor="email">
+                Email <span className="hint">(optional) — we&apos;ll email you when your payment is confirmed and before your time</span>
+              </label>
+              <input id="email" type="email" maxLength={120} autoComplete="email" placeholder="you@example.com"
+                value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
 
             <div className="field">

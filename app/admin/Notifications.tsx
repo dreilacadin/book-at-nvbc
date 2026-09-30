@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { kindIcon, NOTIFY_KINDS, timeAgo, type AdminEvent, type NotifyKind } from "@/lib/notify-kinds";
+import { isIos, isStandalone, subscribeDevice } from "@/lib/push-client";
 import { api } from "./shared";
 
 type Data = {
@@ -41,16 +42,6 @@ function chime() {
     /* audio not available */
   }
 }
-
-function urlBase64ToUint8Array(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const raw = atob((base64 + padding).replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
-}
-
-const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
-const isStandalone = () =>
-  window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone === true;
 
 /** Staff notifications: the bell in the admin header, pop-ups, a chime, and push on this device. */
 export default function Notifications({
@@ -213,11 +204,7 @@ export default function Notifications({
         setPush(permission === "denied" ? "denied" : "off");
         return;
       }
-      const reg = await navigator.serviceWorker.register("/sw.js");
-      await navigator.serviceWorker.ready;
-      const sub =
-        (await reg.pushManager.getSubscription()) ??
-        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(data.push.publicKey) as BufferSource }));
+      const sub = await subscribeDevice(data.push.publicKey);
       await api("/api/admin/notifications", { action: "subscribe", subscription: sub.toJSON(), device: navigator.userAgent });
       setPush("on");
       setPushMsg("Notifications are on for this device.");

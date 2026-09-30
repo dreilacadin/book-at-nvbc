@@ -232,7 +232,7 @@ export async function findByMemberCode(raw: unknown): Promise<Result<Membership>
 
 export async function setMembershipPayment(id: string, status: unknown): Promise<Result<{ id: string }>> {
   if (!isId(id)) return fail(400, "Invalid id.");
-  if (!isPaymentStatus(status)) return fail(400, "Unknown payment status.");
+  if (!isPaymentStatus(status) || status === "rejected") return fail(400, "Unknown payment status.");
   const { rowCount } = await db().query(
     `UPDATE memberships SET payment_status = $2,
             paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END

@@ -7,6 +7,9 @@ export const REFUND_HOURS = 12;
 /** After booking online, players have this long to pay and send their receipt or reference number. */
 export const PAY_WINDOW_MINUTES = 15;
 
+/** Nothing (accepted) paid yet: unpaid, or the payment sent was rejected by staff. */
+export const awaitingPayment = (paymentStatus: string) => paymentStatus === "unpaid" || paymentStatus === "rejected";
+
 type Now = { date: string; time: number }; // time of day in hours, e.g. 9.75 = 9:45 AM
 
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86_400_000);
@@ -48,7 +51,7 @@ export function shouldRelease(
   now: Now,
   nowMs: number = Date.now()
 ): boolean {
-  if ((b.status !== "pending" && b.status !== "reserved") || b.payment_status !== "unpaid" || b.amount <= 0) return false;
+  if ((b.status !== "pending" && b.status !== "reserved") || !awaitingPayment(b.payment_status) || b.amount <= 0) return false;
   if (b.phase || b.auto_release === false) return false;
   return minutesUntilStart(b.date, b.start_hour, now) <= RELEASE_MINUTES || (!!b.pay_by && Date.parse(b.pay_by) <= nowMs);
 }

@@ -20,6 +20,23 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Get updates about your booking.** Turn on notifications (on your phone or computer) or add
+  your email — on the booking confirmation or on My booking — and we'll let you know when your
+  payment is confirmed, if there's a problem with it, and remind you 1 hour before your time.
+  The booking form also has an optional email field. On iPhone/iPad, add NVBC to your Home Screen
+  first to get notifications.
+- **A second chance if your payment can't be verified.** If staff can't verify the payment you
+  sent, your booking stays held: you'll see why, and get 15 more minutes to send a correct payment
+  or screenshot.
+- **Staff:** **Reject a payment, with a note.** "✕ Reject payment…" on a booking waiting for
+  verification, with one-tap reasons (amount doesn't match, not received, and so on) or your own
+  note. The customer sees the note on their booking page and gets a notification or email. The
+  booking shows "Payment rejected — waiting for the customer", and "Rejected earlier" with the note
+  once they send a new payment. The card also shows whether the customer turned on updates.
+- **Database:** Payment status "rejected" with its note, who rejected it and when; bookings'
+  optional customer email and reminder time; a table of customers' devices with notifications on.
+- **Internal:** New optional settings `SITE_URL` (links in customer emails) and `CRON_SECRET`
+  (for `/api/cron/reminders`, to send reminders on time when the site is quiet).
 - **More GCash numbers to pay to.** When paying by GCash you may now see more than one NVBC GCash
   number — send your payment to any one of them.
 - **Staff:** **Extra GCash accounts.** In Settings → Payment methods, "+ Add another GCash number"

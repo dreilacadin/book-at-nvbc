@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import FullScreenLoader from "@/components/FullScreenLoader";
-import { minutesUntilStart, startedUnverified } from "@/lib/booking-policy";
+import { awaitingPayment, minutesUntilStart, startedUnverified } from "@/lib/booking-policy";
 import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import {
   formatPeso,
@@ -128,7 +128,7 @@ export default function BookingsTab({
   const gone = bookings.filter((b) => b.status === "cancelled").sort(byTime);
   const billed = active.filter((b) => b.payment_status !== "waived").reduce((s, b) => s + b.amount, 0);
   const collected = bookings.filter((b) => b.payment_status === "paid").reduce((s, b) => s + b.amount, 0);
-  const unpaid = active.filter((b) => b.payment_status === "unpaid").reduce((s, b) => s + b.amount, 0);
+  const unpaid = active.filter((b) => awaitingPayment(b.payment_status)).reduce((s, b) => s + b.amount, 0);
   const toVerify = active.filter((b) => b.payment_status === "for_verification").length;
 
   const matches = (b: AdminBooking) => {
@@ -252,9 +252,10 @@ function BookingRow({
   const now = nowAtFacility();
   if (startedUnverified(b, now)) flags.push("⚠ Started — payment not verified");
   // Played (time is over) but never paid — e.g. older bookings confirmed before payment was required.
-  else if (b.status !== "cancelled" && b.payment_status === "unpaid" && b.amount > 0 && !b.phase && minutesUntilStart(b.date, b.end_hour, now) <= 0)
+  else if (b.status !== "cancelled" && awaitingPayment(b.payment_status) && b.amount > 0 && !b.phase && minutesUntilStart(b.date, b.end_hour, now) <= 0)
     flags.push("⚠ Ended — not paid");
-  else if (b.payment_status === "for_verification") flags.push("⚠ Verify payment");
+  else if (b.payment_status === "for_verification") flags.push(b.rejected_at ? "⚠ Verify payment (sent again)" : "⚠ Verify payment");
+  else if (b.status !== "cancelled" && b.payment_status === "rejected") flags.push("✕ Payment rejected — waiting for customer");
   if (release) flags.push(release.replace(/^Released at /, "Releases "));
   if (b.expired_member_id && !b.expired_member_reminded) flags.push("⚠ Membership expired");
   if (b.payment_reuse.some((o) => o.same_proof)) flags.push("⚠ Screenshot used before");

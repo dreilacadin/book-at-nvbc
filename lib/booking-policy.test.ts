@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bookingPhase, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified } from "./booking-policy.ts";
+import { awaitingPayment, bookingPhase, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified } from "./booking-policy.ts";
 import { formatClock } from "./format.ts";
 
 test("minutesUntilStart across days and half hours", () => {
@@ -110,4 +110,14 @@ test("startedUnverified flags started bookings whose online payment wasn't verif
   assert.equal(startedUnverified(b, { date: "2026-10-01", time: 10 }), true);
   assert.equal(startedUnverified({ ...b, phase: "in_progress" }, { date: "2026-10-01", time: 10.5 }), false);
   assert.equal(startedUnverified({ ...b, payment_status: "unpaid" }, { date: "2026-10-01", time: 10.5 }), false);
+});
+
+test("shouldRelease: a rejected payment counts as unpaid (fresh window, then released)", () => {
+  const b = { status: "pending", payment_status: "rejected", amount: 400, date: "2026-10-01", start_hour: 18 };
+  const now = { date: "2026-10-01", time: 12 };
+  const nowMs = Date.parse("2026-10-01T04:00:00Z"); // 12:00 PM in Manila
+  assert.equal(shouldRelease({ ...b, pay_by: new Date(nowMs + 60_000).toISOString() }, now, nowMs), false); // still has time
+  assert.equal(shouldRelease({ ...b, pay_by: new Date(nowMs - 1).toISOString() }, now, nowMs), true); // window over
+  assert.equal(shouldRelease(b, { date: "2026-10-01", time: 17 + 50 / 60 }), true); // 10 minutes before the start
+  assert.ok(awaitingPayment("rejected") && awaitingPayment("unpaid") && !awaitingPayment("for_verification"));
 });

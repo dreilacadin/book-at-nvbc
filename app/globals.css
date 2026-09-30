@@ -686,3 +686,20 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .gcash-more-row { width: 100%; align-items: end; grid-template-columns: 1fr 1fr auto; }
 @media (max-width: 560px) { .gcash-more-row { grid-template-columns: 1fr; padding-top: 10px; border-top: 1px solid var(--border); } .gcash-more-row > button { justify-self: start; } }
 .gcash-more-row > button { align-self: end; margin-bottom: 2px; }
+
+/* Rejected payments */
+.pay-status.rejected { background: var(--danger-soft); color: var(--danger); }
+.rejected-note { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); font-size: 14px; }
+.reject-box { display: grid; gap: 8px; margin-top: 10px; padding: 12px; border: 1px solid var(--danger); border-radius: 12px; background: var(--surface); }
+.reject-box textarea { min-height: 64px; }
+.reason-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.reason-chips .chip { font-size: 13px; text-align: left; }
+.reason-chips .chip.on { border-color: var(--danger); color: var(--danger); }
+.pay-rejected { font-size: 14px; }
+
+/* Customers: get updates about a booking (push / email) */
+.alerts-box { margin: 14px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+.alerts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
+.alerts-on { color: var(--brand); font-weight: 600; font-size: 14px; }
+.alerts-email { display: flex; gap: 8px; width: 100%; }
+.alerts-email input { flex: 1; min-width: 0; }

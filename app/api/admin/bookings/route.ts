@@ -34,6 +34,8 @@ export async function GET(req: NextRequest) {
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof, b.pay_by,
               b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
+              b.rejected_note, b.rejected_by, b.rejected_at, b.customer_email,
+              (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = b.id) AS alert_devices,
               mb.member_code, mb.full_name AS member_name,
               ex.id AS expired_member_id, ex.full_name AS expired_member_name,
               ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,
@@ -84,7 +86,7 @@ export async function GET(req: NextRequest) {
 }
 
 // Admin only: { action: "cancel", id } | { action: "create", ...booking fields }
-//           | { action: "payment", id, status, method?, reference? }
+//           | { action: "payment", id, status, method?, reference?, note? }   (note: required to reject)
 //           | { action: "delete", id }   (cancelled bookings only)
 //           | { action: "update", id, courtId, date, startHour, endHour, name, contact, notes,
 //               rateType, hourlyRate, paymentMethod, paymentRef }
@@ -95,7 +97,7 @@ export async function POST(req: NextRequest) {
     const body = await readJson(req);
     if (body.action === "cancel") return respond(await cancelById(String(body.id ?? ""), me.name));
     if (body.action === "payment")
-      return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference));
+      return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? "")));

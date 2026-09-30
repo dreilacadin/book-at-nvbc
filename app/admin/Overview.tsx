@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDateLong, formatHour, halfHours, SLOT_HOURS } from "@/lib/format";
 import { bookingStatusLabel, formatPeso, paymentLabel } from "@/lib/pricing";
+import { awaitingPayment } from "@/lib/booking-policy";
 import { SPORTS, sportEmoji, type Sport } from "@/lib/sports";
 import { blockedSlots, type CourtBlock } from "@/lib/blocks";
 import { api, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
@@ -127,7 +128,7 @@ function summarize(list: AdminBooking[]) {
     hours: active.reduce((s, b) => s + hoursOf(b), 0),
     billed: active.filter((b) => b.payment_status !== "waived").reduce((s, b) => s + b.amount, 0),
     collected: list.filter((b) => b.payment_status === "paid").reduce((s, b) => s + b.amount, 0),
-    unpaid: active.filter((b) => b.payment_status === "unpaid").reduce((s, b) => s + b.amount, 0),
+    unpaid: active.filter((b) => awaitingPayment(b.payment_status)).reduce((s, b) => s + b.amount, 0),
     toVerify: active.filter((b) => b.payment_status === "for_verification").length,
     pending: active.filter((b) => b.status === "pending" || b.status === "reserved").length,
     cancelled: list.length - active.length,

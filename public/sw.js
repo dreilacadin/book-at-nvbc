@@ -1,4 +1,5 @@
-// NVBC staff notifications: shows push notifications and opens the admin panel when one is tapped.
+// NVBC push notifications — for staff (open the admin panel) and for customers about their booking
+// (open My booking). Shows the notification, and opens its page when it's tapped.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
@@ -27,9 +28,11 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      // Reuse an open NVBC admin tab if there is one.
+      // Reuse an open NVBC tab of the same kind (admin panel, or My booking) if there is one.
+      const target = new URL(url).pathname;
+      const area = (p) => (p.startsWith("/admin") ? "/admin" : p);
       for (const w of wins) {
-        if (new URL(w.url).pathname.startsWith("/admin") && "focus" in w) {
+        if (area(new URL(w.url).pathname) === area(target) && "focus" in w) {
           await w.navigate(url).catch(() => {});
           return w.focus();
         }
