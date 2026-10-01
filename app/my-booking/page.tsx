@@ -1,6 +1,7 @@
 "use client";
 
 import BookingAlerts from "@/components/BookingAlerts";
+import BookingChat from "@/components/BookingChat";
 import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingQr from "@/components/BookingQr";
 import PaymentPanel from "@/components/PaymentPanel";
@@ -43,6 +44,7 @@ type Booking = {
   courtNotes: string;
   phase: "in_progress" | "completed" | null;
   rejectedNote: string; // payment rejected by staff: why
+  unreadMessages: number; // new messages from staff
 };
 
 export default function MyBookingPage() {
@@ -239,6 +241,15 @@ export default function MyBookingPage() {
             )}
           </p>
 
+          {booking.unreadMessages > 0 && (
+            <a href="#booking-chat" className="notice info chat-new">
+              💬 You have{" "}
+              {booking.unreadMessages === 1
+                ? "a new message"
+                : `${booking.unreadMessages} new messages`}{" "}
+              from NVBC staff — see below ↓
+            </a>
+          )}
           {booking.courtNotes && booking.status !== "cancelled" && (
             <div className="court-note">ⓘ {booking.courtNotes}</div>
           )}
@@ -369,6 +380,7 @@ export default function MyBookingPage() {
               for changes.
             </p>
           )}
+          <BookingChat key={`chat-${booking.code}`} code={booking.code} />
           {booking.status !== "cancelled" && booking.amount > 0 && (
             <BookingPolicy title="Good to know" />
           )}

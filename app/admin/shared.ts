@@ -44,6 +44,8 @@ export type AdminBooking = {
   rejected_at: string | null;
   customer_email: string; // customer gets updates by email
   alert_devices: number; // customer's devices with push notifications on
+  message_count: number; // messages with the customer about this booking
+  unread_messages: number; // from the customer, not yet read by staff
 };
 export type PaymentReuse = {
   code: string;

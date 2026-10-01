@@ -116,6 +116,10 @@ Open /admin → **Settings**:
 
 Staff change the status from the dropdown in each booking row. The top of the Bookings tab shows billed / collected / unpaid totals for the day and how many payments are waiting to be verified. When a booking is For verification, its card shows the screenshot beside a **Check the payment** checklist: the amount it should show, the account it should have gone to (from Settings), the date and time it should be dated (when the player sent it), and the reference number. Staff tick each one; confirming with boxes unticked asks first. The site also checks automatically whether the same reference number (ignoring spaces, dashes and case) or the exact same screenshot was sent for another booking, and lists those bookings with ⚠ — with a note when it's the same name, since one transfer may cover several bookings.
 
+### Messages with customers
+
+Each booking has its own conversation. Customers write from **My booking**; staff read and reply under **Messages** on the booking card (new messages show in the 🔔 bell, as push notifications, and as "💬 New message" on the booking's row). Customers see replies on their booking page and get a notification or email if they turned on updates. Customers can send up to 10 messages per 10 minutes; messages are up to 1,000 characters.
+
 ### Booking history and the activity log
 
 Every change to a booking is recorded with the time and who made it — the staff member's name, "Customer", or "System" (automatic releases). Open **History** at the bottom of a booking card to see it all, including exactly what an edit changed. The **Staff** tab has an **Activity log** of everything staff did to bookings (filter by person; click a code to open the booking). Entries are kept even after a booking is deleted.

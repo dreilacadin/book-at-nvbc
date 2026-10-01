@@ -717,3 +717,21 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .activity-head h2 { margin-right: auto !important; }
 .activity-log .link-btn { padding: 0; font-size: 14px; }
 @media (max-width: 520px) { .history-list li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Messages between a customer and staff about a booking */
+.chat-box { margin: 16px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+.chat { display: grid; gap: 10px; margin-top: 8px; }
+.chat-empty { margin: 0; }
+.chat-list { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; padding: 2px; }
+.chat-msg { display: flex; flex-direction: column; max-width: 85%; }
+.chat-msg.mine { align-self: flex-end; align-items: flex-end; }
+.chat-msg.theirs { align-self: flex-start; align-items: flex-start; }
+.chat-bubble { padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.4; }
+.chat-msg.mine .chat-bubble { background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg.theirs .chat-bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.chat-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.chat-form { display: flex; gap: 8px; align-items: flex-end; }
+.chat-form textarea { flex: 1; min-width: 0; min-height: 44px; resize: vertical; }
+a.chat-new { display: block; margin-top: 12px; text-decoration: none; font-weight: 600; }
+.bk-messages { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.bk-messages > summary { cursor: pointer; font-weight: 600; font-size: 14px; }

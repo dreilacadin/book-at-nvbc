@@ -5,6 +5,7 @@ export const NOTIFY_KINDS = [
   { id: "payment_sent", label: "Payment proof sent (needs verifying)", icon: "💸" },
   { id: "booking_gone", label: "Cancelled or released bookings", icon: "↩️" },
   { id: "member_applied", label: "New membership applications", icon: "🪪" },
+  { id: "message", label: "Messages from customers", icon: "💬" },
 ] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]["id"];
 export const ALL_KINDS: NotifyKind[] = NOTIFY_KINDS.map((k) => k.id);

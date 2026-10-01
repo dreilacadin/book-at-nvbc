@@ -37,3 +37,13 @@ test("isEmail", () => {
   assert.ok(isEmail("a.b@gmail.com"));
   for (const bad of ["", "a@b", "a b@c.com", "@c.com", "x".repeat(120) + "@a.com"]) assert.ok(!isEmail(bad), bad);
 });
+
+test("message: shows who sent it and the text; push body is shortened", () => {
+  const long = "x".repeat(200);
+  const n = customerNotice("message", b, { link, message: "Court 1 is wet — we moved you to Court 2.", from: "Janette" });
+  assert.equal(n.title, "New message from NVBC");
+  assert.match(n.text, /Janette from NVBC sent you a message/);
+  assert.match(n.text, /“Court 1 is wet — we moved you to Court 2\.”/);
+  assert.ok(n.text.includes(link));
+  assert.equal(customerNotice("message", b, { link, message: long }).body.length, 138);
+});

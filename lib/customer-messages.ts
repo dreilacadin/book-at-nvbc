@@ -2,7 +2,7 @@
 // imports), so it can be tested.
 import { formatDateLong, formatRange } from "./format.ts";
 
-export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming";
+export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming" | "message";
 
 /** The "coming up" reminder goes out this long before the start. */
 export const REMINDER_MINUTES = 60;
@@ -38,7 +38,7 @@ const pesos = (n: number) => `₱${n.toLocaleString("en-PH", { maximumFractionDi
 export function customerNotice(
   kind: CustomerNoticeKind,
   b: NoticeBooking,
-  opts: { link: string; payByClock?: string }
+  opts: { link: string; payByClock?: string; message?: string; from?: string }
 ): CustomerNotice {
   const when = `${formatDateLong(b.date)}, ${formatRange(b.startHour, b.endHour)}`;
   const where = `${b.courtName}, ${when}`;
@@ -69,6 +69,19 @@ export function customerNotice(
         `We're still holding your slot. Please send a correct payment of ${pesos(b.amount)} and its reference number or screenshot${deadline} ` +
         `on your booking page — otherwise the slot will be released for other players:\n${opts.link}\n\n` +
         `If you think this is a mistake, please contact the front desk.\n\nNV Badminton Center`,
+    };
+  }
+
+  if (kind === "message") {
+    const msg = (opts.message ?? "").trim();
+    const short = msg.length > 140 ? `${msg.slice(0, 137)}…` : msg;
+    return {
+      title: "New message from NVBC",
+      body: short,
+      subject: `Message about your booking ${b.code}`,
+      text:
+        `Hi ${firstName(b.name)},\n\n${opts.from ? `${opts.from} from ` : ""}NVBC sent you a message about your booking:\n\n${where}\n` +
+        `Booking code: ${b.code}\n\n“${msg}”\n\nYou can reply on your booking page:\n${opts.link}\n\nNV Badminton Center`,
     };
   }
 

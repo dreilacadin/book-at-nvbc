@@ -31,13 +31,15 @@ const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name, c.name AS c
 const manilaClock = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", hour12: true });
 
-async function deliver(kind: CustomerNoticeKind, r: Row): Promise<void> {
+async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; email?: boolean } = {}): Promise<void> {
   const b: NoticeBooking = {
     code: r.code, name: r.name, courtName: r.court_name, date: r.date, startHour: r.start_hour, endHour: r.end_hour,
     amount: Number(r.amount), paymentStatus: r.payment_status, paymentMethod: r.payment_method, status: r.status,
     rejectedNote: r.rejected_note,
   };
-  const n = customerNotice(kind, b, { link: siteOrigin() + bookingPath(r.code), payByClock: r.pay_by ? manilaClock(r.pay_by) : undefined });
+  const n = customerNotice(kind, b, {
+    link: siteOrigin() + bookingPath(r.code), payByClock: r.pay_by ? manilaClock(r.pay_by) : undefined, message: extra.message, from: extra.from,
+  });
 
   const { rows: subs } = await db().query<{ endpoint: string; p256dh: string; auth: string }>(
     `SELECT endpoint, p256dh, auth FROM customer_push_subscriptions WHERE booking_id = $1`,
@@ -59,7 +61,7 @@ async function deliver(kind: CustomerNoticeKind, r: Row): Promise<void> {
       })
     );
   }
-  if (r.customer_email && emailSender()) {
+  if (r.customer_email && extra.email !== false && emailSender()) {
     try {
       await sendEmail(r.customer_email, n.subject, n.text);
     } catch (e) {
@@ -83,6 +85,23 @@ export function notifyCustomer(bookingId: string, kind: "confirmed" | "rejected"
   later(async () => {
     const { rows } = await db().query<Row>(`SELECT ${ROW_SQL} FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`, [bookingId]);
     if (rows[0]) await deliver(kind, rows[0]);
+  });
+}
+
+/**
+ * Tells the customer staff sent them a message. Push every time; email only for the first of a
+ * quick burst (no other staff message in the last few minutes), so a chat doesn't flood their inbox.
+ */
+export function notifyCustomerMessage(bookingId: string, messageId: number, from: string, message: string): void {
+  later(async () => {
+    const { rows } = await db().query<Row & { recent: number }>(
+      `SELECT ${ROW_SQL},
+              (SELECT count(*)::int FROM booking_messages m WHERE m.booking_id = b.id AND m.sender_kind = 'staff'
+                  AND m.id <> $2 AND m.created_at > now() - interval '5 minutes') AS recent
+         FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`,
+      [bookingId, messageId]
+    );
+    if (rows[0]) await deliver("message", rows[0], { message, from, email: rows[0].recent === 0 });
   });
 }
 

@@ -36,6 +36,9 @@ export async function GET(req: NextRequest) {
               b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
               b.rejected_note, b.rejected_by, b.rejected_at, b.customer_email,
               (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = b.id) AS alert_devices,
+              (SELECT count(*)::int FROM booking_messages m WHERE m.booking_id = b.id) AS message_count,
+              (SELECT count(*)::int FROM booking_messages m
+                WHERE m.booking_id = b.id AND m.sender_kind = 'customer' AND m.read_at IS NULL) AS unread_messages,
               mb.member_code, mb.full_name AS member_name,
               ex.id AS expired_member_id, ex.full_name AS expired_member_name,
               ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,

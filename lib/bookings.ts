@@ -575,6 +575,7 @@ export type BookingView = {
   courtNotes: string;
   phase: Phase | null; // in progress / completed (by the clock for paid bookings, or set by staff)
   rejectedNote: string; // payment rejected by staff: why (empty otherwise)
+  unreadMessages: number; // messages from staff the customer hasn't seen
 };
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
@@ -586,7 +587,9 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
     `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
             b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
             b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
-            b.pay_by, c.notes AS court_notes, b.phase, b.rejected_note
+            b.pay_by, c.notes AS court_notes, b.phase, b.rejected_note,
+            (SELECT count(*)::int FROM booking_messages m
+              WHERE m.booking_id = b.id AND m.sender_kind = 'staff' AND m.read_at IS NULL) AS unread_messages
        FROM bookings b JOIN courts c ON c.id = b.court_id
       WHERE b.cancel_code = $1`,
     [code]
@@ -617,6 +620,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       payBy: r.pay_by && (r.payment_status === "unpaid" || r.payment_status === "rejected") && r.status === "pending"
         ? new Date(r.pay_by).toISOString() : null,
       rejectedNote: r.payment_status === "rejected" ? r.rejected_note : "",
+      unreadMessages: r.unread_messages,
       courtNotes: r.court_notes,
       phase: bookingPhase(
         { status: r.status, phase: r.phase, payment_status: r.payment_status, amount: r.amount, date: r.booking_date, start_hour: r.start_hour, end_hour: r.end_hour },

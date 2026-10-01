@@ -445,3 +445,26 @@ SELECT id, cancel_code, cancelled_at,
 UNION ALL
 SELECT id, cancel_code, restored_at, restored_by, 'staff', 'Restored', 'After an automatic release'
   FROM missing WHERE restored_at IS NOT NULL AND restored_by IS NOT NULL;
+
+-- v22: messages between a customer and staff about one booking -------------------------------
+-- read_at: when the other side read it (customer messages: by staff; staff messages: by the customer).
+CREATE TABLE IF NOT EXISTS booking_messages (
+  id           BIGSERIAL PRIMARY KEY,
+  booking_id   UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  sender_kind  TEXT NOT NULL CHECK (sender_kind IN ('customer', 'staff')),
+  sender_name  TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS booking_messages_booking_idx ON booking_messages (booking_id, id);
+CREATE INDEX IF NOT EXISTS booking_messages_unread_idx ON booking_messages (booking_id, sender_kind) WHERE read_at IS NULL;
+-- New staff notification kind "message": switched on once for everyone (kinds_version 2), so
+-- staff who later switch it off keep it off.
+ALTER TABLE admin_notify_state ADD COLUMN IF NOT EXISTS kinds_version INT NOT NULL DEFAULT 1;
+UPDATE admin_notify_state SET kinds = array_append(kinds, 'message')
+ WHERE kinds_version < 2 AND NOT ('message' = ANY(kinds));
+UPDATE admin_notify_state SET kinds_version = 2 WHERE kinds_version < 2;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 2;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds
+  SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message'];

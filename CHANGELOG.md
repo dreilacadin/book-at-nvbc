@@ -20,6 +20,17 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Message NVBC staff about your booking.** On My booking there's now a chat with NVBC staff for
+  questions about your booking, payment or anything else. Replies appear there (with a "new
+  message" note at the top of your booking), and by notification or email if you turned on
+  updates.
+- **Staff:** **Chat with customers per booking.** Each booking card has a **Messages** section to
+  read and reply (or start a conversation). New customer messages show in the 🔔 bell and as push
+  notifications (a new "Messages from customers" type, on for everyone — switch it off in ⚙
+  Settings), and as "💬 New message" on the booking's row. Customers get a notification for each
+  reply and an email for the first of several quick replies. Messages show "Seen" once read.
+- **Database:** New table for booking messages; staff notification settings gain the new
+  "Messages from customers" type.
 - **Staff:** **Booking history — who did what, and when.** Every booking card has a **History**
   section listing each change with the time and who made it: booked, payment sent, payment
   confirmed or changed (e.g. "For verification → Paid"), rejected (with the note), edited (exactly
