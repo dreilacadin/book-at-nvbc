@@ -30,6 +30,7 @@ import { nowAtFacility } from "@/lib/time";
 import BookingHistory from "./BookingHistory";
 import BookingMessages from "./BookingMessages";
 import EditBooking from "./EditBooking";
+import ProofViewer from "./ProofViewer";
 import QrScanner from "./QrScanner";
 import { api, type AdminBooking, type Court, type PaymentReuse } from "./shared";
 
@@ -138,11 +139,11 @@ function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<stri
   return (
     <div className="pay-check">
       {b.has_proof ? (
-        <a href={proof} target="_blank" rel="noopener noreferrer" className="pay-shot" title="Open the screenshot full size">
+        <ProofViewer src={proof} alt={`${b.name}'s payment screenshot`} className="pay-shot">
           {/* eslint-disable-next-line @next/next/no-img-element -- private, auth-protected image */}
           <img src={proof} alt={`${b.name}'s payment screenshot`} />
           <span>🔍 Open full size</span>
-        </a>
+        </ProofViewer>
       ) : (
         <div className="pay-shot none">
           No screenshot — reference number only. Look it up in the {paymentLabel(b.payment_method)} app&apos;s history.
@@ -346,7 +347,9 @@ export function AdminBookingCard({
           <dd>
             {paymentLabel(b.payment_method)} · {paymentStatusLabel(b.payment_status)}
             {b.payment_ref && <> · <span style={{ fontFamily: "ui-monospace, monospace" }}>{b.payment_ref}</span></>}
-            {b.has_proof && <> · <a href={`/api/admin/bookings/proof?id=${b.id}`} target="_blank" rel="noopener noreferrer">📷 Screenshot</a></>}
+            {b.has_proof && (
+              <> · <ProofViewer src={`/api/admin/bookings/proof?id=${b.id}`} alt={`${b.name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>
+            )}
           </dd>
         </div>
         {release && <div><dt>If unpaid</dt><dd><strong>{release}</strong></dd></div>}

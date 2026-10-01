@@ -135,6 +135,9 @@ Earlier changes (before this file existed) are in the git history.
   been played.
 
 ### Fixed
+- **Staff:** On Android (especially in the installed app), tapping a payment screenshot showed
+  "Please log in again" instead of the picture. Screenshots now open full screen right on the page
+  (tap or ✕ to close), and links into the admin panel from outside the site keep you logged in.
 - **Staff:** On phones, the notifications panel (and its ⚙ Settings) was cut off at the left edge
   of the screen. It now opens as a full-width panel with a ✕ to close it.
 - **Menu links stay tidy on phones.** The links at the top of the page no longer break onto two

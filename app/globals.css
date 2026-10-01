@@ -735,3 +735,13 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 a.chat-new { display: block; margin-top: 12px; text-decoration: none; font-weight: 600; }
 .bk-messages { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
 .bk-messages > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+
+/* Payment screenshot, full screen inside the page */
+button.proof-open { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: zoom-in; }
+button.proof-open.link-btn { color: var(--brand); text-decoration: underline; font-size: inherit; padding: 0; }
+button.proof-open.pay-shot { width: 100%; color: var(--brand); }
+.lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, .9); display: flex; align-items: center; justify-content: center;
+  padding: 12px; cursor: zoom-out; touch-action: pinch-zoom; }
+.lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; background: #fff; }
+.lightbox-close { position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 12px; width: 44px; height: 44px; border-radius: 50%;
+  border: 0; background: rgba(255, 255, 255, .15); color: #fff; font-size: 20px; cursor: pointer; }

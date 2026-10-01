@@ -65,7 +65,10 @@ export async function isAdmin(req: NextRequest): Promise<boolean> {
 export function setAdminCookie(res: NextResponse, who: number | null, version: number) {
   res.cookies.set(ADMIN_COOKIE, issueToken(who, version), {
     httpOnly: true,
-    sameSite: "strict",
+    // "lax", not "strict": links into the admin panel from outside the site (a push notification,
+    // or a page opened from the installed app on Android) must keep staff logged in. Every change
+    // is a POST, which lax still never sends from other sites.
+    sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: MAX_AGE_SECONDS,

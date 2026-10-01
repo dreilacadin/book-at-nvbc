@@ -9,6 +9,7 @@ import EditMember from "./EditMember";
 import ImportMembers from "./ImportMembers";
 import QrScanner from "./QrScanner";
 import { api, todayManila, type AdminMember } from "./shared";
+import ProofViewer from "./ProofViewer";
 import FullScreenLoader from "@/components/FullScreenLoader";
 
 type Filter = "action" | "active" | "expired" | "forfeited" | "rejected" | "all";
@@ -218,7 +219,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                           {formatPeso(m.fee)} · {paymentLabel(m.payment_method)}
                           {m.payment_ref && <> · <span style={{ fontFamily: "ui-monospace, monospace" }}>{m.payment_ref}</span></>}
                           {m.has_proof && (
-                            <> · <a href={`/api/admin/members/proof?id=${m.id}`} target="_blank" rel="noopener noreferrer">📷 Screenshot</a></>
+                            <> · <ProofViewer src={`/api/admin/members/proof?id=${m.id}`} alt={`${m.full_name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>
                           )}
                         </div>
                         <select aria-label="Payment status" className={`pay-status ${m.payment_status}`} value={m.payment_status}
