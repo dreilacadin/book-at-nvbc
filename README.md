@@ -116,6 +116,10 @@ Open /admin → **Settings**:
 
 Staff change the status from the dropdown in each booking row. The top of the Bookings tab shows billed / collected / unpaid totals for the day and how many payments are waiting to be verified. When a booking is For verification, its card shows the screenshot beside a **Check the payment** checklist: the amount it should show, the account it should have gone to (from Settings), the date and time it should be dated (when the player sent it), and the reference number. Staff tick each one; confirming with boxes unticked asks first. The site also checks automatically whether the same reference number (ignoring spaces, dashes and case) or the exact same screenshot was sent for another booking, and lists those bookings with ⚠ — with a note when it's the same name, since one transfer may cover several bookings.
 
+### Booking history and the activity log
+
+Every change to a booking is recorded with the time and who made it — the staff member's name, "Customer", or "System" (automatic releases). Open **History** at the bottom of a booking card to see it all, including exactly what an edit changed. The **Staff** tab has an **Activity log** of everything staff did to bookings (filter by person; click a code to open the booking). Entries are kept even after a booking is deleted.
+
 ### Updates for customers
 
 Players can get updates about their booking: **payment confirmed**, **payment rejected** (with the staff note and the new deadline), and a reminder **1 hour before** their time. On the booking confirmation and on My booking they can **Turn on notifications** (push to that phone or computer — needs the VAPID keys; on iPhone/iPad only after adding NVBC to the Home Screen) and/or save an email (also an optional field on the booking form; emails use the Gmail sender). The booking card in /admin shows whether a customer turned updates on.

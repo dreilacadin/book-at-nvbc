@@ -23,6 +23,7 @@ import { AdminBookingCard } from "./BookingLookup";
 import BookingsTab from "./BookingsTab";
 import Notifications from "./Notifications";
 import StaffTab from "./StaffTab";
+import ActivityLog from "./ActivityLog";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
@@ -122,7 +123,12 @@ export default function AdminPage() {
       )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
       {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
-      {tab === "staff" && <StaffTab onAuthError={onAuthError} />}
+      {tab === "staff" && (
+        <>
+          <StaffTab onAuthError={onAuthError} />
+          <ActivityLog onOpenBooking={setOpenCode} onAuthError={onAuthError} />
+        </>
+      )}
       {openCode && openBooking && (
         <div className="backdrop" onClick={() => setOpenCode(null)}>
           <div className="card modal staff-modal" role="dialog" aria-modal="true" aria-label={`Booking ${openBooking.code}`}

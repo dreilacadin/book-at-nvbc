@@ -20,6 +20,16 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Staff:** **Booking history — who did what, and when.** Every booking card has a **History**
+  section listing each change with the time and who made it: booked, payment sent, payment
+  confirmed or changed (e.g. "For verification → Paid"), rejected (with the note), edited (exactly
+  what changed — court, time, name, rate, amount, reference…), progress marked, cancelled, released
+  by the system, restored and deleted. Customers' own actions show as "Customer".
+- **Staff:** **Activity log.** In the Staff tab, a list of what staff did to bookings, newest first,
+  with a filter by staff member. Click a booking code to open it. Deleted bookings stay in the log.
+  Bookings made before this show what was already recorded (who cancelled, restored or rejected
+  them); earlier payment confirmations show as "Unknown staff".
+- **Database:** New booking history table, filled in from existing bookings on the first run.
 - **Get updates about your booking.** Turn on notifications (on your phone or computer) or add
   your email — on the booking confirmation or on My booking — and we'll let you know when your
   payment is confirmed, if there's a problem with it, and remind you 1 hour before your time.

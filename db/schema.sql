@@ -400,3 +400,48 @@ CREATE TABLE IF NOT EXISTS customer_push_subscriptions (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (booking_id, endpoint)
 );
+
+-- v21: booking history (who did what, and when) ----------------------------------------------
+-- One row per change to a booking: by a staff member (their name at the time), the customer, or
+-- the system (automatic release). Kept when a booking is deleted (booking_id becomes NULL; the
+-- code stays). action is a short label ("Payment status", "Cancelled", "Edited", ...), details
+-- says what changed.
+CREATE TABLE IF NOT EXISTS booking_history (
+  id            BIGSERIAL PRIMARY KEY,
+  booking_id    UUID REFERENCES bookings(id) ON DELETE SET NULL,
+  booking_code  TEXT NOT NULL,
+  at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor         TEXT NOT NULL,
+  actor_kind    TEXT NOT NULL CHECK (actor_kind IN ('staff', 'customer', 'system')),
+  action        TEXT NOT NULL,
+  details       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS booking_history_booking_idx ON booking_history (booking_id, at);
+CREATE INDEX IF NOT EXISTS booking_history_at_idx ON booking_history (at DESC);
+-- Bookings made before the log existed: what the booking itself recorded (once; later bookings
+-- always have history, so this finds nothing on the next run).
+WITH missing AS (
+  SELECT b.* FROM bookings b WHERE NOT EXISTS (SELECT 1 FROM booking_history h WHERE h.booking_id = b.id)
+)
+INSERT INTO booking_history (booking_id, booking_code, at, actor, actor_kind, action, details)
+SELECT id, cancel_code, created_at,
+       CASE WHEN contact = '(admin)' THEN 'Unknown staff' ELSE 'Customer' END,
+       CASE WHEN contact = '(admin)' THEN 'staff' ELSE 'customer' END,
+       'Booked', 'From earlier records'
+  FROM missing
+UNION ALL
+SELECT id, cancel_code, paid_at, 'Unknown staff', 'staff', 'Payment status', 'Marked Paid (from earlier records)'
+  FROM missing WHERE paid_at IS NOT NULL
+UNION ALL
+SELECT id, cancel_code, rejected_at, COALESCE(rejected_by, 'Unknown staff'), 'staff', 'Payment rejected', rejected_note
+  FROM missing WHERE rejected_at IS NOT NULL
+UNION ALL
+SELECT id, cancel_code, cancelled_at,
+       CASE cancelled_by WHEN 'system' THEN 'System' WHEN 'player' THEN 'Customer' ELSE cancelled_by END,
+       CASE cancelled_by WHEN 'system' THEN 'system' WHEN 'player' THEN 'customer' ELSE 'staff' END,
+       CASE WHEN cancelled_by = 'system' THEN 'Released' ELSE 'Cancelled' END,
+       CASE WHEN cancelled_by = 'system' THEN 'Not paid in time' ELSE '' END
+  FROM missing WHERE status = 'cancelled' AND cancelled_at IS NOT NULL
+UNION ALL
+SELECT id, cancel_code, restored_at, restored_by, 'staff', 'Restored', 'After an automatic release'
+  FROM missing WHERE restored_at IS NOT NULL AND restored_by IS NOT NULL;

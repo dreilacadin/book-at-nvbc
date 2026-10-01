@@ -15,6 +15,7 @@ import {
   rateTypesFor,
   rateTypeLabel,
   isPaymentStatus,
+  paymentStatusLabel,
   isRateType,
   gcashAccounts,
   PAYMENT_METHODS,
@@ -25,13 +26,15 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, RELEASE_MINUTES, type Phase } from "./booking-policy";
+import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, RELEASE_MINUTES, type Phase } from "./booking-policy";
 import { formatDateLong, formatRange, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { notifyStaff } from "./notify";
 import { notifyCustomer, scheduleReminders } from "./customer-notify";
 import { isEmail } from "./customer-messages";
+import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-history";
+import { describeChanges, type BookingFields } from "./booking-changes";
 import { BOOKING_DEFAULT_SPORT, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
@@ -106,6 +109,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
      SELECT * FROM rel`,
     [now.date, now.time, RELEASE_MINUTES]
   );
+  await logBookings(rows.map((r) => r.id), SYSTEM, "Released", "Not paid in time");
   await notifyStaff(
     rows.map((r) => ({
       kind: "booking_gone" as const,
@@ -285,7 +289,7 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 
 export async function createBooking(
   input: NewBookingInput,
-  opts: { admin?: boolean } = {}
+  opts: { admin?: boolean; by?: string } = {} // by: the staff member adding it (admin)
 ): Promise<
   Result<{
     code: string;
@@ -508,6 +512,14 @@ export async function createBooking(
     );
 
     await client.query("COMMIT");
+    await logBooking(
+      { id: bookingId },
+      admin ? staff(opts.by ?? "Staff") : CUSTOMER,
+      "Booked",
+      `${court.rows[0].name}, ${formatDateLong(date)}, ${formatRange(startHour, endHour)} · ${formatPeso(price.total)} · ` +
+        `${paymentLabel(paymentMethod)} · ${paymentStatusLabel(paymentStatus)}${paymentRef ? ` · ref ${paymentRef}` : ""}` +
+        `${paymentMethod !== "cash" && paymentProof ? " · screenshot" : ""}${admin ? " · added by staff" : ""}`
+    );
     if (!admin) {
       const paying =
         paymentStatus === "for_verification" ? `${paymentLabel(paymentMethod)} payment sent — please verify`
@@ -655,6 +667,7 @@ export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: strin
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
   const r = await cancelWhere("cancel_code = $1", code, "player", false);
   if (r.ok) {
+    await logBooking({ id: r.data.id }, CUSTOMER, "Cancelled", "On My booking");
     const b = await bookingDetails("cancel_code", code);
     if (b)
       await notifyStaff([{
@@ -671,7 +684,9 @@ export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: strin
 /** Staff cancel. `by` is recorded on the booking (the staff member's name). */
 export async function cancelById(id: string, by = "admin"): Promise<Result<{ id: string }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
-  return cancelWhere("id = $1", id, by.slice(0, 60) || "admin", true);
+  const r = await cancelWhere("id = $1", id, by.slice(0, 60) || "admin", true);
+  if (r.ok) await logBooking({ id }, staff(by), "Cancelled");
+  return r;
 }
 
 /**
@@ -726,6 +741,12 @@ export async function submitPayment(
     if (b.data.status === "cancelled") return fail(400, "This booking was cancelled.");
     return fail(400, `This booking is already marked "${b.data.paymentStatus === "paid" ? "paid" : b.data.paymentStatus}".`);
   }
+  await logBooking(
+    { code },
+    CUSTOMER,
+    "Payment sent",
+    `${paymentLabel(method)}${rows[0].payment_ref ? ` · ref ${rows[0].payment_ref}` : ""}${paymentProof ? " · screenshot" : ""}`
+  );
   const b = await bookingDetails("cancel_code", code);
   if (b)
     await notifyStaff([{
@@ -771,11 +792,19 @@ export async function setPaymentStatus(
           WHEN amount > 0 AND $2 NOT IN ('paid', 'waived')
             THEN CASE WHEN COALESCE($3, payment_method) = 'cash' THEN 'reserved' ELSE 'pending' END
           ELSE 'confirmed' END
-       FROM (SELECT id AS old_id, payment_status AS old_status FROM bookings WHERE id = $1 FOR UPDATE) old -- the value before this change
-      WHERE id = old.old_id RETURNING id, status, old.old_status`,
+       FROM (SELECT id AS old_id, payment_status AS old_status, payment_method AS old_method, payment_ref AS old_ref
+               FROM bookings WHERE id = $1 FOR UPDATE) old -- the value before this change
+      WHERE id = old.old_id RETURNING id, status, old.old_status, old.old_method, payment_method, old.old_ref, payment_ref`,
     [id, status, method ?? null, ref === undefined ? null : cleanRef(ref)]
   );
   if (!rows[0]) return fail(404, "Booking not found.");
+  const r = rows[0];
+  const changes = [
+    r.old_status !== status ? `${paymentStatusLabel(r.old_status)} → ${paymentStatusLabel(status)}` : "",
+    r.old_method !== r.payment_method ? `method ${paymentLabel(r.old_method)} → ${paymentLabel(r.payment_method)}` : "",
+    r.old_ref !== r.payment_ref ? `reference “${r.old_ref}” → “${r.payment_ref}”` : "",
+  ].filter(Boolean);
+  if (changes.length) await logBooking({ id }, staff(by), "Payment status", changes.join(" · "));
   const settled = (s: string) => s === "paid" || s === "waived";
   if (rows[0].status === "confirmed" && settled(status) && !settled(rows[0].old_status)) notifyCustomer(id, "confirmed");
   return { ok: true, data: { id, status: rows[0].status as BookingStatus } };
@@ -809,6 +838,7 @@ async function rejectPayment(id: string, rawNote: unknown, by: string): Promise<
       WHERE id = $1`,
     [id, payBy, note, by.slice(0, 60) || "admin"]
   );
+  await logBooking({ id }, staff(by), "Payment rejected", note);
   notifyCustomer(id, "rejected");
   return { ok: true, data: { id, status: "pending" } };
 }
@@ -832,7 +862,7 @@ export type BookingEdit = {
  * Moving it re-claims the hours in one transaction, so it can never overlap another booking.
  * Staff edits ignore player limits (opening hours, booking window), like staff bookings do.
  */
-export async function updateBooking(id: string, input: BookingEdit): Promise<Result<{ id: string; status: BookingStatus }>> {
+export async function updateBooking(id: string, input: BookingEdit, by = "Staff"): Promise<Result<{ id: string; status: BookingStatus }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   const courtId = Number(input.courtId);
   const startHour = Number(input.startHour);
@@ -861,8 +891,14 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
   const client = await db().connect();
   try {
     await client.query("BEGIN");
-    const cur = await client.query<{ status: BookingStatus; payment_status: PaymentStatus }>(
-      `SELECT status, payment_status FROM bookings WHERE id = $1 FOR UPDATE`,
+    const cur = await client.query<{
+      status: BookingStatus; payment_status: PaymentStatus; court_name: string; booking_date: string; start_hour: number;
+      end_hour: number; player_name: string; contact: string; notes: string; rate_type: string; hourly_rate: number;
+      amount: number; payment_method: string; payment_ref: string;
+    }>(
+      `SELECT b.status, b.payment_status, c.name AS court_name, b.booking_date, b.start_hour, b.end_hour, b.player_name,
+              b.contact, b.notes, b.rate_type, b.hourly_rate, b.amount, b.payment_method, b.payment_ref
+         FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1 FOR UPDATE OF b`,
       [id]
     );
     const b = cur.rows[0];
@@ -874,7 +910,7 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
       await client.query("ROLLBACK");
       return fail(400, "Cancelled bookings can't be edited.");
     }
-    const court = await client.query(`SELECT 1 FROM courts WHERE id = $1`, [courtId]);
+    const court = await client.query<{ name: string }>(`SELECT name FROM courts WHERE id = $1`, [courtId]);
     if (!court.rows[0]) {
       await client.query("ROLLBACK");
       return fail(400, "That court doesn't exist.");
@@ -901,6 +937,16 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
       [courtId, date, id, startHour, endHour]
     );
     await client.query("COMMIT");
+    const before: BookingFields = {
+      court: b.court_name, date: b.booking_date, startHour: Number(b.start_hour), endHour: Number(b.end_hour), name: b.player_name,
+      contact: b.contact, notes: b.notes, rateType: b.rate_type, hourlyRate: Number(b.hourly_rate), amount: Number(b.amount),
+      paymentMethod: b.payment_method, paymentRef: b.payment_ref,
+    };
+    const changes = describeChanges(before, {
+      court: court.rows[0].name, date, startHour, endHour, name, contact: contact || "(admin)", notes, rateType,
+      hourlyRate: price.hourlyRate, amount: price.total, paymentMethod, paymentRef: paymentMethod === "cash" ? "" : paymentRef,
+    });
+    if (changes.length) await logBooking({ id }, staff(by), "Edited", changes.join("\n"));
     return { ok: true, data: { id, status } };
   } catch (e: unknown) {
     await client.query("ROLLBACK").catch(() => {});
@@ -913,12 +959,18 @@ export async function updateBooking(id: string, input: BookingEdit): Promise<Res
 }
 
 /** Staff: permanently delete a booking. Only cancelled bookings can be deleted. */
-export async function deleteCancelledBooking(id: string): Promise<Result<{ id: string }>> {
+export async function deleteCancelledBooking(id: string, by = "Staff"): Promise<Result<{ id: string }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  const who = staff(by);
+  // The log entry is written in the same statement, so it exists exactly when the booking was deleted.
   const { rows } = await db().query<{ status: BookingStatus }>(
-    `WITH gone AS (DELETE FROM bookings WHERE id = $1 AND status = 'cancelled' RETURNING id)
+    `WITH gone AS (DELETE FROM bookings WHERE id = $1 AND status = 'cancelled' RETURNING id, cancel_code, player_name),
+          logged AS (
+            INSERT INTO booking_history (booking_id, booking_code, actor, actor_kind, action, details)
+            SELECT NULL, cancel_code, $2, $3, 'Deleted', 'Removed permanently · ' || player_name FROM gone
+          )
      SELECT (SELECT count(*) FROM gone)::int AS deleted, (SELECT status FROM bookings WHERE id = $1) AS status`,
-    [id]
+    [id, who.name, who.kind]
   );
   const r = rows[0] as unknown as { deleted: number; status: BookingStatus | null };
   if (r.deleted) return { ok: true, data: { id } };
@@ -931,13 +983,15 @@ export async function deleteCancelledBooking(id: string): Promise<Result<{ id: s
  * Staff: mark a booking "in_progress" or "completed" by hand, or null to go back to automatic
  * (paid bookings follow the clock). A marked booking is never released for non-payment.
  */
-export async function setBookingPhase(id: string, phase: unknown): Promise<Result<{ id: string; phase: Phase | null }>> {
+export async function setBookingPhase(id: string, phase: unknown, by = "Staff"): Promise<Result<{ id: string; phase: Phase | null }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   if (phase !== null && phase !== "in_progress" && phase !== "completed") return fail(400, "Unknown progress status.");
-  const { rows } = await db().query<{ status: BookingStatus }>(`SELECT status FROM bookings WHERE id = $1`, [id]);
+  const { rows } = await db().query<{ status: BookingStatus; phase: Phase | null }>(`SELECT status, phase FROM bookings WHERE id = $1`, [id]);
   if (!rows[0]) return fail(404, "Booking not found.");
   if (rows[0].status === "cancelled") return fail(400, "Restore this booking first — it's cancelled.");
   await db().query(`UPDATE bookings SET phase = $2 WHERE id = $1`, [id, phase]);
+  const label = (p: Phase | null) => (p ? phaseLabel(p) : "Automatic");
+  if (rows[0].phase !== phase) await logBooking({ id }, staff(by), "Progress", `${label(rows[0].phase)} → ${label(phase as Phase | null)}`);
   return { ok: true, data: { id, phase: phase as Phase | null } };
 }
 
@@ -1003,6 +1057,7 @@ export async function restoreBooking(id: string, phase: unknown, by: string): Pr
       [id, status, phase ?? null, by.slice(0, 60) || "admin"]
     );
     await client.query("COMMIT");
+    await logBooking({ id }, staff(by), "Restored", `After an automatic release${phase ? `, as ${phaseLabel(phase as Phase)}` : ""}`);
     return { ok: true, data: { id, status } };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});

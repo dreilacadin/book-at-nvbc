@@ -27,6 +27,7 @@ import {
 } from "@/lib/pricing";
 import { sportEmoji } from "@/lib/sports";
 import { nowAtFacility } from "@/lib/time";
+import BookingHistory from "./BookingHistory";
 import EditBooking from "./EditBooking";
 import QrScanner from "./QrScanner";
 import { api, type AdminBooking, type Court, type PaymentReuse } from "./shared";
@@ -448,6 +449,8 @@ export function AdminBookingCard({
           <button className="btn small secondary danger-text" disabled={busy} onClick={remove}>Delete permanently</button>
         </div>
       )}
+      <BookingHistory bookingId={b.id} onAuthError={onAuthError}
+        version={[b.status, b.payment_status, b.phase, b.date, b.start_hour, b.end_hour, b.court_id, b.name, b.amount, b.payment_ref, b.rejected_at].join("|")} />
     </div>
   );
 }

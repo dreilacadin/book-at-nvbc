@@ -597,6 +597,7 @@ function BookingDialog({
             ) : (
               <h2 id="dlg-title">You&apos;re booked! 🎉</h2>
             )}
+            <BookingAlerts code={done.code} />
             <div className="summary">
               <strong>{sportLabel(done.sport)} · {done.courtName}</strong>
               {formatDateLong(done.date)}
@@ -624,8 +625,7 @@ function BookingDialog({
               />
             )}
             <BookingQr code={done.code} />
-            <BookingAlerts code={done.code} />
-            <p className="muted" style={{ fontSize: 14 }}>
+            <p className="muted" style={{ fontSize: 14, marginTop: 0 }}>
               Take a screenshot of this QR code or save your booking code. You&apos;ll need it to view, pay or cancel your
               booking on the <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
             </p>

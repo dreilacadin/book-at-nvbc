@@ -1,24 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { formatDateLong, formatRange } from "@/lib/format";
-import { forgetCode, loadCodes, type SavedCode } from "@/lib/saved-codes";
-import { sportLabel } from "@/lib/sports";
-import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingAlerts from "@/components/BookingAlerts";
+import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingQr from "@/components/BookingQr";
 import PaymentPanel from "@/components/PaymentPanel";
-import { REFUND_HOURS, RELEASE_MINUTES, refundOnCancel } from "@/lib/booking-policy";
-import { nowAtFacility } from "@/lib/time";
+import { REFUND_HOURS, refundOnCancel } from "@/lib/booking-policy";
+import { formatDateLong, formatRange } from "@/lib/format";
 import {
+  bookingStatusLabel,
   formatPeso,
   paymentLabel,
   rateTypeLabel,
-  bookingStatusLabel,
   type BookingStatus,
   type PaymentMethod,
   type PaymentStatus,
 } from "@/lib/pricing";
+import { forgetCode, loadCodes, type SavedCode } from "@/lib/saved-codes";
+import { sportLabel } from "@/lib/sports";
+import { nowAtFacility } from "@/lib/time";
+import { useEffect, useState } from "react";
 
 type Booking = {
   code: string;
@@ -59,7 +59,9 @@ export default function MyBookingPage() {
   // out of server logs).
   useEffect(() => {
     const fromHash = () => {
-      const c = decodeURIComponent(window.location.hash.slice(1)).trim().toUpperCase();
+      const c = decodeURIComponent(window.location.hash.slice(1))
+        .trim()
+        .toUpperCase();
       if (/^NV-[A-Z0-9]{4,}$/.test(c)) {
         setCode(c);
         lookup(c);
@@ -109,7 +111,9 @@ export default function MyBookingPage() {
       if (!res.ok) setError(json.error || "Could not cancel.");
       else {
         setBooking({ ...booking, status: "cancelled", canCancel: false });
-        setMessage("Your booking has been cancelled and the court is open for others. Thank you!");
+        setMessage(
+          "Your booking has been cancelled and the court is open for others. Thank you!",
+        );
       }
     } catch {
       setError("Network error. Please try again.");
@@ -126,15 +130,23 @@ export default function MyBookingPage() {
 
   const refund = booking
     ? refundOnCancel(
-        { payment_method: booking.paymentMethod, payment_status: booking.paymentStatus, date: booking.date, start_hour: booking.startHour },
-        nowAtFacility()
+        {
+          payment_method: booking.paymentMethod,
+          payment_status: booking.paymentStatus,
+          date: booking.date,
+          start_hour: booking.startHour,
+        },
+        nowAtFacility(),
       )
     : "none";
 
   return (
     <div style={{ maxWidth: 560 }}>
       <h1>My booking</h1>
-      <p className="lead">Enter the booking code you got when you reserved to view, pay for or cancel your booking.</p>
+      <p className="lead">
+        Enter the booking code you got when you reserved to view, pay for or
+        cancel your booking.
+      </p>
 
       <form
         className="card"
@@ -155,25 +167,53 @@ export default function MyBookingPage() {
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             required
           />
-          <button className="btn" disabled={busy}>Find</button>
+          <button className="btn" disabled={busy}>
+            Find
+          </button>
         </div>
       </form>
 
-      {error && <div className="error" style={{ marginTop: 16 }}>{error}</div>}
-      {message && <div className="success" style={{ marginTop: 16 }}>{message}</div>}
+      {error && (
+        <div className="error" style={{ marginTop: 16 }}>
+          {error}
+        </div>
+      )}
+      {message && (
+        <div className="success" style={{ marginTop: 16 }}>
+          {message}
+        </div>
+      )}
 
       {booking && (
         <div className="card" style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
             <h2 style={{ margin: 0 }}>
               {booking.courtName}
-              <span className="muted" style={{ display: "block", fontSize: 14, fontWeight: 400 }}>{sportLabel(booking.sport)}</span>
+              <span
+                className="muted"
+                style={{ display: "block", fontSize: 14, fontWeight: 400 }}
+              >
+                {sportLabel(booking.sport)}
+              </span>
             </h2>
-            <span className={`badge ${booking.status === "pending" ? "pending" : booking.status === "reserved" ? "coach-reserved" : booking.status === "cancelled" ? "grey" : ""}`}>
-              {booking.status === "cancelled" && booking.cancelledBy === "system" ? "Released"
-                : booking.phase === "in_progress" ? "In progress"
-                : booking.phase === "completed" ? "Completed"
-                : bookingStatusLabel(booking.status)}
+            <span
+              className={`badge ${booking.status === "pending" ? "pending" : booking.status === "reserved" ? "coach-reserved" : booking.status === "cancelled" ? "grey" : ""}`}
+            >
+              {booking.status === "cancelled" &&
+              booking.cancelledBy === "system"
+                ? "Released"
+                : booking.phase === "in_progress"
+                  ? "In progress"
+                  : booking.phase === "completed"
+                    ? "Completed"
+                    : bookingStatusLabel(booking.status)}
             </span>
           </div>
           <p style={{ margin: "8px 0 0" }}>
@@ -186,7 +226,8 @@ export default function MyBookingPage() {
               <>
                 <br />
                 <span className="muted">
-                  {formatPeso(booking.amount)} · {rateTypeLabel(booking.rateType)} rate
+                  {formatPeso(booking.amount)} ·{" "}
+                  {rateTypeLabel(booking.rateType)} rate
                   {booking.discountPct > 0
                     ? ` (${booking.discountPct}% off)` /* bookings made before fixed prices */
                     : booking.hourlyRate > 0
@@ -198,41 +239,57 @@ export default function MyBookingPage() {
             )}
           </p>
 
-          {booking.courtNotes && booking.status !== "cancelled" && <div className="court-note">ⓘ {booking.courtNotes}</div>}
+          {booking.courtNotes && booking.status !== "cancelled" && (
+            <div className="court-note">ⓘ {booking.courtNotes}</div>
+          )}
+          {booking.status !== "cancelled" && !booking.phase && (
+            <BookingAlerts key={`alerts-${booking.code}`} code={booking.code} />
+          )}
+
+          {booking.status !== "cancelled" && <BookingQr code={booking.code} />}
+
           {booking.status === "pending" && (
             <div className="notice" style={{ marginTop: 12 }}>
               {booking.paymentStatus === "rejected" ? (
                 <>
-                  We couldn&apos;t verify the payment you sent, so your booking is still <strong>Pending</strong>. See the note
-                  below and send a correct payment before the timer runs out — otherwise the slot will be released.
+                  We couldn&apos;t verify the payment you sent, so your booking
+                  is still <strong>Pending</strong>. See the note below and send
+                  a correct payment before the timer runs out — otherwise the
+                  slot will be released.
                 </>
               ) : booking.paymentStatus === "for_verification" ? (
                 <>
-                  We&apos;ve received your {paymentLabel(booking.paymentMethod)} payment details. Your booking is{" "}
-                  <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
+                  We&apos;ve received your {paymentLabel(booking.paymentMethod)}{" "}
+                  payment details. Your booking is <strong>Pending</strong> and
+                  becomes <strong>Confirmed</strong> once staff verify your
+                  payment.
                 </>
               ) : (
                 <>
-                  We&apos;re holding this slot for you. Please pay and send your receipt or reference number before the
-                  timer below runs out — otherwise the slot will be released for other players.
+                  We&apos;re holding this slot for you. Please pay and send your
+                  receipt or reference number before the timer below runs out —
+                  otherwise the slot will be released for other players.
                 </>
               )}
             </div>
           )}
           {booking.status === "reserved" && (
             <div className="notice info" style={{ marginTop: 12 }}>
-              Your slot is <strong>Reserved</strong>. Please pay {formatPeso(booking.amount)} in cash at the front desk by{" "}
-              <strong>{payByLabel(booking.date, booking.startHour)}</strong> — reserved slots that aren&apos;t paid by then are
-              released for other players.
+              Your slot is <strong>Reserved</strong>. Please pay{" "}
+              {formatPeso(booking.amount)} in cash at the front desk by{" "}
+              <strong>{payByLabel(booking.date, booking.startHour)}</strong> —
+              reserved slots that aren&apos;t paid by then are released for
+              other players.
             </div>
           )}
-          {booking.status === "cancelled" && booking.cancelledBy === "system" && (
-            <div className="notice" style={{ marginTop: 12 }}>
-              This booking was released because it wasn&apos;t paid in time, so the court could be offered to other
-              players. You&apos;re welcome to book another slot.
-            </div>
-          )}
-          {booking.status !== "cancelled" && <BookingQr code={booking.code} />}
+          {booking.status === "cancelled" &&
+            booking.cancelledBy === "system" && (
+              <div className="notice" style={{ marginTop: 12 }}>
+                This booking was released because it wasn&apos;t paid in time,
+                so the court could be offered to other players. You&apos;re
+                welcome to book another slot.
+              </div>
+            )}
 
           {booking.status !== "cancelled" && booking.amount > 0 && (
             <PaymentPanel
@@ -246,23 +303,45 @@ export default function MyBookingPage() {
               payBy={payByLabel(booking.date, booking.startHour)}
               deadline={booking.payBy}
               rejectedNote={booking.rejectedNote}
-              onUpdated={(u) => setBooking({ ...booking, ...u, payBy: null, status: u.paymentStatus === "for_verification" ? "pending" : booking.status })}
+              onUpdated={(u) =>
+                setBooking({
+                  ...booking,
+                  ...u,
+                  payBy: null,
+                  status:
+                    u.paymentStatus === "for_verification"
+                      ? "pending"
+                      : booking.status,
+                })
+              }
             />
           )}
-          {booking.status === "cancelled" && booking.paymentStatus === "paid" && booking.paymentMethod !== "cash" && (
-            <p className="muted" style={{ fontSize: 14 }}>
-              You paid for this booking by {paymentLabel(booking.paymentMethod)}. Refunds apply to bookings cancelled at
-              least {REFUND_HOURS} hours before the start time — please contact the front desk about your refund.
-            </p>
-          )}
+          {booking.status === "cancelled" &&
+            booking.paymentStatus === "paid" &&
+            booking.paymentMethod !== "cash" && (
+              <p className="muted" style={{ fontSize: 14 }}>
+                You paid for this booking by{" "}
+                {paymentLabel(booking.paymentMethod)}. Refunds apply to bookings
+                cancelled at least {REFUND_HOURS} hours before the start time —
+                please contact the front desk about your refund.
+              </p>
+            )}
 
           {booking.canCancel && !confirming && (
             <div className="actions">
-              <button className="btn secondary" onClick={() => setConfirming(true)}>Cancel this booking</button>
+              <button
+                className="btn secondary"
+                onClick={() => setConfirming(true)}
+              >
+                Cancel this booking
+              </button>
             </div>
           )}
           {confirming && refund !== "none" && (
-            <div className={refund === "refundable" ? "success" : "notice"} style={{ marginTop: 14 }}>
+            <div
+              className={refund === "refundable" ? "success" : "notice"}
+              style={{ marginTop: 14 }}
+            >
               {refund === "refundable"
                 ? `You're cancelling at least ${REFUND_HOURS} hours before your start time, so your ${paymentLabel(booking.paymentMethod)} payment is eligible for a refund. The front desk will arrange it.`
                 : `Your start time is less than ${REFUND_HOURS} hours away, so your ${paymentLabel(booking.paymentMethod)} payment is non-refundable if you cancel now.`}
@@ -270,18 +349,29 @@ export default function MyBookingPage() {
           )}
           {confirming && (
             <div className="actions" style={{ alignItems: "center" }}>
-              <span className="muted" style={{ marginRight: "auto" }}>Cancel for sure?</span>
-              <button className="btn secondary" onClick={() => setConfirming(false)}>Keep it</button>
-              <button className="btn danger" onClick={cancel} disabled={busy}>Yes, cancel</button>
+              <span className="muted" style={{ marginRight: "auto" }}>
+                Cancel for sure?
+              </span>
+              <button
+                className="btn secondary"
+                onClick={() => setConfirming(false)}
+              >
+                Keep it
+              </button>
+              <button className="btn danger" onClick={cancel} disabled={busy}>
+                Yes, cancel
+              </button>
             </div>
           )}
           {booking.status !== "cancelled" && !booking.canCancel && (
             <p className="muted" style={{ fontSize: 14, marginBottom: 0 }}>
-              This booking has already started. Please talk to the front desk for changes.
+              This booking has already started. Please talk to the front desk
+              for changes.
             </p>
           )}
-          {booking.status !== "cancelled" && !booking.phase && <BookingAlerts key={`alerts-${booking.code}`} code={booking.code} />}
-          {booking.status !== "cancelled" && booking.amount > 0 && <BookingPolicy title="Good to know" />}
+          {booking.status !== "cancelled" && booking.amount > 0 && (
+            <BookingPolicy title="Good to know" />
+          )}
         </div>
       )}
 
@@ -292,14 +382,35 @@ export default function MyBookingPage() {
             {saved.map((s) => (
               <div
                 key={s.code}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: 8, borderBottom: "1px solid var(--border)" }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: 8,
+                  borderBottom: "1px solid var(--border)",
+                }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <strong style={{ fontFamily: "ui-monospace, monospace" }}>{s.code}</strong>
-                  <div className="muted" style={{ fontSize: 13 }}>{s.label}</div>
+                  <strong style={{ fontFamily: "ui-monospace, monospace" }}>
+                    {s.code}
+                  </strong>
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    {s.label}
+                  </div>
                 </div>
-                <button className="btn small secondary" onClick={() => lookup(s.code)}>View</button>
-                <button className="btn small secondary" aria-label={`Forget ${s.code}`} onClick={() => removeSaved(s.code)}>✕</button>
+                <button
+                  className="btn small secondary"
+                  onClick={() => lookup(s.code)}
+                >
+                  View
+                </button>
+                <button
+                  className="btn small secondary"
+                  aria-label={`Forget ${s.code}`}
+                  onClick={() => removeSaved(s.code)}
+                >
+                  ✕
+                </button>
               </div>
             ))}
           </div>

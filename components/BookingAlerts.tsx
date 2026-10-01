@@ -5,7 +5,7 @@ import { REMINDER_MINUTES } from "@/lib/customer-messages";
 import { currentSubscription, isIos, isStandalone, pushSupported, subscribeDevice } from "@/lib/push-client";
 
 type Status = { email: string; pushOn: boolean; push: { publicKey: string } | null; emailReady: boolean };
-type Push = "checking" | "on" | "off" | "denied" | "needs-install" | "unsupported";
+type Push = "checking" | "on" | "off" | "denied" | "needs-install" | "insecure" | "unsupported";
 
 async function post(body: Record<string, unknown>): Promise<Status> {
   const res = await fetch("/api/bookings/alerts", {
@@ -38,7 +38,9 @@ export default function BookingAlerts({ code }: { code: string }) {
       const s = await post({ code, action: "status", endpoint: sub?.endpoint });
       setStatus(s);
       setEmail(s.email);
-      if (!pushSupported()) setPush(isIos() && !isStandalone() ? "needs-install" : "unsupported");
+      // Browsers only allow push on https:// (or localhost) — e.g. not http://192.168.x.x on a phone.
+      if (!window.isSecureContext) setPush("insecure");
+      else if (!pushSupported()) setPush(isIos() && !isStandalone() ? "needs-install" : "unsupported");
       else if (Notification.permission === "denied") setPush("denied");
       else setPush(s.pushOn ? "on" : "off");
     } catch {
@@ -118,6 +120,10 @@ export default function BookingAlerts({ code }: { code: string }) {
             <span className="hint">
               On iPhone/iPad: tap <strong>Share → Add to Home Screen</strong>, open NVBC from your Home Screen, then find your booking
               under My booking to turn on notifications. Or use email below.
+            </span>
+          ) : push === "insecure" ? (
+            <span className="hint">
+              Notifications only work when the site is opened over a secure <strong>https://</strong> address{status.emailReady ? " — use email for now." : "."}
             </span>
           ) : push === "unsupported" ? (
             <span className="hint">This browser can&apos;t show notifications{status.emailReady ? " — use email instead." : "."}</span>

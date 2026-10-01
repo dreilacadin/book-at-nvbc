@@ -98,11 +98,11 @@ export async function POST(req: NextRequest) {
     if (body.action === "cancel") return respond(await cancelById(String(body.id ?? ""), me.name));
     if (body.action === "payment")
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name));
-    if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null));
+    if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
-    if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? "")));
-    if (body.action === "update") return respond(await updateBooking(String(body.id ?? ""), body));
-    if (body.action === "create") return respond(await createBooking(body, { admin: true }), 201);
+    if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? ""), me.name));
+    if (body.action === "update") return respond(await updateBooking(String(body.id ?? ""), body, me.name));
+    if (body.action === "create") return respond(await createBooking(body, { admin: true, by: me.name }), 201);
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (e) {
     return serverError(e);
