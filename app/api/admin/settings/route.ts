@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdmin, unauthorized } from "@/lib/admin-auth";
+import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { db, getSettings } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
 import { isPaymentMethod, MAX_EXTRA_GCASH, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
@@ -22,7 +22,9 @@ const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 export async function POST(req: NextRequest) {
-  if (!(await isAdmin(req))) return unauthorized();
+  const me = await getAdmin(req);
+  if (!me) return unauthorized();
+  if (!canManage(me)) return forbidden();
   try {
     const b = await readJson(req);
     const n = (k: string) => Number(b[k]);

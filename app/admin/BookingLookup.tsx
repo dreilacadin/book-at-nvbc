@@ -32,6 +32,7 @@ import BookingMessages from "./BookingMessages";
 import EditBooking from "./EditBooking";
 import ProofViewer from "./ProofViewer";
 import QrScanner from "./QrScanner";
+import { useCanManage } from "./role";
 import { api, type AdminBooking, type Court, type PaymentReuse } from "./shared";
 
 /** Refund wording for cancelling this booking now (online payments: 12-hour rule). */
@@ -80,8 +81,21 @@ export const hasOnlineProof = (b: AdminBooking) => b.payment_method !== "cash" &
 
 /** What staff should see on the screenshot, one line each, for the checklist. */
 function paymentChecks(b: AdminBooking): { id: string; label: ReactNode }[] {
+  const said = b.paid_amount_reported;
   const checks: { id: string; label: ReactNode }[] = [
-    { id: "amount", label: <>The amount is <strong>{formatPeso(b.amount)}</strong></> },
+    {
+      id: "amount",
+      label: (
+        <>
+          The amount is <strong>{formatPeso(b.amount)}</strong>
+          {said !== null && (
+            Math.abs(said - b.amount) < 0.01
+              ? <span className="muted"> (the player entered {formatPeso(said)})</span>
+              : <span className="amount-off"> — the player entered {formatPeso(said)}</span>
+          )}
+        </>
+      ),
+    },
   ];
   if (b.pay_to) checks.push({ id: "to", label: <>It was sent to <strong>{b.pay_to}</strong></> });
   if (b.payment_sent_at)
@@ -230,6 +244,7 @@ export function AdminBookingCard({
   const [editing, setEditing] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set()); // payment checklist
   const [rejecting, setRejecting] = useState(false);
+  const manage = useCanManage();
   const shown = displayStatus(b);
   const verifying = b.status !== "cancelled" && b.payment_status === "for_verification" && hasOnlineProof(b);
   const tick = (id: string) =>
@@ -347,6 +362,8 @@ export function AdminBookingCard({
           <dd>
             {paymentLabel(b.payment_method)} · {paymentStatusLabel(b.payment_status)}
             {b.payment_ref && <> · <span style={{ fontFamily: "ui-monospace, monospace" }}>{b.payment_ref}</span></>}
+            {b.proof_deleted && !b.has_proof && <span className="muted"> · 📷 screenshot checked (not kept)</span>}
+            {b.paid_amount_reported !== null && <> · they entered {formatPeso(b.paid_amount_reported)}</>}
             {b.has_proof && (
               <> · <ProofViewer src={`/api/admin/bookings/proof?id=${b.id}`} alt={`${b.name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>
             )}
@@ -448,7 +465,7 @@ export function AdminBookingCard({
           <button className="btn small secondary" disabled={busy} onClick={() => restore("completed")}>↺ Restore as Completed</button>
         </div>
       )}
-      {b.status === "cancelled" && (
+      {b.status === "cancelled" && manage && (
         <div className="card-actions">
           <button className="btn small secondary danger-text" disabled={busy} onClick={remove}>Delete permanently</button>
         </div>

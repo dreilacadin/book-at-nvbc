@@ -12,8 +12,9 @@ type StaffUser = {
   created_at: string;
   last_login_at: string | null;
   created_by: string;
+  role: "manager" | "staff";
 };
-type Me = { id: number | null; username: string; name: string };
+type Me = { id: number | null; username: string; name: string; role: "owner" | "manager" | "staff" };
 
 const when = (iso: string | null) =>
   iso
@@ -26,7 +27,7 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [form, setForm] = useState({ name: "", username: "", password: "" });
+  const [form, setForm] = useState({ name: "", username: "", password: "", role: "staff" as StaffUser["role"] });
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -63,7 +64,7 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
     e.preventDefault();
     setBusy(true);
     if (await act({ action: "create", ...form }, `Account created for ${form.name}. Share the username and password with them privately.`))
-      setForm({ name: "", username: "", password: "" });
+      setForm({ name: "", username: "", password: "", role: "staff" });
     setBusy(false);
   }
 
@@ -77,11 +78,12 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
   }
 
   if (!users) return error ? <div className="error">{error}</div> : <FullScreenLoader label="Loading staff…" />;
+  const manage = me?.role !== "staff";
 
   return (
     <div className="stack" style={{ maxWidth: 820 }}>
       <p className="muted" style={{ margin: 0 }}>
-        Everyone on the team gets their own login. Logged-in staff also see full names on the <strong>Book a court</strong> page
+        Everyone on the team gets their own login, as <strong>Manager</strong> (full access) or <strong>Staff</strong> (day-to-day work). Logged-in staff also see full names on the <strong>Book a court</strong> page
         and can open, confirm, edit or cancel bookings right from the grid. Disabling or deleting an account logs that person
         out immediately.
       </p>
@@ -94,13 +96,14 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
             <tr>
               <th>Name</th>
               <th>Username</th>
+              <th>Role</th>
               <th>Last login</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 && (
-              <tr><td colSpan={4} className="muted">No staff accounts yet — add the first one below.</td></tr>
+              <tr><td colSpan={5} className="muted">No staff accounts yet — add the first one below.</td></tr>
             )}
             {users.map((u) => (
               <tr key={u.id} className={u.is_active ? undefined : "import-skip"}>
@@ -111,9 +114,26 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
                   <div className="muted" style={{ fontSize: 12 }}>Added by {u.created_by || "—"} · {when(u.created_at)}</div>
                 </td>
                 <td style={{ fontFamily: "ui-monospace, monospace" }}>{u.username}</td>
+                <td>
+                  <span className={`badge ${u.role === "manager" ? "" : "grey"}`}>{u.role === "manager" ? "Manager" : "Staff"}</span>
+                </td>
                 <td style={{ fontSize: 13 }}>{when(u.last_login_at)}</td>
                 <td>
+                  {!manage ? (
+                    u.id === me?.id && (
+                      <button className="btn small secondary" onClick={() => resetPassword(u)}>Change my password</button>
+                    )
+                  ) : (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {u.id !== me?.id && (
+                      <button className="btn small secondary" onClick={() => {
+                        const next = u.role === "manager" ? "staff" : "manager";
+                        if (window.confirm(next === "manager"
+                          ? `Make ${u.display_name} a Manager? Managers can change settings, prices, courts and staff accounts, delete bookings and members, import members and send bulk emails.`
+                          : `Make ${u.display_name} Staff? They'll keep day-to-day access (bookings, payments, members, messages) but lose settings, courts, staff accounts and deleting.`))
+                          act({ action: "update", id: u.id, role: next }, `${u.display_name} is now ${next === "manager" ? "a Manager" : "Staff"}.`);
+                      }}>{u.role === "manager" ? "Make staff" : "Make manager"}</button>
+                    )}
                     <button className="btn small secondary" onClick={() => {
                       const name = window.prompt("Name:", u.display_name);
                       if (name && name.trim() !== u.display_name) act({ action: "update", id: u.id, name }, "Name updated.");
@@ -135,6 +155,7 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
                       </button>
                     )}
                   </div>
+                  )}
                 </td>
               </tr>
             ))}
@@ -142,7 +163,7 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
         </table>
       </div>
 
-      <form className="card stack" onSubmit={create} style={{ gap: 12 }}>
+      {manage && <form className="card stack" onSubmit={create} style={{ gap: 12 }}>
         <h2 style={{ margin: 0 }}>Add a staff account</h2>
         <div className="row" style={{ gridTemplateColumns: "1.3fr 1fr 1fr" }}>
           <div>
@@ -165,10 +186,22 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
         <p className="hint" style={{ margin: 0 }}>
           At least 8 characters. Share it with them privately — they can change it themselves under Staff.
         </p>
+        <div>
+          <label>Access</label>
+          <div className="segmented" role="radiogroup" aria-label="Access" style={{ display: "inline-grid", gridTemplateColumns: "auto auto" }}>
+            <button type="button" role="radio" aria-checked={form.role === "staff"} onClick={() => setForm({ ...form, role: "staff" })}>Staff</button>
+            <button type="button" role="radio" aria-checked={form.role === "manager"} onClick={() => setForm({ ...form, role: "manager" })}>Manager</button>
+          </div>
+          <p className="hint" style={{ margin: "6px 0 0" }}>
+            {form.role === "staff"
+              ? "Day-to-day work: bookings, payments, members, messages and reserved times. No settings, prices, courts, staff accounts, deleting, imports or bulk emails."
+              : "Full access, like the owner: also settings, prices, payment accounts, courts, staff accounts, deleting, imports, bulk emails and the activity log."}
+          </p>
+        </div>
         <div className="actions" style={{ marginTop: 0 }}>
           <button className="btn" disabled={busy}>{busy ? "Adding…" : "Add account"}</button>
         </div>
-      </form>
+      </form>}
 
       {me?.id === null && (
         <p className="hint" style={{ margin: 0 }}>

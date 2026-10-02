@@ -838,3 +838,10 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
   .site-header .nav { order: 2; }
 }
 @media (min-width: 561px) { .site-header .nav { margin-left: auto; } }
+
+/* Payment amount the player entered differs from the booking */
+.amount-off { color: var(--danger); font-weight: 600; }
+/* Reading the numbers from a screenshot */
+.proof-read { margin: 6px 0 0; }
+.proof-amount { margin-top: 10px; }
+.proof-amount label { font-size: 14px; }

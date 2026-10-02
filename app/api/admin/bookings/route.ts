@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
+import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db, getSettings } from "@/lib/db";
 import { gcashAccounts } from "@/lib/pricing";
@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof, b.pay_by,
+              (b.payment_proof = '' AND COALESCE(b.payment_proof_hash, '') <> '') AS proof_deleted, b.paid_amount_reported,
               b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
               b.rejected_note, b.rejected_by, b.rejected_at, b.customer_email,
               (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = b.id) AS alert_devices,
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
+    if (body.action === "delete" && !canManage(me)) return forbidden();
     if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? ""), me.name));
     if (body.action === "update") return respond(await updateBooking(String(body.id ?? ""), body, me.name));
     if (body.action === "create") return respond(await createBooking(body, { admin: true, by: me.name }), 201);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdmin, unauthorized } from "@/lib/admin-auth";
+import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { db } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
 import { isSport, sportLabel } from "@/lib/sports";
@@ -47,7 +47,9 @@ export async function GET(req: NextRequest) {
  * { action: "update", id, name?, sport?, is_active?, sort_order?, notes? }
  */
 export async function POST(req: NextRequest) {
-  if (!(await isAdmin(req))) return unauthorized();
+  const me = await getAdmin(req);
+  if (!me) return unauthorized();
+  if (!canManage(me)) return forbidden();
   try {
     const body = await readJson(req);
     const name = typeof body.name === "string" ? body.name.trim() : undefined;

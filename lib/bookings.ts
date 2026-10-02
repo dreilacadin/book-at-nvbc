@@ -480,10 +480,12 @@ export async function createBooking(
         const ins = await client.query<{ id: string }>(
           `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                  rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at, customer_email)
+                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at, customer_email,
+                                 payment_proof_hash)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                    CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19,
-                   CASE WHEN $15 <> '' OR $17 <> '' THEN now() END, $20) RETURNING id`,
+                   CASE WHEN $15 <> '' OR $17 <> '' THEN now() END, $20,
+                   CASE WHEN $17 <> '' THEN md5($17) ELSE '' END) RETURNING id`,
           [
             courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
             rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
@@ -653,7 +655,7 @@ async function cancelWhere(whereSql: string, param: string, by: string, allowSta
     }
     await client.query(`DELETE FROM booking_slots WHERE booking_id = $1`, [b.id]);
     await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancelled_by = $2, cancelled_at = now() WHERE id = $1`,
+      `UPDATE bookings SET status = 'cancelled', cancelled_by = $2, cancelled_at = now(), payment_proof = '' WHERE id = $1`,
       [b.id, by]
     );
     await client.query("COMMIT");
@@ -701,7 +703,8 @@ export async function submitPayment(
   rawCode: unknown,
   method: unknown,
   ref: unknown,
-  proof?: unknown
+  proof?: unknown,
+  amountPaid?: unknown // what the player says they sent (read from their screenshot, checked by them)
 ): Promise<Result<{ paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; paymentRef: string; hasProof: boolean }>> {
   const code = normalizeCode(rawCode);
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
@@ -714,6 +717,10 @@ export async function submitPayment(
     return fail(400, "Enter the reference number or upload a screenshot of your payment receipt.");
   if (paymentRef && !/^[A-Za-z0-9][A-Za-z0-9 \-]{3,}$/.test(paymentRef))
     return fail(400, "Please enter the reference number from your payment receipt.");
+  const paid = typeof amountPaid === "string" ? amountPaid.replace(/,/g, "").trim() : amountPaid;
+  const reported = paid === undefined || paid === null || paid === "" ? null : Number(paid);
+  if (reported !== null && (!Number.isFinite(reported) || reported <= 0 || reported >= 1_000_000))
+    return fail(400, "Please check the amount you paid (or leave it blank).");
   const settings = await getSettings();
   if (!enabledMethods(settings).includes(method))
     return fail(400, "That payment method isn't available right now.");
@@ -724,13 +731,16 @@ export async function submitPayment(
     `UPDATE bookings SET payment_method = $2,
             payment_ref   = CASE WHEN $3 = '' THEN payment_ref ELSE $3 END,
             payment_proof = CASE WHEN $4 = '' THEN payment_proof ELSE $4 END,
+            -- Fingerprint of the screenshot: kept after the screenshot itself is deleted, to spot reuse.
+            payment_proof_hash = CASE WHEN $4 = '' THEN payment_proof_hash ELSE md5($4) END,
+            paid_amount_reported = COALESCE($5, paid_amount_reported),
             payment_status = 'for_verification',
             payment_sent_at = now(),
             status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
       WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification', 'rejected')
         AND (pay_by IS NULL OR pay_by > now() OR payment_status = 'for_verification')
       RETURNING payment_ref, (payment_proof <> '') AS has_proof`,
-    [code, method, paymentRef, paymentProof]
+    [code, method, paymentRef, paymentProof, reported === null ? null : Math.round(reported * 100) / 100]
   );
   if (!rows[0]) {
     const b = await findByCode(code);
@@ -789,6 +799,8 @@ export async function setPaymentStatus(
         payment_method = COALESCE($3, payment_method),
         payment_ref    = COALESCE($4, payment_ref),
         paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END,
+        -- Checked: the screenshot isn't needed any more (its fingerprint and the reference stay).
+        payment_proof = CASE WHEN $2 IN ('paid', 'waived', 'refunded') THEN '' ELSE payment_proof END,
         pay_by = NULL, -- staff handle the payment from here: no online payment window
         -- Status follows the payment (see activeBookingStatus); cancelled stays cancelled.
         status = CASE
@@ -837,7 +849,7 @@ async function rejectPayment(id: string, rawNote: unknown, by: string): Promise<
   if (b.payment_status !== "for_verification") return fail(400, "Only a payment waiting to be verified can be rejected.");
   const payBy = new Date(paymentDeadline(Date.now(), b.booking_date, Number(b.start_hour), nowAtFacility())).toISOString();
   await db().query(
-    `UPDATE bookings SET payment_status = 'rejected', status = 'pending', paid_at = NULL, pay_by = $2,
+    `UPDATE bookings SET payment_status = 'rejected', status = 'pending', paid_at = NULL, pay_by = $2, payment_proof = '',
             rejected_note = $3, rejected_by = $4, rejected_at = now()
       WHERE id = $1`,
     [id, payBy, note, by.slice(0, 60) || "admin"]

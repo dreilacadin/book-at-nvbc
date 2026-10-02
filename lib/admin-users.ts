@@ -13,12 +13,14 @@ export type AdminUser = {
   created_at: string;
   last_login_at: string | null;
   created_by: string;
+  role: "manager" | "staff";
 };
 
 type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
 const fail = (status: number, error: string) => ({ ok: false as const, status, error });
 
-const COLUMNS = `id, username, display_name, is_active, token_version, created_at, last_login_at, created_by`;
+const COLUMNS = `id, username, display_name, is_active, token_version, created_at, last_login_at, created_by, role`;
+const isRole = (v: unknown): v is AdminUser["role"] => v === "manager" || v === "staff";
 
 // A fixed hash to compare against when the username doesn't exist, so a wrong username takes
 // as long as a wrong password (no hint about which usernames exist).
@@ -69,11 +71,13 @@ export async function createAdmin(input: Record<string, unknown>, createdBy: str
   if (username === "owner") return fail(400, "“owner” is reserved. Choose another username.");
   if (!name) return fail(400, "Enter the person's name.");
   if (!password) return fail(400, "Passwords need at least 8 characters.");
+  const role = input.role === undefined ? "staff" : input.role;
+  if (!isRole(role)) return fail(400, "Choose Manager or Staff.");
   try {
     const { rows } = await db().query<AdminUser>(
-      `INSERT INTO admin_users (username, display_name, password_hash, created_by)
-       VALUES ($1, $2, $3, $4) RETURNING ${COLUMNS}`,
-      [username, name, hashPassword(password), createdBy]
+      `INSERT INTO admin_users (username, display_name, password_hash, created_by, role)
+       VALUES ($1, $2, $3, $4, $5) RETURNING ${COLUMNS}`,
+      [username, name, hashPassword(password), createdBy, role]
     );
     return { ok: true, data: rows[0] };
   } catch (e) {
@@ -82,7 +86,7 @@ export async function createAdmin(input: Record<string, unknown>, createdBy: str
   }
 }
 
-/** Rename, enable or disable an account. Disabling logs the person out everywhere. */
+/** Rename, enable or disable an account, or change its role. Disabling logs the person out everywhere. */
 export async function updateAdmin(id: unknown, input: Record<string, unknown>, me: number | null): Promise<Result<AdminUser>> {
   const n = Number(id);
   if (!Number.isInteger(n)) return fail(400, "Invalid account.");
@@ -90,12 +94,16 @@ export async function updateAdmin(id: unknown, input: Record<string, unknown>, m
   if (name === null) return fail(400, "Enter the person's name.");
   const active = typeof input.active === "boolean" ? input.active : undefined;
   if (active === false && n === me) return fail(400, "You can't disable your own account.");
+  const role = input.role === undefined ? undefined : input.role;
+  if (role !== undefined && !isRole(role)) return fail(400, "Choose Manager or Staff.");
+  if (role !== undefined && n === me) return fail(400, "You can't change your own role.");
   const { rows } = await db().query<AdminUser>(
     `UPDATE admin_users SET display_name = COALESCE($2, display_name),
             is_active = COALESCE($3, is_active),
+            role = COALESCE($4, role),
             token_version = token_version + CASE WHEN $3::boolean IS FALSE THEN 1 ELSE 0 END
       WHERE id = $1 RETURNING ${COLUMNS}`,
-    [n, name ?? null, active ?? null]
+    [n, name ?? null, active ?? null, role ?? null]
   );
   if (!rows[0]) return fail(404, "Account not found.");
   return { ok: true, data: rows[0] };

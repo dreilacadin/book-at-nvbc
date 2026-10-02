@@ -120,6 +120,12 @@ Staff change the status from the dropdown in each booking row. The top of the Bo
 
 Each booking has its own conversation. Customers write from **My booking**; staff read and reply under **Messages** on the booking card (new messages show in the 🔔 bell, as push notifications, and as "💬 New message" on the booking's row). Customers see replies on their booking page and get a notification or email if they turned on updates. Customers can send up to 10 messages per 10 minutes; messages are up to 1,000 characters.
 
+### Staff access, limits and screenshots
+
+- **Roles:** the owner login and **Manager** accounts have full access. **Staff** accounts handle bookings, payments, members, messages and reserved times, but can't change settings, courts or staff accounts, delete bookings or members, import members, send bulk emails or see the activity log (the server refuses these, and the buttons are hidden).
+- **Limits:** 5 wrong passwords per username from one network (20 per network, 50 per username overall) pause logins for 15–60 minutes; 30 unknown booking codes in 15 minutes from one visitor pause booking lookups.
+- **Screenshots:** the player's browser reads the reference number and amount from a payment screenshot (with tesseract.js) for them to check. The screenshot itself is kept only until staff confirm or reject the payment (or the booking is cancelled), then deleted; the reference, amount and a fingerprint (to spot reuse) stay.
+
 ### Booking history and the activity log
 
 Every change to a booking is recorded with the time and who made it — the staff member's name, "Customer", or "System" (automatic releases). Open **History** at the bottom of a booking card to see it all, including exactly what an edit changed. The **Staff** tab has an **Activity log** of everything staff did to bookings (filter by person; click a code to open the booking). Entries are kept even after a booking is deleted.

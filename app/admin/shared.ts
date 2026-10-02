@@ -30,6 +30,8 @@ export type AdminBooking = {
   restored_by: string | null;
   court_order: number;
   has_proof: boolean;
+  proof_deleted: boolean; // a screenshot was sent, then deleted once the payment was checked
+  paid_amount_reported: number | null; // what the player says they sent (read from their screenshot)
   member_code: string | null; // member-rate bookings: whose member code was used
   member_name: string | null;
   expired_member_id: string | null; // the booker's membership has expired: remind them

@@ -6,10 +6,21 @@ import { findActiveAdmin } from "./admin-users";
 export const ADMIN_COOKIE = "nvbc_admin";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
 
-/** Who is logged in: a staff account, or the owner (ADMIN_PASSWORD, for recovery). */
-export type AdminSession = { id: number | null; username: string; name: string };
+/**
+ * Who is logged in: a staff account, or the owner (ADMIN_PASSWORD, for recovery). role: the owner
+ * and managers have full access; "staff" accounts do day-to-day work only (see canManage).
+ */
+export type AdminRole = "owner" | "manager" | "staff";
+export type AdminSession = { id: number | null; username: string; name: string; role: AdminRole };
 
-export const OWNER: AdminSession = { id: null, username: "owner", name: "Owner" };
+export const OWNER: AdminSession = { id: null, username: "owner", name: "Owner", role: "owner" };
+
+/** Settings, court setup, staff accounts, deleting bookings/members, imports, bulk emails, activity log. */
+export const canManage = (me: AdminSession) => me.role !== "staff";
+
+export function forbidden() {
+  return NextResponse.json({ error: "Only the owner or a manager can do this." }, { status: 403 });
+}
 
 function secret(): string {
   const pw = process.env.ADMIN_PASSWORD;
@@ -55,7 +66,7 @@ export async function getAdmin(req: NextRequest): Promise<AdminSession | null> {
   if (id === "owner") return OWNER;
   const user = await findActiveAdmin(Number(id));
   if (!user || user.token_version !== Number(version)) return null;
-  return { id: user.id, username: user.username, name: user.display_name };
+  return { id: user.id, username: user.username, name: user.display_name, role: user.role };
 }
 
 export async function isAdmin(req: NextRequest): Promise<boolean> {

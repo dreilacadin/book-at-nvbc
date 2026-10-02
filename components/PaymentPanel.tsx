@@ -1,6 +1,7 @@
 "use client";
 
 import { imageToDataUrl } from "@/lib/image";
+import { readReceipt } from "@/lib/receipt-read";
 import {
   formatPeso,
   paymentLabel,
@@ -129,22 +130,62 @@ export function PaymentDetails({
   return null;
 }
 
-/** Reference number and/or receipt screenshot — at least one is needed for an online payment. */
+/** Text in a screenshot, read on this device (the image isn't sent anywhere for this). */
+async function readImageText(file: File): Promise<string> {
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng");
+  try {
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 45_000));
+    const { data } = await Promise.race([worker.recognize(file), timeout]);
+    return data.text;
+  } finally {
+    await worker.terminate();
+  }
+}
+
+type ReadState = { state: "reading" } | { state: "done"; reference: string | null; amount: number | null } | { state: "failed" };
+
+/**
+ * Reference number and/or receipt screenshot — at least one is needed for an online payment.
+ * A screenshot is read on the player's device to fill in the reference number (and the amount,
+ * when `onAmount` is given) for them to check.
+ */
 export function ProofFields({
   reference,
   onReference,
   proof,
   onProof,
   hasProof = false,
+  amount,
+  onAmount,
+  expectedAmount,
 }: {
   reference: string;
   onReference: (v: string) => void;
   proof: string;
   onProof: (v: string) => void;
   hasProof?: boolean; // a screenshot was already sent earlier
+  amount?: string; // amount paid, as typed (bookings)
+  onAmount?: (v: string) => void;
+  expectedAmount?: number; // what the booking costs, to warn about a different amount
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [read, setRead] = useState<ReadState | null>(null);
+
+  async function readNumbers(file: File) {
+    setRead({ state: "reading" });
+    try {
+      const r = readReceipt(await readImageText(file));
+      if (r.reference && !reference.trim()) onReference(r.reference);
+      if (r.amount !== null && onAmount && !amount?.trim()) onAmount(String(r.amount));
+      setRead(r.reference || r.amount !== null ? { state: "done", ...r } : { state: "failed" });
+    } catch {
+      setRead({ state: "failed" });
+    }
+  }
+  const typed = amount !== undefined && amount.trim() !== "" ? Number(amount) : null;
+  const amountOff = expectedAmount !== undefined && typed !== null && Number.isFinite(typed) && Math.abs(typed - expectedAmount) >= 0.01;
   return (
     <div className="proof-fields">
       <input
@@ -182,6 +223,7 @@ export function ProofFields({
                   "That screenshot is too large. Please crop it and try again.",
                 ),
               );
+              void readNumbers(f);
             } catch (err) {
               setError(
                 err instanceof Error
@@ -211,6 +253,30 @@ export function ProofFields({
           Screenshot received ✓
         </p>
       ) : null}
+      {proof && read?.state === "reading" && (
+        <p className="hint proof-read">🔎 Reading the reference number and amount from your screenshot…</p>
+      )}
+      {proof && read?.state === "done" && (
+        <p className="hint proof-read">
+          ✓ Filled in from your screenshot — <strong>please check they match your receipt</strong>.
+          {!read.reference && " We couldn't read the reference number, so please type it."}
+        </p>
+      )}
+      {proof && read?.state === "failed" && (
+        <p className="hint proof-read">We couldn&apos;t read the numbers on this screenshot — please type the reference number{onAmount ? " and amount" : ""}.</p>
+      )}
+      {onAmount && (
+        <div className="proof-amount">
+          <label htmlFor="proof-amount">Amount paid (₱)</label>
+          <input id="proof-amount" type="text" inputMode="decimal" placeholder={expectedAmount !== undefined ? String(expectedAmount) : "0.00"}
+            maxLength={12} value={amount ?? ""} onChange={(e) => onAmount(e.target.value.replace(/[^\d.,]/g, ""))} />
+        </div>
+      )}
+      {amountOff && expectedAmount !== undefined && (
+        <div className="notice" style={{ marginTop: 8 }}>
+          That&apos;s ₱{typed?.toLocaleString("en-PH")} — your booking is ₱{expectedAmount.toLocaleString("en-PH")}. Please check the amount you sent.
+        </div>
+      )}
       {error && (
         <div className="error" style={{ marginTop: 8 }}>
           {error}
@@ -275,6 +341,7 @@ export default function PaymentPanel({
   const [status, setStatus] = useState<PaymentStatus>(initialStatus);
   const [reference, setReference] = useState(initialRef);
   const [proof, setProof] = useState("");
+  const [paidAmount, setPaidAmount] = useState(""); // what the player says they sent (read from the screenshot)
   const [hasProof, setHasProof] = useState(initialHasProof);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -330,7 +397,7 @@ export default function PaymentPanel({
       const res = await fetch("/api/bookings/payment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, method, reference, proof }),
+        body: JSON.stringify({ code, method, reference, proof, amountPaid: paidAmount }),
       });
       const json = await res.json();
       if (!res.ok)
@@ -435,6 +502,9 @@ export default function PaymentPanel({
               proof={proof}
               onProof={setProof}
               hasProof={hasProof}
+              amount={paidAmount}
+              onAmount={setPaidAmount}
+              expectedAmount={amount}
             />
             <div className="pay-actions">
               <button className="btn" disabled={busy}>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeCode } from "@/lib/bookings";
 import { customerAlerts, removeCustomerPush, saveCustomerPush, setCustomerEmail } from "@/lib/customer-notify";
+import { guardBookingCode } from "@/lib/throttle";
 import { readJson, serverError } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 // Public, by booking code (whoever has the code manages the booking): notifications about it.
 // { code, action: "status", endpoint? } | { code, action: "push-on", subscription }
 // | { code, action: "push-off", endpoint } | { code, action: "email", email }   ("" = stop emails)
-export async function POST(req: NextRequest) {
+async function handle(req: NextRequest) {
   try {
     const b = await readJson(req);
     const code = normalizeCode(b.code);
@@ -31,4 +32,9 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     return serverError(e);
   }
+}
+
+// Unknown booking codes count towards a per-visitor limit (see guardBookingCode).
+export async function POST(req: NextRequest) {
+  return guardBookingCode(req, () => handle(req));
 }

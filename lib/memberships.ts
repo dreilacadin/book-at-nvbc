@@ -235,7 +235,9 @@ export async function setMembershipPayment(id: string, status: unknown): Promise
   if (!isPaymentStatus(status) || status === "rejected") return fail(400, "Unknown payment status.");
   const { rowCount } = await db().query(
     `UPDATE memberships SET payment_status = $2,
-            paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END
+            paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END,
+            -- Checked: the payment screenshot isn't kept (the reference number stays).
+            payment_proof = CASE WHEN $2 IN ('paid', 'waived', 'refunded') THEN '' ELSE payment_proof END
       WHERE id = $1`,
     [id, status]
   );
@@ -267,7 +269,7 @@ export async function approveMembership(id: string): Promise<Result<{ id: string
   const today = nowAtFacility().date;
   const memberCode = m.member_code ?? (await newMemberCode());
   const { rows } = await db().query(
-    `UPDATE memberships SET status = 'active', member_code = $2, member_since = COALESCE(member_since, $3::date),
+    `UPDATE memberships SET status = 'active', payment_proof = '', member_code = $2, member_since = COALESCE(member_since, $3::date),
             starts_on = $3, expires_on = $4, approved_at = now()
       WHERE id = $1 AND status <> 'active' RETURNING id`,
     [id, memberCode, today, addDays(today, MEMBERSHIP_DAYS)]
@@ -350,7 +352,7 @@ export async function rejectMembership(id: string, reason: unknown): Promise<Res
   if (!isId(id)) return fail(400, "Invalid id.");
   const note = typeof reason === "string" ? reason.trim().slice(0, 300) : "";
   const { rowCount } = await db().query(
-    `UPDATE memberships SET status = 'rejected',
+    `UPDATE memberships SET status = 'rejected', payment_proof = '',
             staff_notes = CASE WHEN $2 = '' THEN staff_notes ELSE btrim(staff_notes || E'\\n' || $2, E' \\n') END
       WHERE id = $1 AND status = 'pending'`,
     [id, note ? `Not approved: ${note}` : ""]

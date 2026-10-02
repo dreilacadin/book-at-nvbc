@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdmin, setAdminCookie, unauthorized } from "@/lib/admin-auth";
+import { canManage, forbidden, getAdmin, setAdminCookie, unauthorized } from "@/lib/admin-auth";
 import { createAdmin, deleteAdmin, listAdmins, setAdminPassword, updateAdmin } from "@/lib/admin-users";
 import { readJson, respond, serverError } from "@/lib/http";
 
@@ -23,6 +23,9 @@ export async function POST(req: NextRequest) {
   if (!me) return unauthorized();
   try {
     const b = await readJson(req);
+    // Staff accounts may only change their own password; everything else is for the owner/managers.
+    const ownPassword = b.action === "password" && me.id !== null && Number(b.id) === me.id;
+    if (!ownPassword && !canManage(me)) return forbidden();
     if (b.action === "create") return respond(await createAdmin(b, me.name), 201);
     if (b.action === "update") return respond(await updateAdmin(b.id, b, me.id));
     if (b.action === "delete") return respond(await deleteAdmin(b.id, me.id));

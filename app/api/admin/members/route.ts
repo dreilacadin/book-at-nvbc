@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdmin, unauthorized } from "@/lib/admin-auth";
+import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { readJson, respond, serverError } from "@/lib/http";
 import { emailSender } from "@/lib/mailer";
 import {
@@ -46,10 +46,13 @@ export async function GET(req: NextRequest) {
 // | { action: "email", ids, subject, body }  (reminders to expired members, up to 10 per call)
 // | { action: "email-test", id, subject, body }  (one filled-in reminder to the club's own address)  (existing members from a spreadsheet)
 export async function POST(req: NextRequest) {
-  if (!(await isAdmin(req))) return unauthorized();
+  const me = await getAdmin(req);
+  if (!me) return unauthorized();
   try {
     const b = await readJson(req);
     const id = String(b.id ?? "");
+    // Deleting members, importing and bulk emails: owner/managers only.
+    if (["delete", "import", "email", "email-test"].includes(String(b.action)) && !canManage(me)) return forbidden();
     if (b.action === "email") return respond(await sendReminderEmails(b.ids, b.subject, b.body, req.nextUrl.origin));
     if (b.action === "email-test") return respond(await sendTestReminder(b.id, b.subject, b.body, req.nextUrl.origin));
     if (b.action === "import") return respond(await importMembers(b.records, b.dryRun !== false));

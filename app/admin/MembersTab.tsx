@@ -10,6 +10,7 @@ import ImportMembers from "./ImportMembers";
 import QrScanner from "./QrScanner";
 import { api, todayManila, type AdminMember } from "./shared";
 import ProofViewer from "./ProofViewer";
+import { useCanManage } from "./role";
 import FullScreenLoader from "@/components/FullScreenLoader";
 
 type Filter = "action" | "active" | "expired" | "forfeited" | "rejected" | "all";
@@ -22,6 +23,7 @@ const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.p
 /** Staff: scan or look up a member, and approve / manage applications. */
 export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
   const [members, setMembers] = useState<AdminMember[]>([]);
+  const manage = useCanManage();
   const [filter, setFilter] = useState<Filter>("action");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -96,14 +98,14 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
 
   return (
     <div className="stack">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+      {manage && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
         <button className="btn small secondary" onClick={() => { setEmailing((v) => !v); setImporting(false); }}>
           {emailing ? "Close emails" : `✉ Email expired members${counts.expired ? ` (${counts.expired})` : ""}`}
         </button>
         <button className="btn small secondary" onClick={() => { setImporting((v) => !v); setEmailing(false); }}>
           {importing ? "Close import" : "⬆ Import existing members"}
         </button>
-      </div>
+      </div>}
       {importing && <ImportMembers onDone={load} onAuthError={onAuthError} />}
       {emailing && (
         <EmailReminders
@@ -267,7 +269,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                             </button>
                           )}
                           {st === "expired" && <ExpiredActions m={m} act={act} />}
-                          {st === "rejected" && (
+                          {st === "rejected" && manage && (
                             <button className="btn small secondary danger-text" onClick={() => deleteMember(m, act)}>
                               Delete
                             </button>
@@ -454,6 +456,7 @@ function MemberPanel({
   onDeleted: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const manage = useCanManage();
   if (editing)
     return (
       <EditMember m={m} onAuthError={onAuthError} onClose={() => setEditing(false)}
@@ -464,9 +467,11 @@ function MemberPanel({
       <MemberDetails m={m} today={today} />
       <div className="actions" style={{ marginTop: 12, justifyContent: "flex-start" }}>
         <button type="button" className="btn small secondary" onClick={() => setEditing(true)}>✎ Edit details</button>
-        <button type="button" className="btn small secondary danger-text" onClick={async () => { if (await deleteMember(m, act)) onDeleted(); }}>
-          Delete member
-        </button>
+        {manage && (
+          <button type="button" className="btn small secondary danger-text" onClick={async () => { if (await deleteMember(m, act)) onDeleted(); }}>
+            Delete member
+          </button>
+        )}
       </div>
     </div>
   );

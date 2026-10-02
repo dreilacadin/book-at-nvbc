@@ -29,6 +29,7 @@ import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
+import { RoleContext, type AdminRole } from "./role";
 import FullScreenLoader from "@/components/FullScreenLoader";
 
 const shortDate = (d: string | null) =>
@@ -36,7 +37,7 @@ const shortDate = (d: string | null) =>
 
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [me, setMe] = useState<{ name: string; id: number | null } | null>(null);
+  const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
   const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "staff" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
   const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
@@ -68,10 +69,10 @@ export default function AdminPage() {
   }, [loggedIn, reloadOpenBooking]);
 
   useEffect(() => {
-    api<{ loggedIn: boolean; name?: string; id?: number | null }>("/api/admin/login")
+    api<{ loggedIn: boolean; name?: string; id?: number | null; role?: AdminRole }>("/api/admin/login")
       .then((r) => {
         setLoggedIn(r.loggedIn);
-        setMe(r.loggedIn ? { name: r.name ?? "", id: r.id ?? null } : null);
+        setMe(r.loggedIn ? { name: r.name ?? "", id: r.id ?? null, role: r.role ?? "staff" } : null);
       })
       .catch(() => setLoggedIn(false));
   }, [loggedIn]);
@@ -83,12 +84,24 @@ export default function AdminPage() {
   if (loggedIn === null) return <FullScreenLoader />;
   if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
 
+  const role: AdminRole = me?.role ?? "staff";
+  const manage = role !== "staff";
+  // Staff accounts don't see Courts (setup) or Settings.
+  const tabs = (["overview", "bookings", "members", "courts", "staff", "settings"] as const).filter(
+    (t) => manage || (t !== "courts" && t !== "settings")
+  );
+
   return (
-    <>
+    <RoleContext.Provider value={role}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1>Staff dashboard</h1>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {me && <span className="muted" style={{ fontSize: 14 }}>Logged in as <strong>{me.name}</strong></span>}
+        {me && (
+          <span className="muted" style={{ fontSize: 14 }}>
+            Logged in as <strong>{me.name}</strong>
+            {me.role !== "owner" && <span className={`badge ${me.role === "staff" ? "grey" : ""}`} style={{ marginLeft: 6 }}>{me.role === "manager" ? "Manager" : "Staff"}</span>}
+          </span>
+        )}
         <Notifications onOpenBooking={setOpenCode} onOpenMembers={() => setTab("members")} onAuthError={onAuthError} />
         <button
           className="btn small secondary"
@@ -102,7 +115,7 @@ export default function AdminPage() {
         </span>
       </div>
       <div className="tabs" role="tablist">
-        {(["overview", "bookings", "members", "courts", "staff", "settings"] as const).map((t) => (
+        {tabs.map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} onClick={() => { setTab(t); setBookingsOpen(null); }}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
@@ -122,11 +135,11 @@ export default function AdminPage() {
         <BookingsTab initialDate={bookingsDate} initialOpen={bookingsOpen} onDateChange={setBookingsDate} onAuthError={onAuthError} />
       )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
-      {tab === "courts" && <CourtsTab onAuthError={onAuthError} />}
+      {tab === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}
       {tab === "staff" && (
         <>
           <StaffTab onAuthError={onAuthError} />
-          <ActivityLog onOpenBooking={setOpenCode} onAuthError={onAuthError} />
+          {manage && <ActivityLog onOpenBooking={setOpenCode} onAuthError={onAuthError} />}
         </>
       )}
       {openCode && openBooking && (
@@ -142,8 +155,8 @@ export default function AdminPage() {
           </div>
         </div>
       )}
-      {tab === "settings" && <SettingsTab onAuthError={onAuthError} />}
-    </>
+      {tab === "settings" && manage && <SettingsTab onAuthError={onAuthError} />}
+    </RoleContext.Provider>
   );
 }
 

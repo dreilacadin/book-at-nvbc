@@ -20,6 +20,19 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Your payment screenshot fills in the details for you.** After you upload a screenshot of your
+  receipt, your phone reads the reference number and amount and fills them in — just check
+  they're right before sending. (The screenshot is read on your phone.)
+- **Staff:** **Manager and Staff accounts.** Each staff login is now a **Manager** (full access,
+  like the owner) or **Staff** (day-to-day work: bookings, payments, members, messages, reserved
+  times). Only the owner and managers can change settings, prices and payment accounts, set up
+  courts, manage staff accounts, delete bookings or members, import members, send bulk emails and
+  see the activity log. Existing accounts start as Staff — use **Make manager** in the Staff tab.
+- **Staff:** The payment checklist shows the amount the player says they paid, in red if it
+  differs from the booking.
+- **Database:** Staff account roles; a table of recent failed attempts (for the limits below);
+  the amount players report paying.
+- **Internal:** New dependency `tesseract.js` (reads payment screenshots in the browser).
 - **Light or dark — your choice.** A new theme button at the top right of every page lets you
   pick **Light**, **Dark** or **Auto** (follow your phone or computer's setting). Your choice is
   remembered on this device.
@@ -107,6 +120,14 @@ Earlier changes (before this file existed) are in the git history.
   being released again, and for who restored a booking and when.
 
 ### Changed
+- **Payment screenshots aren't kept after they're checked.** Once staff confirm or reject your
+  payment (or the booking is cancelled), the screenshot is deleted; the reference number stays.
+- **Staff:** Wrong staff passwords are limited: after 5 wrong tries for a username from one place
+  (or 20 from one network, or 50 for a username overall), login pauses for 15–60 minutes. Too many
+  unknown booking codes from one visitor (30 in 15 minutes) also pause booking lookups, to stop
+  code guessing.
+- **Staff:** Screenshots already stored for checked or cancelled payments were deleted to save
+  space. Reuse of a deleted screenshot is still spotted (its fingerprint is kept).
 - **Your booking is easier to read on phones.** The booking confirmation and My booking now show
   the essentials at a glance — status, day and time, court and amount, plus one line on what to do
   next. The QR code, messages with staff, updates and "Good to know" are tidy rows you tap to open

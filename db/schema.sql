@@ -468,3 +468,30 @@ UPDATE admin_notify_state SET kinds_version = 2 WHERE kinds_version < 2;
 ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 2;
 ALTER TABLE admin_notify_state ALTER COLUMN kinds
   SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message'];
+
+-- v23: login throttling, booking-code rate limits, staff roles, screenshots kept only until checked
+-- Recent failed attempts (wrong passwords, unknown booking codes), counted per bucket and key to
+-- slow down guessing. Rows older than a day are pruned automatically.
+CREATE TABLE IF NOT EXISTS throttle_hits (
+  bucket  TEXT NOT NULL,
+  key     TEXT NOT NULL,
+  at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS throttle_hits_idx ON throttle_hits (bucket, key, at);
+-- Staff account roles: 'manager' = full access (like the owner login); 'staff' = day-to-day work
+-- (no settings, court setup, staff accounts, deleting bookings/members, imports or bulk emails).
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'staff';
+ALTER TABLE admin_users DROP CONSTRAINT IF EXISTS admin_users_role_check;
+ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff'));
+-- Payment screenshots are kept only until staff confirm or reject the payment (or the booking is
+-- cancelled). The fingerprint stays, so reuse of the same screenshot is still spotted: it becomes
+-- a plain column, set when a screenshot is sent.
+ALTER TABLE bookings ALTER COLUMN payment_proof_hash DROP EXPRESSION IF EXISTS;
+ALTER TABLE bookings ALTER COLUMN payment_proof_hash SET DEFAULT '';
+UPDATE bookings SET payment_proof_hash = '' WHERE payment_proof_hash IS NULL;
+-- The amount the player says they paid (read from their screenshot on their phone, then checked by them).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS paid_amount_reported NUMERIC(10,2);
+UPDATE bookings SET payment_proof = ''
+ WHERE payment_proof <> '' AND (payment_status IN ('paid', 'waived', 'refunded', 'rejected') OR status = 'cancelled');
+UPDATE memberships SET payment_proof = ''
+ WHERE payment_proof <> '' AND (payment_status IN ('paid', 'waived', 'refunded') OR status <> 'pending');
