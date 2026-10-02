@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { REMINDER_MINUTES } from "@/lib/customer-messages";
+import { Fold } from "./BookingSummary";
 import { currentSubscription, isIos, isStandalone, pushSupported, subscribeDevice } from "@/lib/push-client";
 
 type Status = { email: string; pushOn: boolean; push: { publicKey: string } | null; emailReady: boolean };
@@ -97,10 +98,10 @@ export default function BookingAlerts({ code }: { code: string }) {
 
   const hours = REMINDER_MINUTES % 60 === 0 ? `${REMINDER_MINUTES / 60} hour${REMINDER_MINUTES === 60 ? "" : "s"}` : `${REMINDER_MINUTES} minutes`;
 
+  const on = push === "on" || !!status.email;
   return (
-    <div className="alerts-box">
-      <strong>🔔 Get updates about this booking</strong>
-      <p className="muted" style={{ margin: "4px 0 0", fontSize: 14 }}>
+    <Fold icon="🔔" title="Get updates" hint={on ? "On" : "Off"} hintTone={on ? "on" : "off"}>
+      <p className="muted" style={{ margin: 0, fontSize: 14 }}>
         We&apos;ll let you know when your payment is confirmed (or if there&apos;s a problem with it), and remind you {hours} before
         your time.
       </p>
@@ -150,6 +151,6 @@ export default function BookingAlerts({ code }: { code: string }) {
       )}
       {note && !error && <p className="hint" style={{ margin: "6px 0 0" }}>{note}</p>}
       {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
-    </div>
+    </Fold>
   );
 }

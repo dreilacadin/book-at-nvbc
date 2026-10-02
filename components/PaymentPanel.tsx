@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { imageToDataUrl } from "@/lib/image";
 import {
   formatPeso,
   paymentLabel,
@@ -9,7 +9,7 @@ import {
   type PaymentMethod,
   type PaymentStatus,
 } from "@/lib/pricing";
-import { imageToDataUrl } from "@/lib/image";
+import { useEffect, useState } from "react";
 
 /** Public payment details (GCash number, BPI account, QR Ph image). */
 export function usePaymentInfo() {
@@ -25,7 +25,15 @@ export function usePaymentInfo() {
 }
 
 /** Where to send an online payment: the GCash number, BPI account or QR Ph code. */
-export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; method: PaymentMethod; amount: number }) {
+export function PaymentDetails({
+  info,
+  method,
+  amount,
+}: {
+  info: PaymentInfo;
+  method: PaymentMethod;
+  amount: number;
+}) {
   const [copied, setCopied] = useState("");
   const copy = async (label: string, value: string) => {
     try {
@@ -41,7 +49,14 @@ export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; me
     return (
       <div className="pay-detail">
         <p style={{ margin: 0 }}>
-          Send <strong>{formatPeso(amount)}</strong> via GCash to {accounts.length > 1 ? <><strong>any one</strong> of these:</> : ":"}
+          Send <strong>{formatPeso(amount)}</strong> via GCash to{" "}
+          {accounts.length > 1 ? (
+            <>
+              <strong>any one</strong> of these:
+            </>
+          ) : (
+            ":"
+          )}
         </p>
         {accounts.map((a, i) => (
           <div key={a.number} className="acct">
@@ -49,7 +64,11 @@ export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; me
               <strong>{a.number}</strong>
               {a.name && <div className="muted">{a.name}</div>}
             </div>
-            <button type="button" className="btn small secondary" onClick={() => copy(`gcash${i}`, a.number)}>
+            <button
+              type="button"
+              className="btn small secondary"
+              onClick={() => copy(`gcash${i}`, a.number)}
+            >
               {copied === `gcash${i}` ? "Copied ✓" : "Copy"}
             </button>
           </div>
@@ -61,13 +80,21 @@ export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; me
   if (method === "bpi")
     return (
       <div className="pay-detail">
-        <p style={{ margin: 0 }}>Transfer <strong>{formatPeso(amount)}</strong> to our BPI account:</p>
+        <p style={{ margin: 0 }}>
+          Transfer <strong>{formatPeso(amount)}</strong> to our BPI account:
+        </p>
         <div className="acct">
           <div>
             <strong>{info.bpiAccountNumber}</strong>
-            {info.bpiAccountName && <div className="muted">{info.bpiAccountName}</div>}
+            {info.bpiAccountName && (
+              <div className="muted">{info.bpiAccountName}</div>
+            )}
           </div>
-          <button type="button" className="btn small secondary" onClick={() => copy("bpi", info.bpiAccountNumber)}>
+          <button
+            type="button"
+            className="btn small secondary"
+            onClick={() => copy("bpi", info.bpiAccountNumber)}
+          >
             {copied === "bpi" ? "Copied ✓" : "Copy"}
           </button>
         </div>
@@ -78,12 +105,23 @@ export function PaymentDetails({ info, method, amount }: { info: PaymentInfo; me
     return (
       <div className="pay-detail" style={{ textAlign: "center" }}>
         <p style={{ margin: 0, textAlign: "left" }}>
-          Scan with GCash, Maya or any bank app and pay <strong>{formatPeso(amount)}</strong>:
+          Scan with GCash, Maya or any bank app and pay{" "}
+          <strong>{formatPeso(amount)}</strong>:
         </p>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={info.qrphImage} alt="NVBC QR Ph payment code" className="qr" />
+        <img
+          src={info.qrphImage}
+          alt="NVBC QR Ph payment code"
+          className="qr"
+        />
         <div>
-          <a href={info.qrphImage} download="NVBC-QRPh.png" className="btn small secondary">Save QR image</a>
+          <a
+            href={info.qrphImage}
+            download="NVBC-QRPh.png"
+            className="btn small secondary"
+          >
+            Save QR image
+          </a>
         </div>
       </div>
     );
@@ -119,7 +157,13 @@ export function ProofFields({
       />
       <div className="proof-or">and / or</div>
       <label className="btn small secondary proof-upload">
-        {busy ? "Reading…" : proof ? "Change screenshot" : hasProof ? "Replace screenshot" : "📷 Upload screenshot"}
+        {busy
+          ? "Reading…"
+          : proof
+            ? "Change screenshot"
+            : hasProof
+              ? "Replace screenshot"
+              : "📷 Upload screenshot"}
         <input
           type="file"
           accept="image/png,image/jpeg,image/webp"
@@ -131,9 +175,19 @@ export function ProofFields({
             setBusy(true);
             setError("");
             try {
-              onProof(await imageToDataUrl(f, 1400, "That screenshot is too large. Please crop it and try again."));
+              onProof(
+                await imageToDataUrl(
+                  f,
+                  1400,
+                  "That screenshot is too large. Please crop it and try again.",
+                ),
+              );
             } catch (err) {
-              setError(err instanceof Error ? err.message : "Could not read that image.");
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "Could not read that image.",
+              );
             } finally {
               setBusy(false);
             }
@@ -144,12 +198,24 @@ export function ProofFields({
         <div className="proof-preview">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={proof} alt="Your payment screenshot" />
-          <button type="button" className="btn small secondary" onClick={() => onProof("")}>Remove</button>
+          <button
+            type="button"
+            className="btn small secondary"
+            onClick={() => onProof("")}
+          >
+            Remove
+          </button>
         </div>
       ) : hasProof ? (
-        <p className="hint" style={{ margin: "6px 0 0" }}>Screenshot received ✓</p>
+        <p className="hint" style={{ margin: "6px 0 0" }}>
+          Screenshot received ✓
+        </p>
       ) : null}
-      {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
+      {error && (
+        <div className="error" style={{ marginTop: 8 }}>
+          {error}
+        </div>
+      )}
     </div>
   );
 }
@@ -166,10 +232,13 @@ function useSecondsLeft(deadline: string | null): number | null {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [deadline]);
-  return deadline ? Math.max(0, Math.floor((Date.parse(deadline) - now) / 1000)) : null;
+  return deadline
+    ? Math.max(0, Math.floor((Date.parse(deadline) - now) / 1000))
+    : null;
 }
 
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const mmss = (s: number) =>
+  `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 export default function PaymentPanel({
   code,
@@ -181,6 +250,7 @@ export default function PaymentPanel({
   payBy,
   deadline = null,
   rejectedNote = "",
+  secondaryAction,
   onUpdated,
 }: {
   code: string;
@@ -192,7 +262,13 @@ export default function PaymentPanel({
   payBy?: string; // "9:50 AM on Thu, Oct 1": unpaid bookings are released then
   deadline?: string | null; // online booking: send the payment by this time (ISO) or the slot is released
   rejectedNote?: string; // staff rejected the payment sent: why
-  onUpdated?: (p: { paymentMethod: PaymentMethod; paymentStatus: PaymentStatus; paymentRef: string; hasProof: boolean }) => void;
+  secondaryAction?: React.ReactNode; // e.g. "Cancel this booking", shown beside the main button
+  onUpdated?: (p: {
+    paymentMethod: PaymentMethod;
+    paymentStatus: PaymentStatus;
+    paymentRef: string;
+    hasProof: boolean;
+  }) => void;
 }) {
   const { info, error: infoError } = usePaymentInfo();
   const [method, setMethod] = useState<PaymentMethod>(initialMethod);
@@ -202,7 +278,9 @@ export default function PaymentPanel({
   const [hasProof, setHasProof] = useState(initialHasProof);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const secondsLeft = useSecondsLeft(status === "unpaid" || status === "rejected" ? deadline : null);
+  const secondsLeft = useSecondsLeft(
+    status === "unpaid" || status === "rejected" ? deadline : null,
+  );
   const timeUp = secondsLeft === 0;
 
   if (status === "paid" || status === "waived" || status === "refunded") {
@@ -210,24 +288,32 @@ export default function PaymentPanel({
       <div className="pay-box">
         <div className="pay-row">
           <span>Payment</span>
-          <span className={`badge ${status === "paid" ? "" : "grey"}`}>{paymentStatusLabel(status)}</span>
+          <span className={`badge ${status === "paid" ? "" : "grey"}`}>
+            {paymentStatusLabel(status)}
+          </span>
         </div>
-        {status === "paid" && <p className="muted" style={{ margin: "6px 0 0" }}>Thank you — see you on court!</p>}
+        {status === "paid" && (
+          <p className="muted" style={{ margin: "6px 0 0" }}>
+            Thank you — see you on court!
+          </p>
+        )}
       </div>
     );
   }
 
   // Online methods; cash only for a booking already made as cash (coaches).
   const eMethods = (info?.methods ?? []).filter((m) => m !== "cash");
-  const choices: PaymentMethod[] = initialMethod === "cash" ? ["cash", ...eMethods] : eMethods;
+  const choices: PaymentMethod[] =
+    initialMethod === "cash" ? ["cash", ...eMethods] : eMethods;
 
   if (timeUp)
     return (
       <div className="pay-box">
         <div className="pay-timer expired">⏱ Time&apos;s up</div>
         <p style={{ margin: "10px 0 0" }}>
-          The time to pay for this booking has ended, so the slot has been released for other players. You&apos;re welcome to
-          book again. If you already sent a payment, please contact the front desk.
+          The time to pay for this booking has ended, so the slot has been
+          released for other players. You&apos;re welcome to book again. If you
+          already sent a payment, please contact the front desk.
         </p>
       </div>
     );
@@ -235,7 +321,9 @@ export default function PaymentPanel({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!reference.trim() && !proof && !hasProof)
-      return setError("Enter the reference number or upload a screenshot of your receipt.");
+      return setError(
+        "Enter the reference number or upload a screenshot of your receipt.",
+      );
     setBusy(true);
     setError("");
     try {
@@ -245,7 +333,8 @@ export default function PaymentPanel({
         body: JSON.stringify({ code, method, reference, proof }),
       });
       const json = await res.json();
-      if (!res.ok) return setError(json.error || "Could not save your payment details.");
+      if (!res.ok)
+        return setError(json.error || "Could not save your payment details.");
       setStatus(json.paymentStatus);
       setReference(json.paymentRef);
       setHasProof(json.hasProof);
@@ -260,8 +349,18 @@ export default function PaymentPanel({
 
   return (
     <div className="pay-box">
+      {status === "for_verification" && (
+        <div className="notice" style={{ marginTop: 10, marginBottom: 10 }}>
+          Payment details received. Staff will confirm your payment shortly. You
+          can correct them below if needed.
+        </div>
+      )}
       {secondsLeft !== null && (
-        <div className={`pay-timer${secondsLeft <= 120 ? " urgent" : ""}`} role="timer" aria-live={secondsLeft <= 60 ? "assertive" : "off"}>
+        <div
+          className={`pay-timer${secondsLeft <= 120 ? " urgent" : ""}`}
+          role="timer"
+          aria-live={secondsLeft <= 60 ? "assertive" : "off"}
+        >
           ⏱ Time left to pay: <strong>{mmss(secondsLeft)}</strong>
         </div>
       )}
@@ -271,7 +370,11 @@ export default function PaymentPanel({
       </div>
 
       {info && choices.length > 1 && (
-        <div className="method-pills" role="radiogroup" aria-label="Payment method">
+        <div
+          className="method-pills"
+          role="radiogroup"
+          aria-label="Payment method"
+        >
           {choices.map((m) => (
             <button
               key={m}
@@ -289,8 +392,16 @@ export default function PaymentPanel({
       {method === "cash" && (
         <p style={{ margin: "10px 0 0" }}>
           Pay <strong>{formatPeso(amount)}</strong> in cash at the front desk
-          {payBy ? <> by <strong>{payBy}</strong></> : " before you play"} and show your booking QR (or code{" "}
-          <strong>{code}</strong>). Your booking is confirmed once staff receive your payment.
+          {payBy ? (
+            <>
+              {" "}
+              by <strong>{payBy}</strong>
+            </>
+          ) : (
+            " before you play"
+          )}{" "}
+          and show your booking QR (or code <strong>{code}</strong>). Your
+          booking is confirmed once staff receive your payment.
         </p>
       )}
 
@@ -299,35 +410,61 @@ export default function PaymentPanel({
       {method !== "cash" && (
         <>
           <p className="muted" style={{ fontSize: 14, margin: "10px 0 0" }}>
-            Put <strong>{code}</strong> in the message/notes if your app allows. After paying, enter the reference
-            number or upload a screenshot of the receipt so staff can confirm it.
+            Put <strong>{code}</strong> in the message/notes if your app allows.
+            After paying, enter the reference number or upload a screenshot of
+            the receipt so staff can confirm it.
           </p>
           {status === "rejected" && (
             <div className="error pay-rejected" style={{ marginTop: 10 }}>
               <strong>We couldn&apos;t verify your payment.</strong>
-              {rejectedNote && <div style={{ marginTop: 4 }}>“{rejectedNote}”</div>}
+              {rejectedNote && (
+                <div style={{ marginTop: 4 }}>“{rejectedNote}”</div>
+              )}
               <div style={{ marginTop: 4 }}>
-                Please send a correct payment and its reference number or screenshot below before the timer runs out. If you think
-                this is a mistake, please contact the front desk.
+                Please send a correct payment and its reference number or
+                screenshot below before the timer runs out. If you think this is
+                a mistake, please contact the front desk.
               </div>
             </div>
           )}
-          {status === "for_verification" && (
-            <div className="success" style={{ marginTop: 10 }}>
-              Payment details received. Staff will confirm your payment shortly. You can correct them below if needed.
-            </div>
-          )}
+
           <form onSubmit={submit} style={{ marginTop: 10 }}>
-            <ProofFields reference={reference} onReference={setReference} proof={proof} onProof={setProof} hasProof={hasProof} />
-            <button className="btn" disabled={busy} style={{ marginTop: 10 }}>
-              {busy ? "Sending…" : status === "for_verification" ? "Update" : status === "rejected" ? "Send again" : "I've paid"}
-            </button>
+            <ProofFields
+              reference={reference}
+              onReference={setReference}
+              proof={proof}
+              onProof={setProof}
+              hasProof={hasProof}
+            />
+            <div className="pay-actions">
+              <button className="btn" disabled={busy}>
+                {busy
+                  ? "Sending…"
+                  : status === "for_verification"
+                    ? "Update"
+                    : status === "rejected"
+                      ? "Send again"
+                      : "Submit payment details"}
+              </button>
+              {secondaryAction}
+            </div>
           </form>
         </>
       )}
 
-      {info?.note && <p className="muted" style={{ fontSize: 14, margin: "10px 0 0", whiteSpace: "pre-wrap" }}>{info.note}</p>}
-      {(error || infoError) && <div className="error" style={{ marginTop: 10 }}>{error || infoError}</div>}
+      {info?.note && (
+        <p
+          className="muted"
+          style={{ fontSize: 14, margin: "10px 0 0", whiteSpace: "pre-wrap" }}
+        >
+          {info.note}
+        </p>
+      )}
+      {(error || infoError) && (
+        <div className="error" style={{ marginTop: 10 }}>
+          {error || infoError}
+        </div>
+      )}
     </div>
   );
 }

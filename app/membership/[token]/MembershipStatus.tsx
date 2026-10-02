@@ -1,13 +1,22 @@
 "use client";
 
+import FullScreenLoader from "@/components/FullScreenLoader";
+import MembershipScope from "@/components/MembershipScope";
+import {
+  PaymentDetails,
+  ProofFields,
+  usePaymentInfo,
+} from "@/components/PaymentPanel";
+import { memberTypeLabel, type MemberType } from "@/lib/membership";
+import {
+  formatPeso,
+  paymentLabel,
+  type PaymentMethod,
+  type PaymentStatus,
+} from "@/lib/pricing";
+import { loadMembership, saveMembership } from "@/lib/saved-membership";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import MembershipScope from "@/components/MembershipScope";
-import { PaymentDetails, ProofFields, usePaymentInfo } from "@/components/PaymentPanel";
-import { memberTypeLabel, type MemberType } from "@/lib/membership";
-import { formatPeso, paymentLabel, type PaymentMethod, type PaymentStatus } from "@/lib/pricing";
-import { loadMembership, saveMembership } from "@/lib/saved-membership";
-import FullScreenLoader from "@/components/FullScreenLoader";
 
 type View = {
   state: "pending" | "active" | "expired" | "rejected" | "forfeited";
@@ -27,7 +36,12 @@ type View = {
 };
 
 const niceDate = (d: string) =>
-  new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+  new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 
 export default function MembershipStatus({ token }: { token: string }) {
   const [v, setV] = useState<View | null>(null);
@@ -35,14 +49,22 @@ export default function MembershipStatus({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/membership/${token}`, { cache: "no-store" });
+      const res = await fetch(`/api/membership/${token}`, {
+        cache: "no-store",
+      });
       const json = await res.json();
-      if (!res.ok) return setError(json.error || "Could not load your membership.");
+      if (!res.ok)
+        return setError(json.error || "Could not load your membership.");
       setV(json);
       setError("");
       // Keep this link on the device so the member can find their QR again.
       if (!loadMembership() || loadMembership()?.token === token)
-        saveMembership({ token, name: json.fullName, appliedOn: json.appliedOn, memberCode: json.memberCode ?? undefined });
+        saveMembership({
+          token,
+          name: json.fullName,
+          appliedOn: json.appliedOn,
+          memberCode: json.memberCode ?? undefined,
+        });
     } catch {
       setError("Network error. Please check your connection.");
     }
@@ -55,11 +77,19 @@ export default function MembershipStatus({ token }: { token: string }) {
   // While pending, check every 20 seconds so the page turns into the welcome page once approved.
   useEffect(() => {
     if (v?.state !== "pending") return;
-    const t = setInterval(() => document.visibilityState === "visible" && load(), 20_000);
+    const t = setInterval(
+      () => document.visibilityState === "visible" && load(),
+      20_000,
+    );
     return () => clearInterval(t);
   }, [v?.state, load]);
 
-  if (!v) return error ? <div className="error">{error}</div> : <FullScreenLoader label="Loading your membership…" />;
+  if (!v)
+    return error ? (
+      <div className="error">{error}</div>
+    ) : (
+      <FullScreenLoader label="Loading your membership…" />
+    );
 
   const firstName = v.fullName.split(" ")[0];
 
@@ -68,21 +98,28 @@ export default function MembershipStatus({ token }: { token: string }) {
       <div className="member-page">
         {v.state === "active" ? (
           <div className="welcome">
-            <div className="welcome-emoji" aria-hidden="true">🎉</div>
+            <div className="welcome-emoji" aria-hidden="true">
+              🎉
+            </div>
             <h1>Welcome to NVBC, {firstName}!</h1>
             <p className="lead" style={{ margin: 0 }}>
-              You&apos;re now an official <strong>NVBC Member</strong>. Thank you for joining — see you on court!
+              You&apos;re now an official <strong>NVBC Member</strong>. Thank
+              you for joining — see you on court!
             </p>
           </div>
         ) : (
           <div className="notice" style={{ marginBottom: 16 }}>
-            Your membership expired on <strong>{v.expiresOn && niceDate(v.expiresOn)}</strong>. On your next visit, let
-            the front desk know whether you&apos;d like to renew (you keep the same member code) or end your membership.
-            Until then, courts are booked at the Regular rate.
+            Your membership expired on{" "}
+            <strong>{v.expiresOn && niceDate(v.expiresOn)}</strong>. On your
+            next visit, let the front desk know whether you&apos;d like to renew
+            (you keep the same member code) or end your membership. Until then,
+            courts are booked at the Regular rate.
           </div>
         )}
 
-        <div className={`member-card${v.state === "expired" ? " expired" : ""}`}>
+        <div
+          className={`member-card${v.state === "expired" ? " expired" : ""}`}
+        >
           <div className="member-card-head">
             <span className="logo-ball" aria-hidden="true" />
             <div>
@@ -94,7 +131,11 @@ export default function MembershipStatus({ token }: { token: string }) {
           <div className="member-name">{v.fullName}</div>
           {v.qr && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img className="member-qr" src={v.qr} alt={`QR code for member code ${v.memberCode}`} />
+            <img
+              className="member-qr"
+              src={v.qr}
+              alt={`QR code for member code ${v.memberCode}`}
+            />
           )}
           <div className="member-code-label">Member code</div>
           <div className="member-code">{v.memberCode}</div>
@@ -108,18 +149,27 @@ export default function MembershipStatus({ token }: { token: string }) {
               <dd>{v.expiresOn && niceDate(v.expiresOn)}</dd>
             </div>
           </dl>
-          {v.state === "expired" && <div className="member-expired-tag">Expired</div>}
+          {v.state === "expired" && (
+            <div className="member-expired-tag">Expired</div>
+          )}
         </div>
 
         <MembershipScope />
         <p className="muted member-tip">
-          📱 Take a screenshot of this card and keep it on your phone. Show the QR code at the front desk — staff scan it
-          to check your membership. You can also come back to this page anytime: it&apos;s saved on this device, and you
-          can bookmark it.
+          📱 Take a screenshot of this card and keep it on your phone. Show the
+          QR code at the front desk — staff scan it to check your membership.
+          You can also come back to this page anytime: it&apos;s saved on this
+          device, and you can bookmark it.
         </p>
         {v.qr && (
           <div className="actions" style={{ justifyContent: "center" }}>
-            <a className="btn secondary" href={v.qr} download={`NVBC-member-${v.memberCode}.png`}>Save QR image</a>
+            <a
+              className="btn secondary"
+              href={v.qr}
+              download={`NVBC-member-${v.memberCode}.png`}
+            >
+              Save QR image
+            </a>
           </div>
         )}
       </div>
@@ -131,11 +181,12 @@ export default function MembershipStatus({ token }: { token: string }) {
         <h1>Membership ended</h1>
         <div className="card">
           <p style={{ marginTop: 0 }}>
-            {firstName}, your NVBC membership ({v.memberCode}) has ended, so member rates no longer apply. Thank you for being
-            part of NVBC!
+            {firstName}, your NVBC membership ({v.memberCode}) has ended, so
+            member rates no longer apply. Thank you for being part of NVBC!
           </p>
           <p style={{ marginBottom: 0 }}>
-            Want to come back? The front desk can reactivate it — you&apos;ll keep the same member code.
+            Want to come back? The front desk can reactivate it — you&apos;ll
+            keep the same member code.
           </p>
         </div>
       </div>
@@ -147,8 +198,9 @@ export default function MembershipStatus({ token }: { token: string }) {
         <h1>Membership application</h1>
         <div className="card">
           <p style={{ marginTop: 0 }}>
-            Sorry, {firstName} — your application couldn&apos;t be approved. Please visit or message the front desk if you
-            have questions, or <Link href="/membership">apply again</Link>.
+            Sorry, {firstName} — your application couldn&apos;t be approved.
+            Please visit or message the front desk if you have questions, or{" "}
+            <Link href="/membership">apply again</Link>.
           </p>
         </div>
       </div>
@@ -157,7 +209,15 @@ export default function MembershipStatus({ token }: { token: string }) {
   return <Pending v={v} token={token} onUpdated={load} />;
 }
 
-function Pending({ v, token, onUpdated }: { v: View; token: string; onUpdated: () => void }) {
+function Pending({
+  v,
+  token,
+  onUpdated,
+}: {
+  v: View;
+  token: string;
+  onUpdated: () => void;
+}) {
   const { info } = usePaymentInfo();
   const [method, setMethod] = useState<PaymentMethod>(v.paymentMethod);
   const [reference, setReference] = useState(v.paymentRef);
@@ -171,7 +231,9 @@ function Pending({ v, token, onUpdated }: { v: View; token: string; onUpdated: (
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!reference.trim() && !proof && !v.hasProof)
-      return setError("Enter the reference number or upload a screenshot of your receipt.");
+      return setError(
+        "Enter the reference number or upload a screenshot of your receipt.",
+      );
     setBusy(true);
     setError("");
     try {
@@ -181,7 +243,8 @@ function Pending({ v, token, onUpdated }: { v: View; token: string; onUpdated: (
         body: JSON.stringify({ method, reference, proof }),
       });
       const json = await res.json();
-      if (!res.ok) return setError(json.error || "Could not save your payment details.");
+      if (!res.ok)
+        return setError(json.error || "Could not save your payment details.");
       setProof("");
       onUpdated();
     } catch {
@@ -195,9 +258,11 @@ function Pending({ v, token, onUpdated }: { v: View; token: string; onUpdated: (
     <div className="member-page">
       <h1>Application received ✓</h1>
       <p className="lead">
-        Thanks, {v.fullName.split(" ")[0]}! Your <strong>{memberTypeLabel(v.memberType)}</strong> membership is{" "}
-        <strong>pending confirmation</strong>. It becomes active once you&apos;ve paid and the front desk approves it —
-        this page will then show your member QR code.
+        Thanks, {v.fullName.split(" ")[0]}! Your{" "}
+        <strong>{memberTypeLabel(v.memberType)}</strong> membership is{" "}
+        <strong>pending confirmation</strong>. It becomes active once
+        you&apos;ve paid and the front desk approves it — this page will then
+        show your member QR code.
       </p>
 
       <ol className="member-steps">
@@ -216,49 +281,98 @@ function Pending({ v, token, onUpdated }: { v: View; token: string; onUpdated: (
             <span>Membership fee</span>
             <strong style={{ fontSize: 22 }}>{formatPeso(v.fee)}</strong>
           </div>
-          <div className="method-pills" role="radiogroup" aria-label="Payment method">
+          <div
+            className="method-pills"
+            role="radiogroup"
+            aria-label="Payment method"
+          >
             {methods.map((m) => (
-              <button key={m} type="button" role="radio" aria-checked={method === m} onClick={() => setMethod(m)}>
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={method === m}
+                onClick={() => setMethod(m)}
+              >
                 {paymentLabel(m)}
               </button>
             ))}
           </div>
           {method === "cash" ? (
             <p style={{ margin: "10px 0 0" }}>
-              Pay <strong>{formatPeso(v.fee)}</strong> in cash at the front desk and give your name
-              {v.memberType === "student" ? " — bring your school ID" : ""}. Staff will approve your membership there.
+              Pay <strong>{formatPeso(v.fee)}</strong> in cash at the front desk
+              and give your name
+              {v.memberType === "student" ? " — bring your school ID" : ""}.
+              Staff will approve your membership there.
             </p>
           ) : (
             <>
-              {info && <PaymentDetails info={info} method={method} amount={v.fee} />}
+              {info && (
+                <PaymentDetails info={info} method={method} amount={v.fee} />
+              )}
               <p className="muted" style={{ fontSize: 14, margin: "10px 0" }}>
-                Put your name in the message if your app allows. After paying, enter the reference number or upload a
-                screenshot of the receipt so staff can confirm it.
+                Put your name in the message if your app allows. After paying,
+                enter the reference number or upload a screenshot of the receipt
+                so staff can confirm it.
               </p>
               {sent && (
                 <div className="success" style={{ marginBottom: 10 }}>
-                  Payment details received. Staff will check them shortly — you can correct them below if needed.
+                  Payment details received. Staff will check them shortly — you
+                  can correct them below if needed.
                 </div>
               )}
               <form onSubmit={submit}>
-                <ProofFields reference={reference} onReference={setReference} proof={proof} onProof={setProof} hasProof={v.hasProof} />
-                <button className="btn" disabled={busy} style={{ marginTop: 10 }}>
-                  {busy ? "Sending…" : sent ? "Update" : "I've paid"}
+                <ProofFields
+                  reference={reference}
+                  onReference={setReference}
+                  proof={proof}
+                  onProof={setProof}
+                  hasProof={v.hasProof}
+                />
+                <button
+                  className="btn"
+                  disabled={busy}
+                  style={{ marginTop: 10 }}
+                >
+                  {busy
+                    ? "Sending…"
+                    : sent
+                      ? "Update"
+                      : "Submit Payment Details"}
                 </button>
               </form>
             </>
           )}
-          {info?.note && <p className="muted" style={{ fontSize: 14, margin: "10px 0 0", whiteSpace: "pre-wrap" }}>{info.note}</p>}
-          {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
+          {info?.note && (
+            <p
+              className="muted"
+              style={{
+                fontSize: 14,
+                margin: "10px 0 0",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {info.note}
+            </p>
+          )}
+          {error && (
+            <div className="error" style={{ marginTop: 10 }}>
+              {error}
+            </div>
+          )}
         </div>
       )}
 
       {paid && (
-        <div className="success">Payment received — the front desk will approve your membership shortly.</div>
+        <div className="success">
+          Payment received — the front desk will approve your membership
+          shortly.
+        </div>
       )}
 
       <p className="hint" style={{ marginTop: 16 }}>
-        This page is saved on this device. You can also bookmark it — it&apos;s your private link to your membership.
+        This page is saved on this device. You can also bookmark it — it&apos;s
+        your private link to your membership.
       </p>
     </div>
   );

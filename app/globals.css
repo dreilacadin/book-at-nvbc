@@ -745,3 +745,39 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; background: #fff; }
 .lightbox-close { position: fixed; top: calc(12px + env(safe-area-inset-top)); right: 12px; width: 44px; height: 44px; border-radius: 50%;
   border: 0; background: rgba(255, 255, 255, .15); color: #fff; font-size: 20px; cursor: pointer; }
+
+/* Customer booking view (confirmation pop-up and My booking): compact header + collapsible rows */
+.bk-head { display: grid; gap: 2px; font-size: 15px; }
+.bk-head-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+.bk-head-top .badge { font-size: 13px; padding: 3px 10px; }
+.bk-head-when { font-size: 18px; font-weight: 700; line-height: 1.3; }
+.bk-head-extra { font-size: 13px; }
+.bk-head-line { margin: 10px 0 0; padding: 8px 12px; border-radius: 10px; font-size: 14px; font-weight: 600; background: var(--bg); border-left: 4px solid var(--border); }
+.bk-head-line.ok { border-left-color: var(--brand); }
+.bk-head-line.pending { border-left-color: #e0a800; }
+.bk-head-line.reserved { border-left-color: #3b6fd4; }
+.bk-head-line.bad { border-left-color: var(--danger); color: var(--danger); }
+.badge.bad { background: var(--danger-soft); color: var(--danger); }
+.folds { display: grid; gap: 0; margin: 14px 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.fold + .fold { border-top: 1px solid var(--border); }
+.fold > summary { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; list-style: none; font-weight: 600; font-size: 15px; min-height: 48px; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after { content: "›"; margin-left: 8px; color: var(--muted); font-size: 20px; line-height: 1; transition: transform .15s; }
+.fold[open] > summary::after { transform: rotate(90deg); }
+.fold-icon { width: 22px; text-align: center; }
+.fold-title { flex: 1; }
+.fold-hint { font-size: 13px; font-weight: 600; color: var(--muted); }
+.fold-hint.on { color: var(--brand); }
+.fold-hint.new { background: var(--brand); color: #fff; border-radius: 999px; padding: 2px 8px; }
+.fold-body { padding: 0 14px 14px; }
+.fold-body .booking-qr { margin: 0 0 8px; }
+.fold-body .policy-box { margin: 0; }
+.fold-body .chat { margin-top: 0; }
+.folds + .pay-box { margin-top: 0; }
+
+/* Payment box: main button and "Cancel booking" on one row, the main one wider */
+.pay-actions { display: flex; gap: 8px; margin-top: 10px; }
+.pay-actions .btn { padding-left: 14px; padding-right: 14px; white-space: nowrap; }
+@media (max-width: 420px) { .pay-actions .btn { font-size: 15px; padding-left: 12px; padding-right: 12px; } }
+.pay-actions .btn:first-child { flex: 1 1 auto; }
+.pay-actions .btn.secondary { flex: 0 0 auto; white-space: nowrap; }

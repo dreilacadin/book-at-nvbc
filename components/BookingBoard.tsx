@@ -31,6 +31,8 @@ import { loadMembership } from "@/lib/saved-membership";
 import { minutesUntilStart, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
 import BookingAlerts from "./BookingAlerts";
+import BookingChat from "./BookingChat";
+import { BookingHeader, Fold } from "./BookingSummary";
 import BookingQr from "./BookingQr";
 import PaymentPanel from "./PaymentPanel";
 import { AdminBookingCard } from "@/app/admin/BookingLookup";
@@ -568,50 +570,30 @@ function BookingDialog({
       >
         {done ? (
           <div>
-            {done.status === "reserved" ? (
-              <>
-                <h2 id="dlg-title">Slot reserved 🏸</h2>
-                <p className="notice info" style={{ marginTop: 0 }}>
-                  Your slot is <strong>Reserved</strong>. Please pay <strong>{formatPeso(done.amount)}</strong> in cash at the
-                  front desk by <strong>{payByLabel(done.date, done.startHour)}</strong> — reserved slots that aren&apos;t paid
-                  by then are released for other players.
-                </p>
-              </>
-            ) : done.status === "pending" && done.paymentStatus === "unpaid" ? (
-              <>
-                <h2 id="dlg-title">Complete your payment</h2>
-                <p className="notice" style={{ marginTop: 0 }}>
-                  We&apos;re holding this slot for you. Please send <strong>{formatPeso(done.amount)}</strong> by{" "}
-                  {paymentLabel(done.paymentMethod)} and upload your receipt or reference number before the timer runs out —
-                  otherwise the slot will be released for other players.
-                </p>
-              </>
-            ) : done.status === "pending" ? (
-              <>
-                <h2 id="dlg-title">Booking received — pending verification</h2>
-                <p className="notice" style={{ marginTop: 0 }}>
-                  Thank you! We&apos;ve received your {paymentLabel(done.paymentMethod)} payment details. Your booking is{" "}
-                  <strong>Pending</strong> and becomes <strong>Confirmed</strong> once staff verify your payment.
-                </p>
-              </>
-            ) : (
-              <h2 id="dlg-title">You&apos;re booked! 🎉</h2>
-            )}
-            <BookingAlerts code={done.code} />
-            <div className="summary">
-              <strong>{sportLabel(done.sport)} · {done.courtName}</strong>
-              {formatDateLong(done.date)}
-              <br />
-              {formatRange(done.startHour, done.endHour)}
-              {done.rateType !== "regular" && (
-                <>
-                  <br />
-                  <span className="muted">{rateTypeLabel(done.rateType)} rate · {formatPeso(done.hourlyRate)}/hour</span>
-                </>
-              )}
-            </div>
+            <h2 id="dlg-title">
+              {done.status === "reserved" ? "Slot reserved 🏸"
+                : done.status === "pending" && done.paymentStatus === "unpaid" ? "Complete your payment"
+                : done.status === "pending" ? "Booking received"
+                : "You're booked! 🎉"}
+            </h2>
+            <BookingHeader
+              b={done}
+              extra={done.rateType !== "regular" ? `${rateTypeLabel(done.rateType)} rate · ${formatPeso(done.hourlyRate)}/hour` : undefined}
+            />
             {court?.notes && <div className="court-note">ⓘ {court.notes}</div>}
-            {done.amount > 0 && (
+            <div className="folds">
+              <Fold icon="🎟️" title="Booking QR code" hint={done.code}
+                defaultOpen={!(done.status === "pending" && done.paymentStatus === "unpaid")}>
+                <BookingQr code={done.code} />
+                <p className="hint" style={{ margin: 0, textAlign: "center" }}>
+                  Screenshot it or save the code — you&apos;ll need it on <Link href="/my-booking">My booking</Link> to view, pay
+                  or cancel. It&apos;s also remembered on this device.
+                </p>
+              </Fold>
+              <BookingChat code={done.code} />
+              <BookingAlerts code={done.code} />
+            </div>
+            {done.amount > 0 && done.paymentStatus !== "paid" && done.paymentStatus !== "waived" && (
               <PaymentPanel
                 code={done.code}
                 amount={done.amount}
@@ -624,12 +606,13 @@ function BookingDialog({
                 onUpdated={(u) => setDone({ ...done, paymentStatus: u.paymentStatus, paymentRef: u.paymentRef, hasProof: u.hasProof, payBy: null })}
               />
             )}
-            <BookingQr code={done.code} />
-            <p className="muted" style={{ fontSize: 14, marginTop: 0 }}>
-              Take a screenshot of this QR code or save your booking code. You&apos;ll need it to view, pay or cancel your
-              booking on the <Link href="/my-booking">My booking</Link> page. It&apos;s also remembered on this device.
-            </p>
-            {done.amount > 0 && <BookingPolicy title="Good to know" />}
+            {done.amount > 0 && (
+              <div className="folds">
+                <Fold icon="ⓘ" title="Good to know">
+                  <BookingPolicy title="Payments and refunds" />
+                </Fold>
+              </div>
+            )}
             <div className="actions">
               <button className="btn secondary" onClick={copy}>{copied ? "Copied ✓" : "Copy code"}</button>
               <button className="btn" onClick={onClose}>Done</button>

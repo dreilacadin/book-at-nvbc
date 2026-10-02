@@ -104,6 +104,13 @@ Earlier changes (before this file existed) are in the git history.
   being released again, and for who restored a booking and when.
 
 ### Changed
+- **Your booking is easier to read on phones.** The booking confirmation and My booking now show
+  the essentials at a glance — status, day and time, court and amount, plus one line on what to do
+  next. The QR code, messages with staff, updates and "Good to know" are tidy rows you tap to open
+  (messages open by themselves when staff reply). You can now also message NVBC staff right from
+  the booking confirmation.
+- When you still need to send your payment, **Cancel** now sits right beside the main payment
+  button (which is the bigger of the two), instead of on its own further down.
 - **Staff:** **Checking online payments is quicker and safer.** A booking waiting for payment
   verification now shows the player's screenshot right on its card, next to a checklist of what it
   should say: the amount, the GCash/BPI account it should have gone to, the date and time, and the
