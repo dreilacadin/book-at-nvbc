@@ -20,6 +20,9 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Light or dark — your choice.** A new theme button at the top right of every page lets you
+  pick **Light**, **Dark** or **Auto** (follow your phone or computer's setting). Your choice is
+  remembered on this device.
 - **Message NVBC staff about your booking.** On My booking there's now a chat with NVBC staff for
   questions about your booking, payment or anything else. Replies appear there (with a "new
   message" note at the top of your booking), and by notification or email if you turned on

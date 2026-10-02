@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
+import ThemeToggle, { THEME_SCRIPT } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
   title: "NVBC Courts — Court Reservation System",
@@ -22,7 +23,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: the theme script sets data-theme before React loads.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
         <header className="site-header">
           <div className="container">
@@ -39,6 +44,7 @@ export default function RootLayout({
               <Link href="/membership">Membership</Link>
               <Link href="/changelog">Changelog</Link>
             </nav>
+            <ThemeToggle />
           </div>
         </header>
         <main>
