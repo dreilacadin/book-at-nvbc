@@ -3,7 +3,7 @@ import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/adm
 import { db, getSettings } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
 import { isPaymentMethod, MAX_EXTRA_GCASH, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
-import { SPORTS } from "@/lib/sports";
+import { ACTIVITY_ID, isSport, SPORTS, type ActivityDef } from "@/lib/sports";
 
 export const dynamic = "force-dynamic";
 
@@ -54,11 +54,57 @@ export async function POST(req: NextRequest) {
       return bad("Hour limits are out of range.");
     if (s.booking_window_days < 0 || s.booking_window_days > 90) return bad("Booking window must be 0–90 days.");
 
-    // Price plan per sport (₱ per court per hour). Prices that are switched off are still
-    // kept (or copied from the ones in use), so switching back on restores them.
+    // Activities besides the sports (e.g. Zumba), and the extra courts each sport/activity can use.
+    // Older admin pages don't send them: keep what's saved.
+    const existing = await getSettings();
+    let activities: ActivityDef[] = existing.activities;
+    if (b.activities !== undefined) {
+      if (!Array.isArray(b.activities)) return bad("Invalid activities.");
+      activities = [];
+      for (const raw of b.activities as Record<string, unknown>[]) {
+        const label = text(raw?.label, 30);
+        const id = text(raw?.id, 30).toLowerCase();
+        if (!label) return bad("Give each activity a name.");
+        if (!ACTIVITY_ID.test(id) || isSport(id)) return bad(`“${label}” needs a different name.`);
+        if (activities.some((a) => a.id === id)) return bad(`“${label}” is listed twice.`);
+        activities.push({ id, label, emoji: text(raw?.emoji, 8) });
+      }
+      if (activities.length > 12) return bad("You can add up to 12 activities.");
+      // Removing an activity with upcoming bookings would leave them without a name or prices.
+      const gone = existing.activities.filter((a) => !activities.some((x) => x.id === a.id)).map((a) => a.id);
+      if (gone.length) {
+        const { rows } = await db().query<{ activity: string; n: number }>(
+          `SELECT activity, count(*)::int AS n FROM bookings
+            WHERE activity = ANY($1::text[]) AND status <> 'cancelled' AND booking_date >= (now() AT TIME ZONE 'Asia/Manila')::date
+            GROUP BY activity`,
+          [gone]
+        );
+        if (rows[0]) {
+          const name = existing.activities.find((a) => a.id === rows[0].activity)?.label ?? rows[0].activity;
+          return bad(`${name} has ${rows[0].n} upcoming booking(s). Move or cancel them before removing it.`);
+        }
+      }
+    }
+    let activity_courts = existing.activity_courts;
+    if (b.activity_courts !== undefined) {
+      const src = (b.activity_courts && typeof b.activity_courts === "object" ? b.activity_courts : {}) as Record<string, unknown>;
+      const ids = new Set([...SPORTS.map((x) => x.id as string), ...activities.map((a) => a.id)]);
+      activity_courts = Object.fromEntries(
+        Object.entries(src)
+          .filter(([k, v]) => ids.has(k) && Array.isArray(v))
+          .map(([k, v]) => [k, [...new Set((v as unknown[]).map(Number).filter(Number.isInteger))]])
+      );
+    }
+    const resHours = b.reschedule_hours === undefined ? existing.reschedule_hours : Number(b.reschedule_hours);
+    const resMax = b.reschedule_max === undefined ? existing.reschedule_max : Number(b.reschedule_max);
+    if (!Number.isInteger(resHours) || resHours < 0 || resHours > 168) return bad("Rescheduling: enter 0–168 hours before the start.");
+    if (!Number.isInteger(resMax) || resMax < 0 || resMax > 5) return bad("Rescheduling: allow 0–5 changes per booking.");
+
+    // Price plan per sport and activity (₱ per court per hour). Prices that are switched off are
+    // still kept (or copied from the ones in use), so switching back on restores them.
     const plansIn = (b.rate_plans ?? {}) as Record<string, Record<string, unknown>>;
     const rate_plans: Record<string, SportPricing> = {};
-    for (const sp of SPORTS) {
+    for (const sp of [...SPORTS, ...activities]) {
       const src = plansIn[sp.id] ?? {};
       const memberRates = src.memberRates === true;
       const coachRates = src.coachRates === true;
@@ -130,7 +176,8 @@ export async function POST(req: NextRequest) {
          member_code = $8, coach_code = $9, payment_methods = $10::text[],
          gcash_name = $11, gcash_number = $12, bpi_account_name = $13, bpi_account_number = $14,
          qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18,
-         gcash_more = $19::jsonb
+         gcash_more = $19::jsonb, activities = $20::jsonb, activity_courts = $21::jsonb,
+         reschedule_hours = $22, reschedule_max = $23
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -139,6 +186,7 @@ export async function POST(req: NextRequest) {
         s.gcash_name, s.gcash_number, s.bpi_account_name, s.bpi_account_number, s.qrph_image, s.payment_note,
         Math.round(feeStudent * 100) / 100, Math.round(feeAdult * 100) / 100,
         JSON.stringify(gcashMore),
+        JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax,
       ]
     );
     return NextResponse.json(await getSettings());

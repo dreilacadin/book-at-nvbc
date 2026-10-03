@@ -12,13 +12,13 @@ export default function BookingMessages({ b, onAuthError }: { b: AdminBooking; o
 
   const load = useCallback(async () => {
     try {
-      setMessages((await api<{ messages: ChatMessage[] }>(`/api/admin/messages?booking=${b.id}`)).messages);
+      setMessages((await api<{ messages: ChatMessage[] }>(`/api/admin/messages?booking=${b.group_root}`)).messages);
       setError("");
     } catch (e) {
       onAuthError(e);
       setError(e instanceof Error ? e.message : "Couldn't load messages.");
     }
-  }, [b.id, onAuthError]);
+  }, [b.group_root, onAuthError]);
   useEffect(() => {
     if (!open) return;
     load();
@@ -47,7 +47,7 @@ export default function BookingMessages({ b, onAuthError }: { b: AdminBooking; o
           }
           onSend={async (body) => {
             try {
-              setMessages((await api<{ messages: ChatMessage[] }>("/api/admin/messages", { booking: b.id, body })).messages);
+              setMessages((await api<{ messages: ChatMessage[] }>("/api/admin/messages", { booking: b.group_root, body })).messages);
               return null;
             } catch (e) {
               onAuthError(e);

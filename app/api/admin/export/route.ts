@@ -55,13 +55,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const { rows } = await db().query<Row>(
-      `SELECT b.cancel_code AS code, b.booking_date AS date, b.start_hour, b.end_hour, c.name AS court_name, c.sport,
+      `SELECT b.cancel_code AS code, b.booking_date AS date, b.start_hour, b.end_hour, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport,
               b.player_name AS name, b.contact, b.notes, b.rate_type, b.hourly_rate, b.amount, b.payment_method,
               b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.status, b.created_at, b.cancelled_by,
               mb.member_code, b.phase
          FROM bookings b JOIN courts c ON c.id = b.court_id
          LEFT JOIN memberships mb ON mb.id = b.membership_id
-        WHERE b.booking_date BETWEEN $1 AND $2 AND ($3::text IS NULL OR c.sport = $3)
+        WHERE b.booking_date BETWEEN $1 AND $2 AND ($3::text IS NULL OR COALESCE(b.activity, c.sport) = $3)
         ORDER BY b.booking_date, b.start_hour, c.sort_order, c.id`,
       [from, to, sport]
     );

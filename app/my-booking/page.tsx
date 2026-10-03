@@ -5,6 +5,9 @@ import BookingChat from "@/components/BookingChat";
 import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingQr from "@/components/BookingQr";
 import { BookingHeader, Fold } from "@/components/BookingSummary";
+import AddToCalendar from "@/components/AddToCalendar";
+import RescheduleBooking from "@/components/RescheduleBooking";
+import { setCustomActivities, SPORTS } from "@/lib/sports";
 import PaymentPanel from "@/components/PaymentPanel";
 import { REFUND_HOURS, refundOnCancel } from "@/lib/booking-policy";
 import {
@@ -42,6 +45,8 @@ type Booking = {
   phase: "in_progress" | "completed" | null;
   rejectedNote: string; // payment rejected by staff: why
   unreadMessages: number; // new messages from staff
+  courts: string[]; // a group booking's courts
+  activity: { id: string; label: string; emoji: string };
 };
 
 export default function MyBookingPage() {
@@ -86,6 +91,8 @@ export default function MyBookingPage() {
       const json = await res.json();
       if (!res.ok) setError(json.error || "Booking not found.");
       else {
+        // A custom activity (e.g. Zumba): register its name and emoji for display.
+        if (json.activity && !SPORTS.some((s) => s.id === json.activity.id)) setCustomActivities([json.activity]);
         setBooking(json);
         setCode(json.code);
       }
@@ -208,6 +215,8 @@ export default function MyBookingPage() {
                 Booked under {booking.name}
                 {booking.rateType !== "regular" &&
                   ` · ${rateTypeLabel(booking.rateType)} rate`}
+                {booking.courts.length > 1 &&
+                  ` · 👥 ${booking.courts.length} courts, one payment`}
               </>
             }
           />
@@ -233,6 +242,28 @@ export default function MyBookingPage() {
             />
             {booking.status !== "cancelled" && !booking.phase && (
               <BookingAlerts key={`alerts-${booking.code}`} code={booking.code} />
+            )}
+            {booking.status !== "cancelled" && !booking.phase && booking.canCancel && (
+              <RescheduleBooking
+                key={`move-${booking.code}-${booking.date}-${booking.startHour}`}
+                code={booking.code}
+                date={booking.date}
+                startHour={booking.startHour}
+                endHour={booking.endHour}
+                onMoved={(msg) => {
+                  lookup(booking.code).then(() => setMessage(msg));
+                }}
+              />
+            )}
+            {booking.status !== "cancelled" && (
+              <AddToCalendar
+                code={booking.code}
+                sport={booking.sport}
+                courts={booking.courtName}
+                date={booking.date}
+                startHour={booking.startHour}
+                endHour={booking.endHour}
+              />
             )}
           </div>
           {booking.status !== "cancelled" && booking.amount > 0 &&

@@ -6,7 +6,7 @@ export type AdminBooking = {
   id: string;
   code: string;
   court_name: string;
-  sport: Sport;
+  sport: string; // the sport or activity booked
   court_id: number;
   date: string;
   start_hour: number;
@@ -30,6 +30,13 @@ export type AdminBooking = {
   restored_by: string | null;
   court_order: number;
   has_proof: boolean;
+  group_root: string; // the group's first booking (the booking itself when not in a group)
+  group_code: string; // the code the customer uses
+  group_size: number; // courts still booked under that code (1 = not a group)
+  group_total: number;
+  group_courts: string;
+  reschedule_count: number;
+  court_sport: string; // the court's own sport (the booking may be for another activity)
   proof_deleted: boolean; // a screenshot was sent, then deleted once the payment was checked
   paid_amount_reported: number | null; // what the player says they sent (read from their screenshot)
   member_code: string | null; // member-rate bookings: whose member code was used
@@ -88,6 +95,10 @@ export type Settings = {
   payment_note: string;
   membership_fee_student: number;
   membership_fee_adult: number;
+  activities: { id: string; label: string; emoji: string }[]; // besides the sports (e.g. Zumba)
+  activity_courts: Record<string, number[]>; // sport/activity → extra courts it can be booked on
+  reschedule_hours: number;
+  reschedule_max: number; // 0 = customers can't reschedule
 };
 
 export async function api<T>(url: string, body?: unknown): Promise<T> {

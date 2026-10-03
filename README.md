@@ -120,6 +120,14 @@ Staff change the status from the dropdown in each booking row. The top of the Bo
 
 Each booking has its own conversation. Customers write from **My booking**; staff read and reply under **Messages** on the booking card (new messages show in the 🔔 bell, as push notifications, and as "💬 New message" on the booking's row). Customers see replies on their booking page and get a notification or email if they turned on updates. Customers can send up to 10 messages per 10 minutes; messages are up to 1,000 characters.
 
+### Activities, groups, rescheduling and the waitlist
+
+- **Activities** (Settings → Activities and shared courts): let a sport use other courts (e.g. pickleball on badminton courts) and add activities like Zumba with their own courts and prices. Each appears as a tab on Book a court; one court can only hold one booking at a time, whatever it's for.
+- **Group bookings:** in the booking form, players can add more courts free at the same time. They share one code, QR and payment; the extra courts point to the first booking (`group_id`).
+- **Rescheduling** (Settings → Rescheduling): customers can move a booking on My booking to a free court/time of the same sport, length and price, up to N hours before the start, M times (0 = off). Group bookings go through staff.
+- **Waitlist:** tapping a taken slot lets players ask to be notified (push and/or email). When a booking is cancelled, released or moved, everyone waiting for a now-free time hears at once.
+- **Calendar:** confirmation and reminder emails carry an .ics file and a Google Calendar link; the confirmation and My booking have "Add to calendar".
+
 ### Staff access, limits and screenshots
 
 - **Roles:** the owner login and **Manager** accounts have full access. **Staff** accounts handle bookings, payments, members, messages and reserved times, but can't change settings, courts or staff accounts, delete bookings or members, import members, send bulk emails or see the activity log (the server refuses these, and the buttons are hidden).

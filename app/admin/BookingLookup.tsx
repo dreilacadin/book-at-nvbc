@@ -25,7 +25,7 @@ import {
   type PaymentMethod,
   type PaymentStatus,
 } from "@/lib/pricing";
-import { sportEmoji } from "@/lib/sports";
+import { sportEmoji, sportLabel } from "@/lib/sports";
 import { nowAtFacility } from "@/lib/time";
 import BookingHistory from "./BookingHistory";
 import BookingMessages from "./BookingMessages";
@@ -82,14 +82,15 @@ export const hasOnlineProof = (b: AdminBooking) => b.payment_method !== "cash" &
 /** What staff should see on the screenshot, one line each, for the checklist. */
 function paymentChecks(b: AdminBooking): { id: string; label: ReactNode }[] {
   const said = b.paid_amount_reported;
+  const due = b.group_size > 1 ? b.group_total : b.amount; // one payment for a whole group
   const checks: { id: string; label: ReactNode }[] = [
     {
       id: "amount",
       label: (
         <>
-          The amount is <strong>{formatPeso(b.amount)}</strong>
+          The amount is <strong>{formatPeso(due)}</strong>
           {said !== null && (
-            Math.abs(said - b.amount) < 0.01
+            Math.abs(said - due) < 0.01
               ? <span className="muted"> (the player entered {formatPeso(said)})</span>
               : <span className="amount-off"> — the player entered {formatPeso(said)}</span>
           )}
@@ -149,7 +150,7 @@ function ReuseWarning({ b }: { b: AdminBooking }) {
  * the same reference number or screenshot is found automatically (ReuseWarning).
  */
 function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<string>; onTick: (id: string) => void }) {
-  const proof = `/api/admin/bookings/proof?id=${b.id}`;
+  const proof = `/api/admin/bookings/proof?id=${b.group_root}`;
   return (
     <div className="pay-check">
       {b.has_proof ? (
@@ -349,6 +350,17 @@ export function AdminBookingCard({
         )}
       </div>
 
+      {b.group_size > 1 && (
+        <div className="group-note">
+          👥 <strong>Group booking {b.group_code}</strong> · {b.group_size} courts: {b.group_courts} · total{" "}
+          <strong>{formatPeso(b.group_total)}</strong>. One payment covers them all; confirming or rejecting it applies to every court.
+        </div>
+      )}
+      {b.sport !== b.court_sport && (
+        <p className="hint" style={{ margin: "6px 0 0" }}>
+          Booked for <strong>{sportEmoji(b.sport)} {sportLabel(b.sport)}</strong> on a {sportLabel(b.court_sport).toLowerCase()} court.
+        </p>
+      )}
       <dl className="member-details">
         <div><dt>Name</dt><dd><strong>{b.name}</strong></dd></div>
         <div><dt>Contact</dt><dd>{b.contact}</dd></div>
@@ -365,7 +377,7 @@ export function AdminBookingCard({
             {b.proof_deleted && !b.has_proof && <span className="muted"> · 📷 screenshot checked (not kept)</span>}
             {b.paid_amount_reported !== null && <> · they entered {formatPeso(b.paid_amount_reported)}</>}
             {b.has_proof && (
-              <> · <ProofViewer src={`/api/admin/bookings/proof?id=${b.id}`} alt={`${b.name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>
+              <> · <ProofViewer src={`/api/admin/bookings/proof?id=${b.group_root}`} alt={`${b.name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>
             )}
           </dd>
         </div>
@@ -416,7 +428,7 @@ export function AdminBookingCard({
                 {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
               <button className="btn" disabled={busy} onClick={confirmPayment}>
-                ✓ Payment received — confirm ({formatPeso(b.amount)})
+                ✓ Payment received — confirm ({formatPeso(b.group_size > 1 ? b.group_total : b.amount)})
               </button>
               {verifying && !rejecting && (
                 <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setRejecting(true)}>

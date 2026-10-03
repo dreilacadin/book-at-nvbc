@@ -28,8 +28,10 @@ function transport(): Transporter {
   return globalForMail.__nvbcMail;
 }
 
+export type Attachment = { filename: string; content: string; contentType: string };
+
 /** Sends one email (plain text plus a simple HTML version). Throws a readable error on failure. */
-export async function sendEmail(to: string, subject: string, text: string): Promise<void> {
+export async function sendEmail(to: string, subject: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const from = emailSender();
   if (!from) throw new Error("Email isn't set up yet (GMAIL_USER and GMAIL_APP_PASSWORD).");
   try {
@@ -40,6 +42,7 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
       subject,
       text,
       html: textToHtml(text),
+      attachments,
     });
   } catch (e) {
     const err = e as { code?: string; responseCode?: number; message?: string };

@@ -20,6 +20,30 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Waitlist for taken times.** Tap a booked slot and choose **Notify me if it opens** (on your
+  phone and/or by email). If any court for that sport frees up for the whole time — for example a
+  booking that wasn't paid in time — everyone waiting hears at once, and the first to book gets it.
+- **Change your booking's time yourself.** On My booking, **Change time** lets you move to another
+  free court or time of the same sport, length and price, up to 12 hours before the start (once
+  per booking — NVBC can change these limits).
+- **Add to calendar.** From the booking confirmation and My booking (Google Calendar, or Apple /
+  Outlook), and the payment-confirmed and reminder emails now include the booking for your
+  calendar, with a reminder 1 hour before.
+- **Book several courts at once.** For groups and events: in the booking form, tick more courts
+  for the same time — one booking code, one QR and one payment for all of them.
+- **More activities.** Courts can now be booked for other activities too, like Zumba, or
+  pickleball on a badminton court, when NVBC sets them up — they appear as tabs on Book a court.
+- **Staff:** **Activities and shared courts** in Settings: let a sport use other courts, and add
+  activities (name, emoji, which courts) with their own prices. A court booked for one activity is
+  taken for all others at that time. Bookings show their activity on the card and in the list.
+- **Staff:** **Rescheduling rules** in Settings: how many times customers may move a booking
+  (or not at all), and up to how many hours before the start. Customer moves show in the 🔔 bell
+  ("Bookings rescheduled by customers", on for everyone) and in the booking's History.
+- **Staff:** **Group bookings** show "👥 Group of N" on each court's row and a group note on the
+  card. Confirming or rejecting the payment on any court applies to the whole group; the customer
+  cancelling cancels every court. Staff can still cancel one court on its own.
+- **Database:** Activities and shared courts, rescheduling settings and counts, group bookings,
+  each booking's activity, and the waitlist.
 - **Your payment screenshot fills in the details for you.** After you upload a screenshot of your
   receipt, your phone reads the reference number and amount and fills them in — just check
   they're right before sending. (The screenshot is read on your phone.)

@@ -845,3 +845,30 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .proof-read { margin: 6px 0 0; }
 .proof-amount { margin-top: 10px; }
 .proof-amount label { font-size: 14px; }
+
+/* Group bookings on the staff card */
+.group-note { margin-top: 10px; padding: 8px 12px; border-radius: 10px; background: var(--brand-soft); font-size: 14px; }
+
+/* Settings: activities and shared courts */
+.activity-row { padding: 10px 0; border-top: 1px solid var(--border); display: grid; gap: 6px; }
+.activity-row:first-of-type { border-top: 0; }
+.activity-head { display: flex; gap: 8px; align-items: center; }
+.activity-head input:not(.activity-emoji) { flex: 1; min-width: 0; }
+.activity-emoji { width: 56px; text-align: center; }
+.court-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.court-checks label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 400; font-size: 14px; }
+.cal-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+/* My booking → Change time */
+.resched { display: grid; gap: 10px; }
+.resched-dates { margin: 0; }
+.resched-times { display: flex; flex-wrap: wrap; gap: 6px; max-height: 240px; overflow-y: auto; }
+.resched-times .chip { padding: 6px 10px; }
+.resched-times .chip[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+.resched-confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--brand-soft); font-size: 14px; }
+
+/* Booking grid: taken slots open the waitlist; group courts in the booking pop-up */
+.slot.wait-click { cursor: pointer; width: 100%; font: inherit; text-align: center; }
+.slot.wait-click .wait-hint { display: block; opacity: 0; font-size: 11px; transition: opacity .15s; }
+.slot.wait-click:hover .wait-hint, .slot.wait-click:focus-visible .wait-hint { opacity: .85; }
+@media (hover: none) { .slot.wait-click .wait-hint { opacity: .7; } }
+.more-courts > summary { cursor: pointer; font-weight: 600; font-size: 15px; }

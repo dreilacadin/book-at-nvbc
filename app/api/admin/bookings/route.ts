@@ -29,35 +29,45 @@ export async function GET(req: NextRequest) {
   try {
     await releaseUnpaidBookings();
     const { rows } = await db().query(
-      `SELECT b.id, b.cancel_code AS code, c.name AS court_name, c.sport, b.court_id, b.booking_date AS date,
+      // r = the group's first booking (or the booking itself): it holds the code the customer
+      // uses, the screenshot, their messages and update settings.
+      `SELECT b.id, b.cancel_code AS code, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, c.sport AS court_sport,
+              b.court_id, b.booking_date AS date,
               b.start_hour, b.end_hour, b.player_name AS name, b.contact, b.notes, b.status,
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
-              b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (b.payment_proof <> '') AS has_proof, b.pay_by,
-              (b.payment_proof = '' AND COALESCE(b.payment_proof_hash, '') <> '') AS proof_deleted, b.paid_amount_reported,
+              b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (r.payment_proof <> '') AS has_proof, b.pay_by,
+              (r.payment_proof = '' AND COALESCE(r.payment_proof_hash, '') <> '') AS proof_deleted, r.paid_amount_reported,
+              r.id AS group_root, r.cancel_code AS group_code, b.reschedule_count,
+              -- Group bookings: all its courts (still booked), and their total.
+              (SELECT count(*)::int FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_size,
+              (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_total,
+              (SELECT string_agg(gc.name, ', ' ORDER BY gc.sort_order, gc.id) FROM bookings g JOIN courts gc ON gc.id = g.court_id
+                WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_courts,
               b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
-              b.rejected_note, b.rejected_by, b.rejected_at, b.customer_email,
-              (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = b.id) AS alert_devices,
-              (SELECT count(*)::int FROM booking_messages m WHERE m.booking_id = b.id) AS message_count,
+              b.rejected_note, b.rejected_by, b.rejected_at, r.customer_email,
+              (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = r.id) AS alert_devices,
+              (SELECT count(*)::int FROM booking_messages m WHERE m.booking_id = r.id) AS message_count,
               (SELECT count(*)::int FROM booking_messages m
-                WHERE m.booking_id = b.id AND m.sender_kind = 'customer' AND m.read_at IS NULL) AS unread_messages,
+                WHERE m.booking_id = r.id AND m.sender_kind = 'customer' AND m.read_at IS NULL) AS unread_messages,
               mb.member_code, mb.full_name AS member_name,
               ex.id AS expired_member_id, ex.full_name AS expired_member_name,
               ex.expires_on AS expired_member_on, ex.reminded_on AS expired_member_reminded,
-              COALESCE(b.payment_sent_at, CASE WHEN b.payment_ref <> '' OR b.payment_proof <> '' THEN b.created_at END)
+              COALESCE(r.payment_sent_at, CASE WHEN r.payment_ref <> '' OR r.payment_proof <> '' THEN r.created_at END)
                 AS payment_sent_at,
               -- Same reference number or screenshot sent for another booking? Worth a second look.
               (SELECT COALESCE(json_agg(json_build_object(
                         'code', o.cancel_code, 'name', o.player_name, 'date', o.booking_date,
                         'start_hour', o.start_hour, 'amount', o.amount, 'status', o.status,
-                        'same_ref', b.payment_ref_key <> '' AND o.payment_ref_key = b.payment_ref_key,
-                        'same_proof', b.payment_proof_hash <> '' AND o.payment_proof_hash = b.payment_proof_hash)
+                        'same_ref', r.payment_ref_key <> '' AND o.payment_ref_key = r.payment_ref_key,
+                        'same_proof', r.payment_proof_hash <> '' AND o.payment_proof_hash = r.payment_proof_hash)
                       ORDER BY o.created_at), '[]'::json)
                  FROM bookings o
-                WHERE o.id <> b.id
-                  AND ((b.payment_ref_key <> '' AND o.payment_ref_key = b.payment_ref_key)
-                    OR (b.payment_proof_hash <> '' AND o.payment_proof_hash = b.payment_proof_hash))
+                WHERE COALESCE(o.group_id, o.id) <> r.id -- the group's own courts share one payment
+                  AND ((r.payment_ref_key <> '' AND o.payment_ref_key = r.payment_ref_key)
+                    OR (r.payment_proof_hash <> '' AND o.payment_proof_hash = r.payment_proof_hash))
               ) AS payment_reuse
          FROM bookings b JOIN courts c ON c.id = b.court_id
+         JOIN bookings r ON r.id = COALESCE(b.group_id, b.id)
          LEFT JOIN memberships mb ON mb.id = b.membership_id
          -- The booker is an expired member (same mobile, last 10 digits): remind them to renew or forfeit.
          LEFT JOIN LATERAL (
@@ -68,7 +78,7 @@ export async function GET(req: NextRequest) {
             ORDER BY m.expires_on DESC LIMIT 1
          ) ex ON b.status <> 'cancelled'
         WHERE ($4::text IS NULL AND b.booking_date BETWEEN $1 AND $2) OR b.cancel_code = $4
-        ORDER BY b.booking_date, (b.status = 'cancelled'), c.sport, b.start_hour, c.sort_order, c.id`,
+        ORDER BY b.booking_date, (b.status = 'cancelled'), (b.cancel_code <> $4) NULLS FIRST, c.sport, b.start_hour, c.sort_order, c.id`,
       [from, to, nowAtFacility().date, code]
     );
     // Where online payments should have gone, for staff to compare with the screenshot.

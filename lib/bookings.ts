@@ -30,12 +30,13 @@ import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, p
 import { formatDateLong, formatRange, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
-import { notifyStaff } from "./notify";
+import { notifyStaff, pushConfig } from "./notify";
 import { notifyCustomer, scheduleReminders } from "./customer-notify";
 import { isEmail } from "./customer-messages";
 import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-history";
 import { describeChanges, type BookingFields } from "./booking-changes";
-import { BOOKING_DEFAULT_SPORT, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
+import { scheduleWaitlistCheck } from "./waitlist";
+import { allActivities, BOOKING_DEFAULT_SPORT, courtAllowed, isActivity, isSport, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
 /** "🏸 Badminton Court 2 · Wed, Oct 1 · 9:00 AM – 10:00 AM" — for staff notifications. */
@@ -50,7 +51,7 @@ async function bookingDetails(where: "id" | "cancel_code", value: string) {
     id: string; cancel_code: string; player_name: string; court_name: string; sport: string; booking_date: string;
     start_hour: number; end_hour: number; amount: number; payment_method: PaymentMethod; payment_ref: string;
   }>(
-    `SELECT b.id, b.cancel_code, b.player_name, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
+    `SELECT b.id, b.cancel_code, b.player_name, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, b.booking_date, b.start_hour, b.end_hour,
             b.amount, b.payment_method, b.payment_ref
        FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.${where} = $1`,
     [value]
@@ -92,7 +93,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
   const now = nowAtFacility();
   const { rows } = await db().query<{
     id: string; cancel_code: string; player_name: string; court_name: string; sport: string;
-    booking_date: string; start_hour: number; end_hour: number;
+    booking_date: string; start_hour: number; end_hour: number; group_id: string | null;
   }>(
     `WITH rel AS (
        UPDATE bookings b SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
@@ -102,7 +103,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
           AND b.phase IS NULL AND b.auto_release -- marked in progress/completed or restored by staff: keep
           AND ((b.booking_date - $1::date) * 1440 + (b.start_hour - $2::numeric) * 60 <= $3
                OR b.pay_by <= now())
-        RETURNING b.id, b.cancel_code, b.player_name, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour
+        RETURNING b.id, b.cancel_code, b.player_name, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, b.booking_date, b.start_hour, b.end_hour, b.group_id
      ), freed AS (
        DELETE FROM booking_slots WHERE booking_id IN (SELECT id FROM rel)
      )
@@ -110,8 +111,9 @@ export async function releaseUnpaidBookings(): Promise<number> {
     [now.date, now.time, RELEASE_MINUTES]
   );
   await logBookings(rows.map((r) => r.id), SYSTEM, "Released", "Not paid in time");
+  scheduleWaitlistCheck(...rows.map((r) => r.booking_date)); // someone may be waiting for these times
   await notifyStaff(
-    rows.map((r) => ({
+    rows.filter((r) => !r.group_id || !rows.some((o) => o.id === r.group_id)).map((r) => ({
       kind: "booking_gone" as const,
       title: `Released — ${r.player_name} (not paid in time)`,
       pushTitle: `Released — ${publicName(r.player_name)} (not paid in time)`,
@@ -126,7 +128,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
  * Public, anonymous availability for one date and sport: bookers show as first name + last
  * initial only. If no sport is given, the booking page's default sport (or the first with courts).
  */
-export async function getAvailability(date: string, requestedSport?: Sport) {
+export async function getAvailability(date: string, requestedSport?: string) {
   await releaseUnpaidBookings();
   const settings = await getSettings();
   const today = nowAtFacility();
@@ -141,23 +143,30 @@ export async function getAvailability(date: string, requestedSport?: Sport) {
     ),
     blocksOn(date),
   ]);
-  // Booking page tabs: the default sport first, then the rest in their usual order.
-  const sports = [...SPORTS]
-    .sort((a, b) => Number(b.id === BOOKING_DEFAULT_SPORT) - Number(a.id === BOOKING_DEFAULT_SPORT))
-    .map((s) => ({
-      ...s,
-      courtCount: allCourts.rows.filter((c) => c.sport === s.id).length,
-    }));
-  // Without ?sport=, open the default sport — or, if it has no courts, the first sport that does.
-  const sport: Sport =
-    requestedSport ?? sports.find((s) => s.courtCount > 0)?.id ?? BOOKING_DEFAULT_SPORT;
+  // Booking page tabs: the default sport first, then the other sports, then activities (e.g. Zumba)
+  // that have courts. A sport or activity can also use courts shared with it in Settings.
+  const shared = settings.activity_courts;
+  const sports = allActivities()
+    .map((s) => ({ ...s, courtCount: allCourts.rows.filter((c) => courtAllowed(s.id, c, shared)).length }))
+    .filter((s) => isSport(s.id) || s.courtCount > 0)
+    .sort((a, b) => Number(b.id === BOOKING_DEFAULT_SPORT) - Number(a.id === BOOKING_DEFAULT_SPORT));
+  // Without ?sport=, open the default sport — or, if it has no courts, the first one that does.
+  const sport: string =
+    (requestedSport && sports.some((s) => s.id === requestedSport) ? requestedSport : undefined) ??
+    sports.find((s) => s.courtCount > 0)?.id ?? BOOKING_DEFAULT_SPORT;
   const courts = allCourts.rows
-    .filter((c) => c.sport === sport)
-    .map(({ id, name, notes }) => ({ id, name, notes }));
+    .filter((c) => courtAllowed(sport, c, shared))
+    .map(({ id, name, notes, sport: courtSport }) => ({
+      id, name, notes,
+      // A court shared from another sport (e.g. a badminton court for Zumba) says so.
+      sharedFrom: courtSport !== sport ? courtSport : null,
+    }));
   const courtIds = new Set(courts.map((c) => c.id));
   return {
     sport,
     sports,
+    activities: settings.activities, // custom activities, so the page can show their names
+    pushKey: pushConfig()?.publicKey ?? null, // for "notify me if this opens up" on this device
     date,
     today: today.date,
     currentHour: today.time, // e.g. 10.75 at 10:45 — slots starting at or before this are past
@@ -282,6 +291,8 @@ export type NewBookingInput = {
   contact?: unknown;
   notes?: unknown;
   email?: unknown; // optional: for booking updates by email
+  sport?: unknown; // what it's for: a sport or activity the court can be used for (default: the court's sport)
+  extraCourtIds?: unknown; // group booking: more courts at the same time, under one code and one payment
   website?: unknown; // honeypot — real people never fill this in
 };
 
@@ -293,8 +304,9 @@ export async function createBooking(
 ): Promise<
   Result<{
     code: string;
-    courtName: string;
-    sport: Sport;
+    courtName: string; // all courts, for a group ("Court 1, Court 2")
+    courts: string[];
+    sport: string; // the sport or activity booked
     date: string;
     startHour: number;
     endHour: number;
@@ -359,15 +371,22 @@ export async function createBooking(
 
   // Is this rate offered for the court's sport? Checked first, so a switched-off Member rate
   // says so instead of asking for a member code. (Re-checked in the transaction below.)
+  // What it's for: the chosen sport or activity (e.g. Zumba on a badminton court), or the court's own sport.
+  const courtRow = await db().query<{ sport: Sport }>(`SELECT sport FROM courts WHERE id = $1`, [courtId]);
+  const activity: string = isActivity(input.sport) ? input.sport : courtRow.rows[0]?.sport ?? "";
+  // Group booking: more courts at the same time, one code and one payment.
+  const extraIds = Array.isArray(input.extraCourtIds)
+    ? [...new Set(input.extraCourtIds.map(Number))].filter((n) => Number.isInteger(n) && n !== courtId)
+    : [];
+  if (extraIds.length > 7) return fail(400, "You can book up to 8 courts at once.");
   if (!admin && rateType !== "regular") {
-    const c = await db().query<{ sport: Sport }>(`SELECT sport FROM courts WHERE id = $1`, [courtId]);
-    const plan = c.rows[0] && settings.rate_plans[c.rows[0].sport];
+    const plan = settings.rate_plans[activity];
     if (plan && !rateTypesFor(plan).includes(rateType))
       return fail(
         400,
         rateTypesFor(plan).length === 1
-          ? `${sportLabel(c.rows[0].sport)} has one standard rate. Please book at the standard rate.`
-          : `The ${rateTypeLabel(rateType).toLowerCase()} rate isn't offered for ${sportLabel(c.rows[0].sport)}. Please choose another rate.`
+          ? `${sportLabel(activity)} has one standard rate. Please book at the standard rate.`
+          : `The ${rateTypeLabel(rateType).toLowerCase()} rate isn't offered for ${sportLabel(activity)}. Please choose another rate.`
       );
   }
 
@@ -405,22 +424,31 @@ export async function createBooking(
   try {
     await client.query("BEGIN");
 
-    const court = await client.query<{ name: string; sport: Sport }>(
-      `SELECT name, sport FROM courts WHERE id = $1 AND (is_active OR $2)`,
-      [courtId, admin]
+    const allIds = [courtId, ...extraIds];
+    const found = await client.query<{ id: number; name: string; sport: Sport }>(
+      `SELECT id, name, sport FROM courts WHERE id = ANY($1::int[]) AND (is_active OR $2)`,
+      [allIds, admin]
     );
-    if (!court.rows[0]) {
+    const courtsById = new Map(found.rows.map((c) => [c.id, c]));
+    if (allIds.some((id) => !courtsById.has(id))) {
       await client.query("ROLLBACK");
       return fail(400, "That court is not available for booking.");
     }
-
-    const sport = court.rows[0].sport;
+    if (!settings.rate_plans[activity] || allIds.some((id) => !courtAllowed(activity, courtsById.get(id)!, settings.activity_courts))) {
+      await client.query("ROLLBACK");
+      return fail(400, `That court can't be booked for ${sportLabel(activity)}.`);
+    }
+    const court = { rows: [courtsById.get(courtId)!] };
+    const sport = activity;
     if (!admin) {
       // Staff may book over reserved times (e.g. to sell a slot); players may not.
-      const block = findBlockConflict(await blocksOn(date), courtId, date, startHour, endHour);
-      if (block) {
-        await client.query("ROLLBACK");
-        return fail(409, `That time is reserved for ${block.label}. Please pick another time or court.`);
+      const dayBlocks = await blocksOn(date);
+      for (const id of allIds) {
+        const block = findBlockConflict(dayBlocks, id, date, startHour, endHour);
+        if (block) {
+          await client.query("ROLLBACK");
+          return fail(409, `${courtsById.get(id)!.name} is reserved for ${block.label} at that time. Please pick another time or court.`);
+        }
       }
     }
     const plan = settings.rate_plans[sport];
@@ -457,6 +485,7 @@ export async function createBooking(
       `SELECT COALESCE(SUM(end_hour - start_hour), 0)::float8 AS total
          FROM bookings
         WHERE status <> 'cancelled' AND booking_date = $1
+          AND group_id IS NULL -- a group booking's extra courts don't count again: it's the same time
           AND lower(regexp_replace(contact, '[^a-zA-Z0-9@.]', '', 'g'))
             = lower(regexp_replace($2,      '[^a-zA-Z0-9@.]', '', 'g'))`,
       [date, contact]
@@ -470,55 +499,71 @@ export async function createBooking(
       );
     }
 
-    // Retry on the (very unlikely) chance of a duplicate cancel code.
-    let code = "";
-    let bookingId = "";
-    for (let attempt = 0; attempt < 5 && !bookingId; attempt++) {
-      code = newCancelCode();
-      await client.query("SAVEPOINT ins");
-      try {
-        const ins = await client.query<{ id: string }>(
-          `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
-                                 rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
-                                 payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at, customer_email,
-                                 payment_proof_hash)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-                   CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19,
-                   CASE WHEN $15 <> '' OR $17 <> '' THEN now() END, $20,
-                   CASE WHEN $17 <> '' THEN md5($17) ELSE '' END) RETURNING id`,
-          [
-            courtId, date, startHour, endHour, name, contact || "(admin)", notes, code,
-            rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
-            paymentMethod === "cash" ? "" : paymentProof,
-            rateType === "member" ? membershipId : null,
-            payBy,
-            email,
-          ]
-        );
-        bookingId = ins.rows[0].id;
-      } catch (e: unknown) {
-        if ((e as { code?: string }).code === "23505") {
-          await client.query("ROLLBACK TO SAVEPOINT ins");
-          continue;
+    // One booking per court. The first holds the code the customer uses; a group's other courts
+    // point to it. Retries on the (very unlikely) chance of a duplicate code.
+    const insertOne = async (cId: number, groupId: string | null): Promise<{ id: string; code: string }> => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const c = newCancelCode();
+        await client.query("SAVEPOINT ins");
+        try {
+          const proof = groupId === null && paymentMethod !== "cash" ? paymentProof : ""; // the screenshot goes on the first only
+          const ins = await client.query<{ id: string }>(
+            `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
+                                   rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
+                                   payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at, customer_email,
+                                   payment_proof_hash, activity, group_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                     CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19,
+                     CASE WHEN $15 <> '' OR $17 <> '' THEN now() END, $20,
+                     CASE WHEN $17 <> '' THEN md5($17) ELSE '' END, $21, $22) RETURNING id`,
+            [
+              cId, date, startHour, endHour, name, contact || "(admin)", notes, c,
+              rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
+              proof,
+              rateType === "member" ? membershipId : null,
+              payBy,
+              email,
+              activity,
+              groupId,
+            ]
+          );
+          // Claim every half-hour slot. The primary key on booking_slots rejects any overlap.
+          await client.query(
+            `INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
+             SELECT $1, $2, h, $3 FROM generate_series($4::numeric, $5::numeric - 0.5, 0.5) AS h`,
+            [cId, date, ins.rows[0].id, startHour, endHour]
+          );
+          return { id: ins.rows[0].id, code: c };
+        } catch (e: unknown) {
+          const err = e as { code?: string; constraint?: string };
+          if (err.code === "23505" && err.constraint !== "booking_slots_pkey") {
+            await client.query("ROLLBACK TO SAVEPOINT ins");
+            continue;
+          }
+          if (err.code === "23505") {
+            const taken = courtsById.get(cId)!.name;
+            const e2 = new Error(`taken:${taken}`) as Error & { code: string };
+            e2.code = "slot-taken";
+            throw e2;
+          }
+          throw e;
         }
-        throw e;
       }
-    }
-    if (!bookingId) throw new Error("Could not generate a unique booking code");
-
-    // Claim every half-hour slot. The primary key on booking_slots rejects any overlap.
-    await client.query(
-      `INSERT INTO booking_slots (court_id, slot_date, slot_hour, booking_id)
-       SELECT $1, $2, h, $3 FROM generate_series($4::numeric, $5::numeric - 0.5, 0.5) AS h`,
-      [courtId, date, bookingId, startHour, endHour]
-    );
+      throw new Error("Could not generate a unique booking code");
+    };
+    const first = await insertOne(courtId, null);
+    const bookingId = first.id;
+    const code = first.code;
+    for (const id of extraIds) await insertOne(id, bookingId);
+    const courtNames = allIds.map((id) => courtsById.get(id)!.name);
+    const groupTotal = Math.round(price.total * allIds.length * 100) / 100;
 
     await client.query("COMMIT");
     await logBooking(
       { id: bookingId },
       admin ? staff(opts.by ?? "Staff") : CUSTOMER,
       "Booked",
-      `${court.rows[0].name}, ${formatDateLong(date)}, ${formatRange(startHour, endHour)} · ${formatPeso(price.total)} · ` +
+      `${courtNames.join(" + ")}, ${formatDateLong(date)}, ${formatRange(startHour, endHour)} · ${sportLabel(activity)} · ${formatPeso(groupTotal)} · ` +
         `${paymentLabel(paymentMethod)} · ${paymentStatusLabel(paymentStatus)}${paymentRef ? ` · ref ${paymentRef}` : ""}` +
         `${paymentMethod !== "cash" && paymentProof ? " · screenshot" : ""}${admin ? " · added by staff" : ""}`
     );
@@ -527,24 +572,29 @@ export async function createBooking(
         paymentStatus === "for_verification" ? `${paymentLabel(paymentMethod)} payment sent — please verify`
         : paymentMethod === "cash" ? "Coach · cash at the desk"
         : price.total > 0 ? `${paymentLabel(paymentMethod)} · paying within ${PAY_WINDOW_MINUTES} min` : "No charge";
+      const extra = extraIds.length ? ` (+${extraIds.length} more court${extraIds.length > 1 ? "s" : ""})` : "";
       await notifyStaff([{
         kind: "booking_new",
         title: `New booking — ${name}`,
         pushTitle: `New booking — ${publicName(name)}`,
-        body: `${bookingLine({ court_name: court.rows[0].name, sport, booking_date: date, start_hour: startHour, end_hour: endHour })} · ${formatPeso(price.total)} · ${paying}`,
+        body: `${bookingLine({ court_name: court.rows[0].name, sport, booking_date: date, start_hour: startHour, end_hour: endHour })}${extra} · ${formatPeso(groupTotal)} · ${paying}`,
         bookingCode: code,
       }]);
     }
     return {
       ok: true,
       data: {
-        code, courtName: court.rows[0].name, sport, date, startHour, endHour,
-        rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: price.total,
+        code, courtName: courtNames.join(", "), courts: courtNames, sport, date, startHour, endHour,
+        rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: groupTotal,
         paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status, payBy,
       },
     };
   } catch (e: unknown) {
     await client.query("ROLLBACK").catch(() => {});
+    if ((e as { code?: string }).code === "slot-taken") {
+      const taken = (e as Error).message.slice("taken:".length);
+      return fail(409, extraIds.length ? `Sorry — ${taken} was just booked for part of that time. Please pick other courts or another time.` : "Sorry — someone just booked that slot. Please pick another time.");
+    }
     if ((e as { code?: string }).code === "23505") {
       return fail(409, "Sorry — someone just booked that slot. Please pick another time.");
     }
@@ -556,7 +606,10 @@ export async function createBooking(
 
 export type BookingView = {
   code: string;
-  courtName: string;
+  courtName: string; // a group's courts, joined
+  courts: string[]; // one court, or a group's courts (still booked)
+  rescheduleCount: number;
+  activity: { id: string; label: string; emoji: string };
   sport: Sport;
   date: string;
   startHour: number;
@@ -586,8 +639,11 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
   await releaseUnpaidBookings();
   const { rows } = await db().query(
-    `SELECT b.cancel_code, c.name AS court_name, c.sport, b.booking_date, b.start_hour, b.end_hour,
-            b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
+    `SELECT b.id, b.cancel_code, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, b.booking_date, b.start_hour, b.end_hour,
+            b.player_name, b.status, b.rate_type, b.hourly_rate, b.discount_pct, b.amount, b.reschedule_count,
+            -- A group booking: its other courts (still booked), and what they all cost together.
+            (SELECT json_agg(json_build_object('name', c2.name, 'status', g.status) ORDER BY c2.sort_order, c2.id)
+               FROM bookings g JOIN courts c2 ON c2.id = g.court_id WHERE g.group_id = b.id) AS group_courts,
             b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
             b.pay_by, c.notes AS court_notes, b.phase, b.rejected_note,
             (SELECT count(*)::int FROM booking_messages m
@@ -598,26 +654,34 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
   );
   const r = rows[0];
   if (!r) return fail(404, "No booking found with that code.");
+  // A group: every court still booked (the first one may have been cancelled by staff alone).
+  const others = ((r.group_courts ?? []) as { name: string; status: BookingStatus }[]).filter((g) => g.status !== "cancelled");
+  const courtNames = [...(r.status !== "cancelled" || others.length === 0 ? [r.court_name as string] : []), ...others.map((g) => g.name)];
+  const groupStatus: BookingStatus = r.status === "cancelled" && others.length ? others[0].status : r.status;
+  const groupAmount = Number(r.amount) * courtNames.length;
   return {
     ok: true,
     data: {
       code: r.cancel_code,
-      courtName: r.court_name,
+      courtName: courtNames.join(", "),
+      courts: courtNames,
+      rescheduleCount: r.reschedule_count,
+      activity: { id: r.sport, label: sportLabel(r.sport), emoji: sportEmoji(r.sport) }, // custom activities' name and emoji
       sport: r.sport,
       date: r.booking_date,
       startHour: r.start_hour,
       endHour: r.end_hour,
       name: r.player_name,
-      status: r.status,
+      status: groupStatus,
       rateType: r.rate_type,
       hourlyRate: r.hourly_rate,
       discountPct: r.discount_pct,
-      amount: r.amount,
+      amount: groupAmount,
       paymentMethod: r.payment_method,
       paymentStatus: r.payment_status,
       paymentRef: r.payment_ref,
       hasProof: r.has_proof,
-      canCancel: r.status !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
+      canCancel: groupStatus !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
       cancelledBy: r.cancelled_by,
       payBy: r.pay_by && (r.payment_status === "unpaid" || r.payment_status === "rejected") && r.status === "pending"
         ? new Date(r.pay_by).toISOString() : null,
@@ -625,14 +689,18 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       unreadMessages: r.unread_messages,
       courtNotes: r.court_notes,
       phase: bookingPhase(
-        { status: r.status, phase: r.phase, payment_status: r.payment_status, amount: r.amount, date: r.booking_date, start_hour: r.start_hour, end_hour: r.end_hour },
+        { status: groupStatus, phase: r.phase, payment_status: r.payment_status, amount: r.amount, date: r.booking_date, start_hour: r.start_hour, end_hour: r.end_hour },
         nowAtFacility()
       ),
     },
   };
 }
 
-async function cancelWhere(whereSql: string, param: string, by: string, allowStarted: boolean) {
+/**
+ * Cancels a booking and frees its time. With `wholeGroup`, also the other courts of its group
+ * (a customer cancelling by code cancels everything booked under it).
+ */
+async function cancelWhere(whereSql: string, param: string, by: string, allowStarted: boolean, wholeGroup = false) {
   const client = await db().connect();
   try {
     await client.query("BEGIN");
@@ -645,7 +713,10 @@ async function cancelWhere(whereSql: string, param: string, by: string, allowSta
       await client.query("ROLLBACK");
       return fail(404, "Booking not found.");
     }
-    if (b.status === "cancelled") {
+    const members = wholeGroup
+      ? (await client.query<{ id: string }>(`SELECT id FROM bookings WHERE group_id = $1 AND status <> 'cancelled' FOR UPDATE`, [b.id])).rows
+      : [];
+    if (b.status === "cancelled" && members.length === 0) {
       await client.query("ROLLBACK");
       return fail(400, "This booking is already cancelled.");
     }
@@ -653,13 +724,14 @@ async function cancelWhere(whereSql: string, param: string, by: string, allowSta
       await client.query("ROLLBACK");
       return fail(400, "This booking has already started and can no longer be cancelled online.");
     }
-    await client.query(`DELETE FROM booking_slots WHERE booking_id = $1`, [b.id]);
+    const ids = [...(b.status === "cancelled" ? [] : [b.id as string]), ...members.map((m) => m.id)];
+    await client.query(`DELETE FROM booking_slots WHERE booking_id = ANY($1::uuid[])`, [ids]);
     await client.query(
-      `UPDATE bookings SET status = 'cancelled', cancelled_by = $2, cancelled_at = now(), payment_proof = '' WHERE id = $1`,
-      [b.id, by]
+      `UPDATE bookings SET status = 'cancelled', cancelled_by = $2, cancelled_at = now(), payment_proof = '' WHERE id = ANY($1::uuid[])`,
+      [ids, by]
     );
     await client.query("COMMIT");
-    return { ok: true as const, data: { id: b.id as string } };
+    return { ok: true as const, data: { id: b.id as string, date: b.booking_date as string } };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     throw e;
@@ -671,8 +743,9 @@ async function cancelWhere(whereSql: string, param: string, by: string, allowSta
 export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: string }>> {
   const code = normalizeCode(rawCode);
   if (!code) return fail(400, "Booking codes look like NV-ABC123.");
-  const r = await cancelWhere("cancel_code = $1", code, "player", false);
+  const r = await cancelWhere("cancel_code = $1", code, "player", false, true);
   if (r.ok) {
+    scheduleWaitlistCheck(r.data.date);
     await logBooking({ id: r.data.id }, CUSTOMER, "Cancelled", "On My booking");
     const b = await bookingDetails("cancel_code", code);
     if (b)
@@ -691,7 +764,10 @@ export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: strin
 export async function cancelById(id: string, by = "admin"): Promise<Result<{ id: string }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   const r = await cancelWhere("id = $1", id, by.slice(0, 60) || "admin", true);
-  if (r.ok) await logBooking({ id }, staff(by), "Cancelled");
+  if (r.ok) {
+    await logBooking({ id }, staff(by), "Cancelled");
+    scheduleWaitlistCheck(r.data.date);
+  }
   return r;
 }
 
@@ -730,16 +806,19 @@ export async function submitPayment(
   const { rows } = await db().query<{ payment_ref: string; has_proof: boolean }>(
     `UPDATE bookings SET payment_method = $2,
             payment_ref   = CASE WHEN $3 = '' THEN payment_ref ELSE $3 END,
-            payment_proof = CASE WHEN $4 = '' THEN payment_proof ELSE $4 END,
+            -- The screenshot (and the amount the player reports) go on the booking with the code; a
+            -- group's other courts share its payment.
+            payment_proof = CASE WHEN $4 = '' OR cancel_code <> $1 THEN payment_proof ELSE $4 END,
             -- Fingerprint of the screenshot: kept after the screenshot itself is deleted, to spot reuse.
-            payment_proof_hash = CASE WHEN $4 = '' THEN payment_proof_hash ELSE md5($4) END,
-            paid_amount_reported = COALESCE($5, paid_amount_reported),
+            payment_proof_hash = CASE WHEN $4 = '' OR cancel_code <> $1 THEN payment_proof_hash ELSE md5($4) END,
+            paid_amount_reported = CASE WHEN cancel_code = $1 THEN COALESCE($5, paid_amount_reported) ELSE paid_amount_reported END,
             payment_status = 'for_verification',
             payment_sent_at = now(),
             status = CASE WHEN amount > 0 THEN 'pending' ELSE status END -- held until staff verify
-      WHERE cancel_code = $1 AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification', 'rejected')
+      WHERE (cancel_code = $1 OR group_id = (SELECT id FROM bookings WHERE cancel_code = $1))
+        AND status <> 'cancelled' AND payment_status IN ('unpaid', 'for_verification', 'rejected')
         AND (pay_by IS NULL OR pay_by > now() OR payment_status = 'for_verification')
-      RETURNING payment_ref, (payment_proof <> '') AS has_proof`,
+      RETURNING payment_ref, (SELECT payment_proof <> '' FROM bookings p WHERE p.cancel_code = $1) AS has_proof`,
     [code, method, paymentRef, paymentProof, reported === null ? null : Math.round(reported * 100) / 100]
   );
   if (!rows[0]) {
@@ -808,22 +887,26 @@ export async function setPaymentStatus(
           WHEN amount > 0 AND $2 NOT IN ('paid', 'waived')
             THEN CASE WHEN COALESCE($3, payment_method) = 'cash' THEN 'reserved' ELSE 'pending' END
           ELSE 'confirmed' END
-       FROM (SELECT id AS old_id, payment_status AS old_status, payment_method AS old_method, payment_ref AS old_ref
+       FROM (SELECT id AS old_id, payment_status AS old_status, payment_method AS old_method, payment_ref AS old_ref,
+                    COALESCE(group_id, id) AS root
                FROM bookings WHERE id = $1 FOR UPDATE) old -- the value before this change
-      WHERE id = old.old_id RETURNING id, status, old.old_status, old.old_method, payment_method, old.old_ref, payment_ref`,
+      -- A group's courts share one payment: the other (still booked) courts change with it.
+      WHERE id = old.old_id OR (COALESCE(group_id, id) = old.root AND status <> 'cancelled')
+      RETURNING id, status, old.old_status, old.old_method, payment_method, old.old_ref, payment_ref, old.root`,
     [id, status, method ?? null, ref === undefined ? null : cleanRef(ref)]
   );
-  if (!rows[0]) return fail(404, "Booking not found.");
-  const r = rows[0];
+  const r = rows.find((x) => x.id === id);
+  if (!r) return fail(404, "Booking not found.");
   const changes = [
     r.old_status !== status ? `${paymentStatusLabel(r.old_status)} → ${paymentStatusLabel(status)}` : "",
     r.old_method !== r.payment_method ? `method ${paymentLabel(r.old_method)} → ${paymentLabel(r.payment_method)}` : "",
     r.old_ref !== r.payment_ref ? `reference “${r.old_ref}” → “${r.payment_ref}”` : "",
   ].filter(Boolean);
-  if (changes.length) await logBooking({ id }, staff(by), "Payment status", changes.join(" · "));
+  const group = rows.length > 1 ? ` (all ${rows.length} courts of the group)` : "";
+  if (changes.length) await logBooking({ id }, staff(by), "Payment status", changes.join(" · ") + group);
   const settled = (s: string) => s === "paid" || s === "waived";
-  if (rows[0].status === "confirmed" && settled(status) && !settled(rows[0].old_status)) notifyCustomer(id, "confirmed");
-  return { ok: true, data: { id, status: rows[0].status as BookingStatus } };
+  if (r.status === "confirmed" && settled(status) && !settled(r.old_status)) notifyCustomer(r.root, "confirmed");
+  return { ok: true, data: { id, status: r.status as BookingStatus } };
 }
 
 /**
@@ -848,14 +931,16 @@ async function rejectPayment(id: string, rawNote: unknown, by: string): Promise<
   if (Number(b.amount) <= 0) return fail(400, "This booking has nothing to pay.");
   if (b.payment_status !== "for_verification") return fail(400, "Only a payment waiting to be verified can be rejected.");
   const payBy = new Date(paymentDeadline(Date.now(), b.booking_date, Number(b.start_hour), nowAtFacility())).toISOString();
-  await db().query(
+  // The whole group (one payment for all its courts).
+  const { rows: done } = await db().query<{ root: string }>(
     `UPDATE bookings SET payment_status = 'rejected', status = 'pending', paid_at = NULL, pay_by = $2, payment_proof = '',
             rejected_note = $3, rejected_by = $4, rejected_at = now()
-      WHERE id = $1`,
+      WHERE id = $1 OR (COALESCE(group_id, id) = (SELECT COALESCE(group_id, id) FROM bookings WHERE id = $1) AND status <> 'cancelled')
+      RETURNING COALESCE(group_id, id) AS root`,
     [id, payBy, note, by.slice(0, 60) || "admin"]
   );
   await logBooking({ id }, staff(by), "Payment rejected", note);
-  notifyCustomer(id, "rejected");
+  notifyCustomer(done[0]?.root ?? id, "rejected");
   return { ok: true, data: { id, status: "pending" } };
 }
 
@@ -963,6 +1048,8 @@ export async function updateBooking(id: string, input: BookingEdit, by = "Staff"
       hourlyRate: price.hourlyRate, amount: price.total, paymentMethod, paymentRef: paymentMethod === "cash" ? "" : paymentRef,
     });
     if (changes.length) await logBooking({ id }, staff(by), "Edited", changes.join("\n"));
+    if (before.date !== date || before.startHour !== startHour || before.endHour !== endHour || before.court !== court.rows[0].name)
+      scheduleWaitlistCheck(before.date); // its old time may be free now
     return { ok: true, data: { id, status } };
   } catch (e: unknown) {
     await client.query("ROLLBACK").catch(() => {});
@@ -977,6 +1064,9 @@ export async function updateBooking(id: string, input: BookingEdit, by = "Staff"
 /** Staff: permanently delete a booking. Only cancelled bookings can be deleted. */
 export async function deleteCancelledBooking(id: string, by = "Staff"): Promise<Result<{ id: string }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  // The first booking of a group holds the code the customer uses: keep it while other courts are booked.
+  const { rows: active } = await db().query(`SELECT 1 FROM bookings WHERE group_id = $1 AND status <> 'cancelled' LIMIT 1`, [id]);
+  if (active.length) return fail(400, "This booking holds the group's code — cancel the group's other courts before deleting it.");
   const who = staff(by);
   // The log entry is written in the same statement, so it exists exactly when the booking was deleted.
   const { rows } = await db().query<{ status: BookingStatus }>(

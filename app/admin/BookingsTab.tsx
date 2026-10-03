@@ -258,6 +258,8 @@ function BookingRow({
   else if (b.status !== "cancelled" && b.payment_status === "rejected") flags.push("✕ Payment rejected — waiting for customer");
   if (release) flags.push(release.replace(/^Released at /, "Releases "));
   if (b.expired_member_id && !b.expired_member_reminded) flags.push("⚠ Membership expired");
+  if (b.group_size > 1) flags.push(`👥 Group of ${b.group_size} · ${b.group_code}`);
+  if (b.sport !== b.court_sport) flags.push(`${sportEmoji(b.sport)} ${sportLabel(b.sport)}`);
   if (b.unread_messages > 0) flags.push(`💬 ${b.unread_messages} new message${b.unread_messages > 1 ? "s" : ""}`);
   if (b.payment_reuse.some((o) => o.same_proof)) flags.push("⚠ Screenshot used before");
   else if (b.payment_reuse.length > 0) flags.push("⚠ Reference used before");

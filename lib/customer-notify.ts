@@ -2,6 +2,8 @@ import { after } from "next/server";
 import webpush from "web-push";
 import { db } from "./db";
 import { emailSender, sendEmail } from "./mailer";
+import { googleCalendarUrl, icsFile, type CalendarBooking } from "./calendar";
+import { sportLabel } from "./sports";
 import { pushConfig, setupVapid } from "./notify";
 import { customerNotice, isEmail, REMINDER_MINUTES, type CustomerNoticeKind, type NoticeBooking } from "./customer-messages";
 
@@ -23,13 +25,36 @@ export const bookingPath = (code: string) => `/my-booking#${code}`;
 type Row = {
   id: string; code: string; name: string; court_name: string; date: string; start_hour: number; end_hour: number;
   amount: number; payment_status: string; payment_method: string; status: string; rejected_note: string;
-  pay_by: string | null; customer_email: string;
+  pay_by: string | null; customer_email: string; activity: string;
 };
-const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name, c.name AS court_name, b.booking_date AS date,
-  b.start_hour, b.end_hour, b.amount, b.payment_status, b.payment_method, b.status, b.rejected_note, b.pay_by, b.customer_email`;
+// For a group booking (several courts under one code): all its courts still booked, and their total.
+const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name,
+  COALESCE((SELECT string_agg(gc.name, ' + ' ORDER BY gc.sort_order, gc.id) FROM bookings g JOIN courts gc ON gc.id = g.court_id
+             WHERE (g.id = b.id OR g.group_id = b.id) AND g.status <> 'cancelled'), c.name) AS court_name,
+  b.booking_date AS date, b.start_hour, b.end_hour,
+  COALESCE((SELECT sum(g.amount) FROM bookings g WHERE (g.id = b.id OR g.group_id = b.id) AND g.status <> 'cancelled'), b.amount) AS amount,
+  b.payment_status, b.payment_method, b.status, b.rejected_note, b.pay_by, b.customer_email,
+  COALESCE(b.activity, c.sport) AS activity`;
 
 const manilaClock = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", hour12: true });
+
+/** The booking as a calendar event. The Google link leaves the booking code out (it's sent to Google). */
+function calendarFor(r: Row): { ics: CalendarBooking; google: CalendarBooking } {
+  const base = {
+    code: r.code,
+    title: `${sportLabel(r.activity)} at NVBC — ${r.court_name}`,
+    location: "NV Badminton Center",
+    date: r.date,
+    startHour: Number(r.start_hour),
+    endHour: Number(r.end_hour),
+  };
+  const page = `${siteOrigin()}/my-booking`;
+  return {
+    ics: { ...base, details: `Booking code ${r.code}. Show your booking QR code at the front desk.\nView or change your booking: ${page}` },
+    google: { ...base, details: `Show your booking QR code at the front desk.\nView or change your booking: ${page}` },
+  };
+}
 
 async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; email?: boolean } = {}): Promise<void> {
   const b: NoticeBooking = {
@@ -63,7 +88,12 @@ async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: stri
   }
   if (r.customer_email && extra.email !== false && emailSender()) {
     try {
-      await sendEmail(r.customer_email, n.subject, n.text);
+      // Confirmed and "coming up" emails come with the booking for their calendar.
+      const withCalendar = kind === "confirmed" || kind === "upcoming";
+      const cal = calendarFor(r);
+      const text = withCalendar ? `${n.text}\n\nAdd it to Google Calendar: ${googleCalendarUrl(cal.google)}\n(Apple Calendar / Outlook: open the attached file.)` : n.text;
+      await sendEmail(r.customer_email, n.subject, text,
+        withCalendar ? [{ filename: "nvbc-booking.ics", content: icsFile(cal.ics), contentType: "text/calendar; charset=utf-8; method=PUBLISH" }] : []);
     } catch (e) {
       console.error("customer email failed", e instanceof Error ? e.message : e);
     }
@@ -71,7 +101,7 @@ async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: stri
 }
 
 /** Runs after the response is sent, so staff and players never wait on push or email. */
-function later(job: () => Promise<unknown>) {
+export function later(job: () => Promise<unknown>) {
   const run = () => job().catch((e) => console.error("customer notification failed", e));
   try {
     after(run);
@@ -121,6 +151,7 @@ export async function sendUpcomingReminders(force = false): Promise<number> {
     `UPDATE bookings b SET reminder_sent_at = now()
        FROM courts c
       WHERE c.id = b.court_id AND b.status <> 'cancelled' AND b.reminder_sent_at IS NULL
+        AND b.group_id IS NULL -- once per group: its other courts are in the same message
         AND b.booking_date BETWEEN (now() AT TIME ZONE 'Asia/Manila')::date - 1 AND (now() AT TIME ZONE 'Asia/Manila')::date + 1
         AND ${start} > now() AND ${start} <= now() + make_interval(mins => $1)
         AND b.created_at <= ${start} - make_interval(mins => $1 + 15)

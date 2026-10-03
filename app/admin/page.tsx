@@ -28,7 +28,7 @@ import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
-import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
+import { setCustomActivities, SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 import { RoleContext, type AdminRole } from "./role";
 import FullScreenLoader from "@/components/FullScreenLoader";
 
@@ -80,6 +80,18 @@ export default function AdminPage() {
   const onAuthError = useCallback((e: unknown) => {
     if (e instanceof AuthError) setLoggedIn(false);
   }, []);
+
+  // Custom activities (e.g. Zumba): load their names and emojis so bookings for them show properly.
+  const [, setActivitiesLoaded] = useState(0);
+  useEffect(() => {
+    if (!loggedIn) return;
+    api<Settings>("/api/admin/settings")
+      .then((x) => {
+        setCustomActivities(x.activities);
+        setActivitiesLoaded((n) => n + 1);
+      })
+      .catch(() => {});
+  }, [loggedIn]);
 
   if (loggedIn === null) return <FullScreenLoader />;
   if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
@@ -374,19 +386,26 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [courts, setCourts] = useState<Court[]>([]);
+  const [savedIds, setSavedIds] = useState<string[]>([]); // activities already saved keep their id
 
   useEffect(() => {
-    api<Settings>("/api/admin/settings").then(setS).catch((e) => {
+    api<Settings>("/api/admin/settings").then((x) => {
+      setS(x);
+      setSavedIds(x.activities.map((a) => a.id));
+    }).catch((e) => {
       onAuthError(e);
       setError(e.message);
     });
+    api<{ courts: Court[] }>("/api/admin/courts").then((r) => setCourts(r.courts)).catch(() => {});
   }, [onAuthError]);
 
   if (!s) return error ? <div className="error">{error}</div> : <FullScreenLoader label="Loading settings…" />;
 
+  // Builds on the latest settings, so several changes in a row all apply.
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => {
     setSaved(false);
-    setS({ ...s, [k]: v });
+    setS((prev) => (prev ? { ...prev, [k]: v } : prev));
   };
   const toggleMethod = (m: PaymentMethod, on: boolean) =>
     set("payment_methods", on ? [...new Set([...s.payment_methods, m])] : s.payment_methods.filter((x) => x !== m));
@@ -400,7 +419,10 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         setBusy(true);
         setError("");
         try {
-          setS(await api<Settings>("/api/admin/settings", s));
+          const next = await api<Settings>("/api/admin/settings", s);
+          setS(next);
+          setSavedIds(next.activities.map((a) => a.id));
+          setCustomActivities(next.activities);
           setSaved(true);
         } catch (err) {
           onAuthError(err);
@@ -413,8 +435,9 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
       <fieldset>
         <legend>Prices</legend>
         <p className="hint" style={{ margin: "0 0 10px" }}>₱ per court per hour. Weekend = Saturday and Sunday.</p>
-        {SPORTS.map((sp) => {
+        {[...SPORTS, ...s.activities].map((sp) => {
           const plan = s.rate_plans[sp.id];
+          if (!plan) return null;
           const setPlan = (next: Partial<SportPricing>) => set("rate_plans", { ...s.rate_plans, [sp.id]: { ...plan, ...next } });
           // Only the rates switched on get a price column; with neither, it's one "Standard" price.
           const types = RATE_TYPES.filter((t) => t.id === "regular" || (t.id === "member" ? plan.memberRates : plan.coachRates));
@@ -487,6 +510,30 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
           The member price needs the player&apos;s own active member code (from Members). If you set a coach code, players
           must type it to get the coach price — share it only with your coaches. New prices apply to new bookings only.
         </p>
+      </fieldset>
+
+      <ActivitiesSettings s={s} set={set} courts={courts} savedIds={savedIds} />
+
+      <fieldset>
+        <legend>Rescheduling</legend>
+        <p className="hint" style={{ margin: "0 0 10px" }}>
+          Customers can move their own booking on My booking to another free court or time of the same sport, length and
+          price. Group bookings and anything else go through staff.
+        </p>
+        <div className="row">
+          <div>
+            <label htmlFor="rs-max">Changes allowed per booking</label>
+            <select id="rs-max" value={s.reschedule_max} onChange={(e) => set("reschedule_max", Number(e.target.value))}>
+              <option value={0}>Not allowed</option>
+              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n === 1 ? "Once" : `Up to ${n} times`}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="rs-hours">Up to how many hours before the start</label>
+            <input id="rs-hours" type="number" min={0} max={168} step={1} required disabled={s.reschedule_max === 0}
+              value={s.reschedule_hours} onChange={(e) => set("reschedule_hours", e.target.value === "" ? ("" as unknown as number) : Number(e.target.value))} />
+          </div>
+        </div>
       </fieldset>
 
       <fieldset>
@@ -660,5 +707,106 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         <button className="btn" disabled={busy}>{busy ? "Saving…" : "Save settings"}</button>
       </div>
     </form>
+  );
+}
+
+const slug = (label: string) =>
+  label.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28);
+
+/**
+ * Settings → Activities: which other courts each sport can use (e.g. pickleball on badminton
+ * courts), and extra activities like Zumba with their own courts (prices are under Prices).
+ */
+function ActivitiesSettings({
+  s,
+  set,
+  courts,
+  savedIds,
+}: {
+  s: Settings;
+  set: <K extends keyof Settings>(k: K, v: Settings[K]) => void;
+  courts: Court[];
+  savedIds: string[];
+}) {
+  const active = courts.filter((c) => c.is_active);
+  const shared = (id: string) => s.activity_courts[id] ?? [];
+  const toggleCourt = (id: string, courtId: number, on: boolean) =>
+    set("activity_courts", {
+      ...s.activity_courts,
+      [id]: on ? [...new Set([...shared(id), courtId])] : shared(id).filter((x) => x !== courtId),
+    });
+  const courtBoxes = (id: string, list: Court[]) => (
+    <div className="court-checks">
+      {list.length === 0 && <span className="hint">No other courts.</span>}
+      {list.map((c) => (
+        <label key={c.id}>
+          <input type="checkbox" checked={shared(id).includes(c.id)} onChange={(e) => toggleCourt(id, c.id, e.target.checked)} />
+          {sportEmoji(c.sport)} {c.name}
+        </label>
+      ))}
+    </div>
+  );
+  const update = (i: number, patch: Partial<Settings["activities"][number]>) => {
+    const list = s.activities.map((a, j) => (j === i ? { ...a, ...patch } : a));
+    const a = list[i];
+    // A new activity's id follows its name until it's saved (then it stays, so bookings keep pointing at it).
+    if (patch.label !== undefined && !savedIds.includes(s.activities[i].id)) {
+      let id = slug(patch.label) || "activity";
+      if (!/^[a-z]/.test(id)) id = "a-" + id;
+      while (SPORTS.some((x) => x.id === id) || list.some((x, j) => j !== i && x.id === id)) id += "-2";
+      const oldId = s.activities[i].id;
+      list[i] = { ...a, id };
+      const plans = { ...s.rate_plans, [id]: s.rate_plans[oldId] ?? s.rate_plans[id] };
+      if (oldId !== id) delete plans[oldId];
+      const sharedCourts = { ...s.activity_courts, [id]: s.activity_courts[oldId] ?? [] };
+      if (oldId !== id) delete sharedCourts[oldId];
+      set("activities", list);
+      set("rate_plans", plans);
+      set("activity_courts", sharedCourts);
+      return;
+    }
+    set("activities", list);
+  };
+  const add = () => {
+    let id = "new-activity";
+    while (s.activities.some((a) => a.id === id)) id += "-2";
+    const blank = { weekday: { regular: 0, member: 0, coach: 0 }, weekend: { regular: 0, member: 0, coach: 0 } };
+    set("activities", [...s.activities, { id, label: "", emoji: "🎯" }]);
+    set("rate_plans", { ...s.rate_plans, [id]: { memberRates: false, coachRates: false, weekendRates: false, ...blank } });
+  };
+  const remove = (i: number) => {
+    const a = s.activities[i];
+    if (!window.confirm(`Remove ${a.label || "this activity"}? It disappears from Book a court when you save.`)) return;
+    set("activities", s.activities.filter((_, j) => j !== i));
+  };
+
+  return (
+    <fieldset>
+      <legend>Activities and shared courts</legend>
+      <p className="hint" style={{ margin: "0 0 10px" }}>
+        Let a sport use other courts too, or add activities like Zumba. Each shows as a tab on <strong>Book a court</strong>{" "}
+        with the courts ticked here. A court booked for one activity is taken for everything else at that time. Each
+        activity&apos;s prices are under Prices above.
+      </p>
+      {SPORTS.map((sp) => (
+        <div key={sp.id} className="activity-row">
+          <div><strong>{sp.emoji} {sp.label}</strong> <span className="hint">— its own courts, plus:</span></div>
+          {courtBoxes(sp.id, active.filter((c) => c.sport !== sp.id))}
+        </div>
+      ))}
+      {s.activities.map((a, i) => (
+        <div key={i} className="activity-row">
+          <div className="activity-head">
+            <input aria-label="Emoji" className="activity-emoji" maxLength={8} value={a.emoji} onChange={(e) => update(i, { emoji: e.target.value })} />
+            <input aria-label="Activity name" placeholder="e.g. Zumba" maxLength={30} required value={a.label}
+              onChange={(e) => update(i, { label: e.target.value })} />
+            <button type="button" className="btn small secondary danger-text" onClick={() => remove(i)}>Remove</button>
+          </div>
+          <span className="hint">Courts it can be booked on:</span>
+          {courtBoxes(a.id, active)}
+        </div>
+      ))}
+      <button type="button" className="btn small secondary" onClick={add}>+ Add an activity</button>
+    </fieldset>
   );
 }

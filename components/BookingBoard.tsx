@@ -30,19 +30,23 @@ import { saveCode } from "@/lib/saved-codes";
 import { loadMembership } from "@/lib/saved-membership";
 import { minutesUntilStart, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
+import AddToCalendar from "./AddToCalendar";
 import BookingAlerts from "./BookingAlerts";
+import WaitlistDialog from "./WaitlistDialog";
 import BookingChat from "./BookingChat";
 import { BookingHeader, Fold } from "./BookingSummary";
 import BookingQr from "./BookingQr";
 import PaymentPanel from "./PaymentPanel";
 import { AdminBookingCard } from "@/app/admin/BookingLookup";
 import { AuthError, type AdminBooking } from "@/app/admin/shared";
-import { isSport, sportLabel, type Sport } from "@/lib/sports";
+import { ACTIVITY_ID, setCustomActivities, sportLabel, type ActivityDef } from "@/lib/sports";
 import FullScreenLoader from "./FullScreenLoader";
 
 type Availability = {
-  sport: Sport;
-  sports: { id: Sport; label: string; emoji: string; courtCount: number }[];
+  sport: string; // a sport or an activity (e.g. Zumba)
+  sports: { id: string; label: string; emoji: string; courtCount: number }[];
+  activities: ActivityDef[]; // custom activities, for their names
+  pushKey: string | null; // for "notify me if this opens up"
   date: string;
   today: string;
   currentHour: number; // time of day in hours, e.g. 10.75 at 10:45
@@ -61,7 +65,7 @@ type Availability = {
   };
   paymentMethods: PaymentMethod[];
   cashForCoaches: boolean; // cash (at the desk) is only for the coach rate + coach code
-  courts: { id: number; name: string; notes: string }[];
+  courts: { id: number; name: string; notes: string; sharedFrom: string | null }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
   blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
@@ -82,8 +86,9 @@ const ROW_PX = 45; // height of one half-hour row: slot min-height 36 + padding 
 type Selection = { courtId: number; courtName: string; hour: number };
 type Confirmed = {
   code: string;
-  courtName: string;
-  sport: Sport;
+  courtName: string; // a group's courts, joined
+  courts: string[];
+  sport: string;
   date: string;
   startHour: number;
   endHour: number;
@@ -99,7 +104,7 @@ type Confirmed = {
 };
 
 // The sport is already shown in the tab, so "Badminton Court 1" → "Court 1" in the grid header.
-function shortName(name: string, sport: Sport) {
+function shortName(name: string, sport: string) {
   const prefix = sportLabel(sport) + " ";
   return name.toLowerCase().startsWith(prefix.toLowerCase()) ? name.slice(prefix.length) : name;
 }
@@ -113,7 +118,8 @@ function addDays(date: string, n: number) {
 export default function BookingBoard() {
   const [date, setDate] = useState<string | null>(null);
   // `undefined` = not decided yet (reading ?sport= from the URL); `null` = let the server pick.
-  const [sport, setSport] = useState<Sport | null | undefined>(undefined);
+  const [sport, setSport] = useState<string | null | undefined>(undefined);
+  const [waitFor, setWaitFor] = useState<{ start: number; end: number } | null>(null); // a taken slot: waitlist
   const [data, setData] = useState<Availability | null>(null);
   const [loadError, setLoadError] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -151,13 +157,16 @@ export default function BookingBoard() {
     setStaffOpen(null);
   }
 
-  // Allow links like /?sport=badminton
+  // Allow links like /?sport=badminton&date=2026-10-12 (waitlist notifications link here).
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get("sport");
-    setSport(isSport(q) ? q : null);
+    const q = new URLSearchParams(window.location.search);
+    const sp = q.get("sport");
+    const d = q.get("date");
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) setDate(d);
+    setSport(sp && ACTIVITY_ID.test(sp) ? sp : null);
   }, []);
 
-  const load = useCallback(async (d: string | null, sp: Sport | null) => {
+  const load = useCallback(async (d: string | null, sp: string | null) => {
     try {
       const qs = new URLSearchParams();
       if (d) qs.set("date", d);
@@ -165,6 +174,7 @@ export default function BookingBoard() {
       const res = await fetch(`/api/availability?${qs}`, { cache: "no-store" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Could not load availability");
+      setCustomActivities(json.activities ?? []);
       setData(json);
       setDate(json.date);
       setSport(json.sport);
@@ -184,7 +194,7 @@ export default function BookingBoard() {
     return () => clearInterval(t);
   }, [date, sport, load]);
 
-  function chooseSport(sp: Sport) {
+  function chooseSport(sp: string) {
     setSport(sp);
     const url = new URL(window.location.href);
     url.searchParams.set("sport", sp);
@@ -362,6 +372,15 @@ export default function BookingBoard() {
                               <span className="slot-name">{cell.label}</span>
                               {statusWord && <small>{statusWord}</small>}
                             </button>
+                          ) : !staff && !isPast(cell.start) ? (
+                            // Taken: tap to join the waitlist for this time.
+                            <button type="button" className={`slot booked ${cell.status} wait-click`} style={style}
+                              onClick={() => setWaitFor({ start: cell.start, end: cell.end })}
+                              aria-label={`${c.name} ${formatRange(cell.start, cell.end)} booked by ${cell.label}${statusWord ? `, ${statusWord.toLowerCase()}` : ""} — tap to get notified if it opens up`}>
+                              <span className="slot-name">{cell.label}</span>
+                              {statusWord && <small>{statusWord}</small>}
+                              <small className="wait-hint">🔔 Notify me</small>
+                            </button>
                           ) : (
                             <div className={`slot booked ${cell.status}`} style={style}
                               aria-label={`${c.name} ${formatRange(cell.start, cell.end)} booked by ${cell.label}${statusWord ? `, ${statusWord.toLowerCase()}` : ""}`}>
@@ -427,6 +446,11 @@ export default function BookingBoard() {
         </div>
       )}
 
+      {waitFor && (
+        <WaitlistDialog sport={data.sport} date={data.date} start={waitFor.start} end={waitFor.end}
+          pushKey={data.pushKey} onClose={() => setWaitFor(null)} />
+      )}
+
       {selection && (
         <BookingDialog
           data={data}
@@ -466,6 +490,17 @@ function BookingDialog({
   }, [data, selection, isBooked]);
 
   const [hours, setHours] = useState(() => Math.min(1, maxHours));
+  // Group booking: other courts free for the same time, booked together under one code and payment.
+  const freeOthers = useMemo(
+    () =>
+      data.courts.filter(
+        (c) => c.id !== selection.courtId && halfHours(selection.hour, selection.hour + hours - SLOT_HOURS).every((h) => !isBooked(c.id, h))
+      ),
+    [data, selection, hours, isBooked]
+  );
+  const [extra, setExtra] = useState<number[]>([]);
+  const extraIds = extra.filter((id) => freeOthers.some((c) => c.id === id)); // still free for the chosen length
+  const courtCount = 1 + extraIds.length;
   const [rateType, setRateType] = useState<RateType>("regular");
   // A member's code is saved on their phone when they open their member page: fill it in.
   const [rateCode, setRateCode] = useState(() => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? ""));
@@ -492,6 +527,7 @@ function BookingDialog({
 
   const p = data.pricing;
   const price = computePrice(rateFor(p.rates, rateType), hours, p.rates.regular);
+  const total = Math.round(price.total * courtCount * 100) / 100; // a group pays for every court
   const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
   const standardOnly = p.rateTypes.length === 1;
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
@@ -522,6 +558,8 @@ function BookingDialog({
           email,
           notes,
           website,
+          sport: data.sport,
+          extraCourtIds: extraIds,
           rateType,
           rateCode: codeRequired ? rateCode : "",
           paymentMethod,
@@ -591,6 +629,8 @@ function BookingDialog({
                 </p>
               </Fold>
               <BookingChat code={done.code} />
+              <AddToCalendar code={done.code} sport={done.sport} courts={done.courtName} date={done.date}
+                startHour={done.startHour} endHour={done.endHour} />
               <BookingAlerts code={done.code} />
             </div>
             {done.amount > 0 && done.paymentStatus !== "paid" && done.paymentStatus !== "waived" && (
@@ -649,6 +689,22 @@ function BookingDialog({
                 ))}
               </select>
             </div>
+
+            {freeOthers.length > 0 && (
+              <details className="field more-courts" open={extraIds.length > 0}>
+                <summary>👥 Booking for a group? Add more courts at the same time{extraIds.length ? ` (${courtCount} courts)` : ""}</summary>
+                <div className="court-checks" style={{ marginTop: 8 }}>
+                  {freeOthers.map((c) => (
+                    <label key={c.id}>
+                      <input type="checkbox" checked={extraIds.includes(c.id)}
+                        onChange={(e) => setExtra(e.target.checked ? [...extraIds, c.id] : extraIds.filter((x) => x !== c.id))} />
+                      {c.name}
+                    </label>
+                  ))}
+                </div>
+                <p className="hint" style={{ margin: "6px 0 0" }}>One booking code and one payment for all the courts.</p>
+              </details>
+            )}
 
             {!standardOnly && (
               <div className="field">
@@ -762,8 +818,9 @@ function BookingDialog({
                   <div className="pay-row">
                     <span>
                       {p.weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)}/hr × {formatDuration(hours)}
+                      {courtCount > 1 && ` × ${courtCount} courts`}
                     </span>
-                    <span>{formatPeso(price.total)}</span>
+                    <span>{formatPeso(total)}</span>
                   </div>
                   {price.savings > 0 && (
                     <div className="pay-row" style={{ color: "var(--brand)", fontSize: 14 }}>
@@ -773,7 +830,7 @@ function BookingDialog({
                   )}
                   <div className="pay-row total">
                     <span>Total</span>
-                    <span>{formatPeso(price.total)}</span>
+                    <span>{formatPeso(total)}</span>
                   </div>
                 </div>
 
@@ -796,8 +853,8 @@ function BookingDialog({
               <button type="submit" className="btn" disabled={busy || startsSoon || noWayToPay}>
                 {busy ? "Booking…"
                   : !hasPrices || price.total <= 0 ? "Confirm booking"
-                  : paymentMethod === "cash" ? `Reserve · ${formatPeso(price.total)}`
-                  : `Book & pay · ${formatPeso(price.total)}`}
+                  : paymentMethod === "cash" ? `Reserve · ${formatPeso(total)}`
+                  : `Book & pay · ${formatPeso(total)}`}
               </button>
             </div>
           </form>

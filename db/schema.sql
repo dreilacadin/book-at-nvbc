@@ -495,3 +495,45 @@ UPDATE bookings SET payment_proof = ''
  WHERE payment_proof <> '' AND (payment_status IN ('paid', 'waived', 'refunded', 'rejected') OR status = 'cancelled');
 UPDATE memberships SET payment_proof = ''
  WHERE payment_proof <> '' AND (payment_status IN ('paid', 'waived', 'refunded') OR status <> 'pending');
+
+-- v24: activities, group bookings, rescheduling, waitlist ------------------------------------
+-- Extra activities besides the built-in sports (e.g. Zumba): [{"id": "zumba", "label": "Zumba", "emoji": "💃"}].
+-- Their prices live in rate_plans like the sports'. activity_courts lists, per activity (built-in
+-- sports too), the other courts it can also be booked on: {"pickleball": [1, 2], "zumba": [1, 2, 3, 4]}.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS activities JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS activity_courts JSONB NOT NULL DEFAULT '{}'::jsonb;
+-- What a booking is for (a sport or an activity); before v24 it was always the court's sport.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS activity TEXT;
+UPDATE bookings b SET activity = c.sport FROM courts c WHERE c.id = b.court_id AND b.activity IS NULL;
+-- Group bookings: several courts under one code. The first booking holds the code customers use;
+-- the others point to it with group_id and are paid, released and cancelled together.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS group_id UUID REFERENCES bookings(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS bookings_group_idx ON bookings (group_id) WHERE group_id IS NOT NULL;
+-- Customers can move their own booking (same sport, length and price) up to reschedule_hours
+-- before it starts, at most reschedule_max times (0 = not allowed).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reschedule_count INT NOT NULL DEFAULT 0;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS reschedule_hours INT NOT NULL DEFAULT 12;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS reschedule_max INT NOT NULL DEFAULT 1;
+-- Waitlist: "tell me if this time opens up" for a sport/activity on a date (any court that can
+-- be booked for it). Everyone waiting is notified when it opens; whoever books first gets it.
+CREATE TABLE IF NOT EXISTS waitlist (
+  id           BIGSERIAL PRIMARY KEY,
+  activity     TEXT NOT NULL,
+  slot_date    DATE NOT NULL,
+  start_hour   NUMERIC(4,1) NOT NULL,
+  end_hour     NUMERIC(4,1) NOT NULL,
+  email        TEXT NOT NULL DEFAULT '',
+  endpoint     TEXT,
+  p256dh       TEXT,
+  auth         TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  notified_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS waitlist_open_idx ON waitlist (slot_date) WHERE notified_at IS NULL;
+-- New staff notification kind "booking_moved" (a customer rescheduled): on for everyone once.
+UPDATE admin_notify_state SET kinds = array_append(kinds, 'booking_moved')
+ WHERE kinds_version < 3 AND NOT ('booking_moved' = ANY(kinds));
+UPDATE admin_notify_state SET kinds_version = 3 WHERE kinds_version < 3;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 3;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds
+  SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message', 'booking_moved'];

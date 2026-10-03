@@ -1,6 +1,6 @@
 import { Pool, types } from "pg";
 import { toSportPricing, type GcashAccount, type SportPricing } from "./pricing";
-import { SPORTS } from "./sports";
+import { ACTIVITY_ID, isActivity, isSport, setCustomActivities, SPORTS, type ActivityDef } from "./sports";
 
 // Return DATE columns as plain "YYYY-MM-DD" strings instead of JS Dates,
 // so dates never shift because of server timezones.
@@ -78,12 +78,17 @@ export type Settings = {
   payment_note: string;
   membership_fee_student: number;
   membership_fee_adult: number;
+  activities: ActivityDef[]; // custom activities (e.g. Zumba); their prices are in rate_plans
+  activity_courts: Record<string, number[]>; // activity → extra courts it can be booked on
+  reschedule_hours: number; // customers can move a booking up to this many hours before it starts
+  reschedule_max: number; // ... this many times (0 = not allowed)
 };
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
   booking_window_days, announcement, rate_plans, hourly_rates, member_rates, coach_rates,
   member_code, coach_code, payment_methods, gcash_name, gcash_number, gcash_more, bpi_account_name,
-  bpi_account_number, qrph_image, payment_note, membership_fee_student, membership_fee_adult`;
+  bpi_account_number, qrph_image, payment_note, membership_fee_student, membership_fee_adult,
+  activities, activity_courts, reschedule_hours, reschedule_max`;
 
 /** Full settings, including staff-only values. Never send this object to the public as-is. */
 export async function getSettings(): Promise<Settings> {
@@ -93,12 +98,26 @@ export async function getSettings(): Promise<Settings> {
   s.gcash_more = (Array.isArray(s.gcash_more) ? s.gcash_more : [])
     .filter((a): a is GcashAccount => typeof a?.name === "string" && typeof a?.number === "string");
   const num = (v: unknown, fallback: number) => (Number.isFinite(Number(v)) && v !== null ? Number(v) : fallback);
-  s.rate_plans = Object.fromEntries(
-    SPORTS.map((sp) => {
+  s.activities = (Array.isArray(s.activities) ? s.activities : []).filter(
+    (a): a is ActivityDef => typeof a?.id === "string" && ACTIVITY_ID.test(a.id) && !isSport(a.id) && typeof a.label === "string"
+  ).map((a) => ({ id: a.id, label: a.label, emoji: typeof a.emoji === "string" ? a.emoji : "" }));
+  setCustomActivities(s.activities);
+  const shared = s.activity_courts && typeof s.activity_courts === "object" ? s.activity_courts : {};
+  s.activity_courts = Object.fromEntries(
+    Object.entries(shared)
+      .filter(([k, v]) => isActivity(k) && Array.isArray(v))
+      .map(([k, v]) => [k, (v as unknown[]).map(Number).filter(Number.isInteger)])
+  );
+  s.rate_plans = Object.fromEntries([
+    ...SPORTS.map((sp) => {
       const regular = num(s.hourly_rates?.[sp.id], 0);
       const legacy = { regular, member: num(s.member_rates?.[sp.id], regular), coach: num(s.coach_rates?.[sp.id], regular) };
       return [sp.id, toSportPricing(s.rate_plans?.[sp.id], legacy)];
-    })
-  );
+    }),
+    // Custom activities: a standard rate unless set up otherwise.
+    ...s.activities.map((a) => [a.id, toSportPricing(s.rate_plans?.[a.id] ?? { memberRates: false, coachRates: false }, { regular: 0, member: 0, coach: 0 })]),
+  ]);
+  s.reschedule_hours = num(s.reschedule_hours, 12);
+  s.reschedule_max = num(s.reschedule_max, 1);
   return s;
 }
