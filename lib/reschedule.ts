@@ -8,6 +8,7 @@ import { notifyStaff } from "./notify";
 import { computePrice, rateFor, ratesForDate, type RateType } from "./pricing";
 import { courtAllowed, sportEmoji, sportLabel } from "./sports";
 import { addDays, daysBetween, isValidDate, nowAtFacility } from "./time";
+import { holidayOn } from "./holidays";
 import { scheduleWaitlistCheck } from "./waitlist";
 
 // Customers moving their own booking (My booking → Change time): to another free court or time of
@@ -72,7 +73,9 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
     return fail(400, "Please choose a date you can book.");
   const date = rawDate;
   const hours = b.end_hour - b.start_hour;
-  if (!samePrice(b, settings, date))
+  const holiday = await holidayOn(date);
+  if (holiday?.closed) return { ok: true as const, data: { ...base, options: [], note: `NVBC is closed that day (${holiday.name}).` } };
+  if (!samePrice(b, settings, date, !!holiday))
     return { ok: true as const, data: { ...base, options: [], note: "Prices are different on this day, so your booking can't be moved to it online." } };
 
   const [courts, taken, blocks] = await Promise.all([
@@ -98,10 +101,10 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
   return { ok: true as const, data: { ...base, options } };
 }
 
-function samePrice(b: Current, settings: Awaited<ReturnType<typeof getSettings>>, date: string): boolean {
+function samePrice(b: Current, settings: Awaited<ReturnType<typeof getSettings>>, date: string, holiday: boolean): boolean {
   const plan = settings.rate_plans[b.activity];
   if (!plan) return false;
-  const rates = ratesForDate(plan, date);
+  const rates = ratesForDate(plan, date, holiday);
   const total = computePrice(rateFor(rates, b.rate_type), b.end_hour - b.start_hour, rates.regular).total;
   return Math.abs(total - b.amount) < 0.01;
 }
@@ -123,7 +126,9 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
   if (!Number.isInteger(courtId) || !halfHours(settings.open_hour, settings.close_hour - hours).includes(start))
     return fail(400, "Please choose one of the available times.");
   if (minutesUntilStart(date, start, today) <= RELEASE_MINUTES) return fail(400, "That time is about to start — please pick a later one.");
-  if (!samePrice(b, settings, date)) return fail(400, "That day has different prices, so the booking can't be moved there online.");
+  const holiday = await holidayOn(date);
+  if (holiday?.closed) return fail(400, `NVBC is closed that day (${holiday.name}).`);
+  if (!samePrice(b, settings, date, !!holiday)) return fail(400, "That day has different prices, so the booking can't be moved there online.");
   if (b.rate_type === "member" && b.membership_expires && b.membership_expires < date)
     return fail(400, "Your membership ends before that date, so the member rate can't be used then.");
 

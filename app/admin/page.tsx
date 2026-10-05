@@ -24,6 +24,7 @@ import BookingsTab from "./BookingsTab";
 import Notifications from "./Notifications";
 import StaffTab from "./StaffTab";
 import ActivityLog from "./ActivityLog";
+import Reports from "./Reports";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
@@ -38,7 +39,7 @@ const shortDate = (d: string | null) =>
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "courts" | "staff" | "settings">("overview");
+  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "reports" | "courts" | "staff" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
   const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
   // A booking opened from a notification (or /admin?booking=NV-…), shown in a pop-up card.
@@ -99,8 +100,8 @@ export default function AdminPage() {
   const role: AdminRole = me?.role ?? "staff";
   const manage = role !== "staff";
   // Staff accounts don't see Courts (setup) or Settings.
-  const tabs = (["overview", "bookings", "members", "courts", "staff", "settings"] as const).filter(
-    (t) => manage || (t !== "courts" && t !== "settings")
+  const tabs = (["overview", "bookings", "members", "reports", "courts", "staff", "settings"] as const).filter(
+    (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports")
   );
 
   return (
@@ -147,6 +148,7 @@ export default function AdminPage() {
         <BookingsTab initialDate={bookingsDate} initialOpen={bookingsOpen} onDateChange={setBookingsDate} onAuthError={onAuthError} />
       )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
+      {tab === "reports" && manage && <Reports onAuthError={onAuthError} />}
       {tab === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}
       {tab === "staff" && (
         <>
@@ -536,6 +538,8 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         </div>
       </fieldset>
 
+      <HolidaysSettings />
+
       <fieldset>
         <legend>Membership fees</legend>
         <div className="row">
@@ -807,6 +811,80 @@ function ActivitiesSettings({
         </div>
       ))}
       <button type="button" className="btn small secondary" onClick={add}>+ Add an activity</button>
+    </fieldset>
+  );
+}
+
+type HolidayRow = { date: string; name: string; closed: boolean; created_by: string; bookings: number };
+
+/**
+ * Settings → Holidays and closures. Saved straight away (not with "Save settings"). Open holidays
+ * use each sport's weekend prices; closed days can't be booked online.
+ */
+function HolidaysSettings() {
+  const [rows, setRows] = useState<HolidayRow[] | null>(null);
+  const [form, setForm] = useState({ date: "", name: "", closed: false });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api<{ holidays: HolidayRow[] }>("/api/admin/holidays").then((r) => setRows(r.holidays)).catch((e) => setError(e.message));
+  }, []);
+  async function call(body: Record<string, unknown>) {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api<{ holidays: HolidayRow[] }>("/api/admin/holidays", body);
+      setRows(r.holidays);
+      return r.holidays;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't save.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function add() {
+    const saved = await call({ action: "save", ...form });
+    if (!saved) return;
+    const row = saved.find((h) => h.date === form.date);
+    if (row?.closed && row.bookings > 0)
+      window.alert(`${row.bookings} booking(s) are already on ${shortDate(row.date)}. Closing only stops new online bookings — please contact those players (Bookings tab).`);
+    setForm({ date: "", name: "", closed: false });
+  }
+  const today = todayManila();
+  return (
+    <fieldset>
+      <legend>Holidays and closures</legend>
+      <p className="hint" style={{ margin: "0 0 10px" }}>
+        Set these ahead of time. On an <strong>open</strong> holiday, every sport uses its weekend prices; a <strong>closed</strong>{" "}
+        day can&apos;t be booked online. Saved as soon as you add or remove one.
+      </p>
+      {error && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
+      {rows && rows.length > 0 && (
+        <div className="holiday-list">
+          {rows.map((h) => (
+            <div key={h.date} className={`holiday-row${h.date < today ? " past" : ""}`}>
+              <span className="holiday-date">{shortDate(h.date)}</span>
+              <span className="holiday-name">{h.name}</span>
+              <span className={`badge ${h.closed ? "grey" : ""}`}>{h.closed ? "Closed" : "Weekend prices"}</span>
+              {h.bookings > 0 && <span className="hint">{h.bookings} booking{h.bookings > 1 ? "s" : ""}</span>}
+              <button type="button" className="link-btn" disabled={busy}
+                onClick={() => window.confirm(`Remove ${h.name} (${shortDate(h.date)})?`) && call({ action: "remove", date: h.date })}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {rows && rows.length === 0 && <p className="hint">No holidays set.</p>}
+      <div className="holiday-add">
+        <input type="date" aria-label="Holiday date" min={today} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+        <input type="text" aria-label="Holiday name" placeholder="e.g. Christmas Day" maxLength={60} value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <select aria-label="Open or closed" value={form.closed ? "closed" : "open"} onChange={(e) => setForm({ ...form, closed: e.target.value === "closed" })}>
+          <option value="open">Open — weekend prices</option>
+          <option value="closed">Closed</option>
+        </select>
+        <button type="button" className="btn small" disabled={busy || !form.date || form.name.trim().length < 2} onClick={add}>+ Add</button>
+      </div>
     </fieldset>
   );
 }

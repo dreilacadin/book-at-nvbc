@@ -77,9 +77,12 @@ export function isWeekend(date: string): boolean {
   return day === 0 || day === 6;
 }
 
-/** The prices that apply on a date. Without member rates, member/coach equal the standard rate. */
-export function ratesForDate(p: SportPricing, date: string): SportRates {
-  const r = p.weekendRates && isWeekend(date) ? p.weekend : p.weekday;
+/**
+ * The prices that apply on a date. Holidays (set in /admin) are priced like weekends. Without
+ * member rates, member/coach equal the standard rate.
+ */
+export function ratesForDate(p: SportPricing, date: string, holiday = false): SportRates {
+  const r = p.weekendRates && (holiday || isWeekend(date)) ? p.weekend : p.weekday;
   return { regular: r.regular, member: p.memberRates ? r.member : r.regular, coach: p.coachRates ? r.coach : r.regular };
 }
 

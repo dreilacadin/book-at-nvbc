@@ -120,6 +120,13 @@ Staff change the status from the dropdown in each booking row. The top of the Bo
 
 Each booking has its own conversation. Customers write from **My booking**; staff read and reply under **Messages** on the booking card (new messages show in the 🔔 bell, as push notifications, and as "💬 New message" on the booking's row). Customers see replies on their booking page and get a notification or email if they turned on updates. Customers can send up to 10 messages per 10 minutes; messages are up to 1,000 characters.
 
+### Reports, refunds, no-shows and holidays
+
+- **Reports** (owner/managers): pick a period for revenue, court usage (weekday × hour, busiest/quietest times, by weekday), revenue by sport and payment method, refunds, unpaid money, and cancellation / release / no-show rates. Usage is booked court-hours out of open court-hours (closed holidays left out).
+- **Refunds:** paid bookings cancelled by the customer 12+ hours ahead, or by staff, become **Refund due**; staff record **Refunded** (reference; the customer is notified) or **No refund** (note). Group bookings are handled together.
+- **No-shows:** staff mark a started booking as a no-show; the player's no-shows and unpaid (released) bookings from the last 90 days, matched by phone/email, are shown when they book again.
+- **Holidays** (Settings): open holidays use weekend prices; closed days can't be booked online.
+
 ### Activities, groups, rescheduling and the waitlist
 
 - **Activities** (Settings → Activities and shared courts): let a sport use other courts (e.g. pickleball on badminton courts) and add activities like Zumba with their own courts and prices. Each appears as a tab on Book a court; one court can only hold one booking at a time, whatever it's for.

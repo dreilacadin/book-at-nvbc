@@ -46,10 +46,11 @@ function rangeFor(view: View, anchor: string): { from: string; to: string; label
 
 const hoursOf = (b: AdminBooking) => b.end_hour - b.start_hour;
 
-type TileFilter = "verify" | "cancelled";
+type TileFilter = "verify" | "cancelled" | "refunds";
 const TILE_FILTERS: Record<TileFilter, (b: AdminBooking) => boolean> = {
   verify: (b) => b.status !== "cancelled" && b.payment_status === "for_verification",
   cancelled: (b) => b.status === "cancelled",
+  refunds: (b) => b.refund_status === "due",
 };
 
 /** A stat tile that filters the bookings below — styled so it's clearly a button. */
@@ -132,6 +133,7 @@ function summarize(list: AdminBooking[]) {
     toVerify: active.filter((b) => b.payment_status === "for_verification").length,
     pending: active.filter((b) => b.status === "pending" || b.status === "reserved").length,
     cancelled: list.length - active.length,
+    refundsDue: list.filter((b) => b.refund_status === "due").length,
   };
 }
 
@@ -243,16 +245,20 @@ export default function Overview({
           active={tileFilter === "verify"} onClick={() => setTileFilter(tileFilter === "verify" ? null : "verify")} />
         <FilterTile n={t.cancelled} label="cancelled & released"
           active={tileFilter === "cancelled"} onClick={() => setTileFilter(tileFilter === "cancelled" ? null : "cancelled")} />
+        {(t.refundsDue > 0 || tileFilter === "refunds") && (
+          <FilterTile n={t.refundsDue} label="refunds due" warn={t.refundsDue > 0}
+            active={tileFilter === "refunds"} onClick={() => setTileFilter(tileFilter === "refunds" ? null : "refunds")} />
+        )}
       </div>
 
       {error && <div className="error">{error}</div>}
       {loading && <FullScreenLoader label="Loading bookings…" />}
       {tileFilter ? (
         <FilteredList
-          title={tileFilter === "verify" ? "Payments to verify" : "Cancelled & released"}
+          title={tileFilter === "verify" ? "Payments to verify" : tileFilter === "refunds" ? "Refunds due" : "Cancelled & released"}
           period={range.label}
           list={shown.filter(TILE_FILTERS[tileFilter]).sort((a, b) => a.date.localeCompare(b.date) || a.start_hour - b.start_hour)}
-          empty={tileFilter === "verify" ? "No payments waiting to be verified" : "No cancelled or released bookings"}
+          empty={tileFilter === "verify" ? "No payments waiting to be verified" : tileFilter === "refunds" ? "No refunds due" : "No cancelled or released bookings"}
           onOpen={(b) => onOpenDay(b.date, b.id)}
           onClose={() => setTileFilter(null)}
         />

@@ -25,7 +25,7 @@ export const bookingPath = (code: string) => `/my-booking#${code}`;
 type Row = {
   id: string; code: string; name: string; court_name: string; date: string; start_hour: number; end_hour: number;
   amount: number; payment_status: string; payment_method: string; status: string; rejected_note: string;
-  pay_by: string | null; customer_email: string; activity: string;
+  pay_by: string | null; customer_email: string; activity: string; refund_ref: string; refund_total: number | null;
 };
 // For a group booking (several courts under one code): all its courts still booked, and their total.
 const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name,
@@ -33,7 +33,8 @@ const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name,
              WHERE (g.id = b.id OR g.group_id = b.id) AND g.status <> 'cancelled'), c.name) AS court_name,
   b.booking_date AS date, b.start_hour, b.end_hour,
   COALESCE((SELECT sum(g.amount) FROM bookings g WHERE (g.id = b.id OR g.group_id = b.id) AND g.status <> 'cancelled'), b.amount) AS amount,
-  b.payment_status, b.payment_method, b.status, b.rejected_note, b.pay_by, b.customer_email,
+  b.payment_status, b.payment_method, b.status, b.rejected_note, b.pay_by, b.customer_email, b.refund_ref,
+  (SELECT sum(g.refund_amount) FROM bookings g WHERE (g.id = b.id OR g.group_id = b.id) AND g.refund_status = 'refunded') AS refund_total,
   COALESCE(b.activity, c.sport) AS activity`;
 
 const manilaClock = (iso: string) =>
@@ -61,6 +62,8 @@ async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: stri
     code: r.code, name: r.name, courtName: r.court_name, date: r.date, startHour: r.start_hour, endHour: r.end_hour,
     amount: Number(r.amount), paymentStatus: r.payment_status, paymentMethod: r.payment_method, status: r.status,
     rejectedNote: r.rejected_note,
+    refundAmount: r.refund_total === null ? undefined : Number(r.refund_total),
+    refundRef: r.refund_ref,
   };
   const n = customerNotice(kind, b, {
     link: siteOrigin() + bookingPath(r.code), payByClock: r.pay_by ? manilaClock(r.pay_by) : undefined, message: extra.message, from: extra.from,
@@ -111,7 +114,7 @@ export function later(job: () => Promise<unknown>) {
 }
 
 /** Tells the customer their payment was confirmed or rejected. */
-export function notifyCustomer(bookingId: string, kind: "confirmed" | "rejected"): void {
+export function notifyCustomer(bookingId: string, kind: "confirmed" | "rejected" | "refunded"): void {
   later(async () => {
     const { rows } = await db().query<Row>(`SELECT ${ROW_SQL} FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`, [bookingId]);
     if (rows[0]) await deliver(kind, rows[0]);

@@ -60,6 +60,7 @@ type Availability = {
     rates: SportRates; // ₱ per court per hour on this date: regular / member / coach
     rateTypes: RateType[]; // just ["regular"] when the sport has one standard rate
     weekend: boolean; // this date uses the sport's weekend prices
+    holiday: string | null; // an open holiday (priced like a weekend)
     memberCodeRequired: boolean;
     coachCodeRequired: boolean;
   };
@@ -69,6 +70,7 @@ type Availability = {
   // Booked times with the booker's first name and last initial ("Ana C.").
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
   blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
+  closed: string | null; // closed for a holiday: its name
 };
 
 type GridCell = {
@@ -328,6 +330,10 @@ export default function BookingBoard() {
         </div>
       </div>
 
+      {data.closed && <div className="holiday-banner closed">🎌 NVBC is closed on this day — {data.closed}.</div>}
+      {data.pricing.holiday && (
+        <div className="holiday-banner">🎉 {data.pricing.holiday} — holiday{data.pricing.weekend ? " (weekend) prices apply" : ""}.</div>
+      )}
       {loadError && <div className="error" style={{ marginBottom: 12 }}>{loadError}</div>}
       {courtNotes.length > 0 && (
         <div className="court-notes">

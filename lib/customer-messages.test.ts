@@ -47,3 +47,10 @@ test("message: shows who sent it and the text; push body is shortened", () => {
   assert.ok(n.text.includes(link));
   assert.equal(customerNotice("message", b, { link, message: long }).body.length, 138);
 });
+
+test("refunded: amount and reference", () => {
+  const n = customerNotice("refunded", { ...b, status: "cancelled", refundAmount: 1200, refundRef: "GC 555" }, { link });
+  assert.equal(n.title, "Refund sent");
+  assert.match(n.body, /₱1,200 \(reference GC 555\)/);
+  assert.match(n.text, /refund of ₱1,200/);
+});

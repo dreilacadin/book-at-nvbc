@@ -36,6 +36,16 @@ export type AdminBooking = {
   group_total: number;
   group_courts: string;
   reschedule_count: number;
+  refund_status: "due" | "refunded" | "none" | null;
+  refund_amount: number | null;
+  refund_group_total: number;
+  refund_ref: string;
+  refund_note: string;
+  refund_by: string | null;
+  refund_at: string | null;
+  no_show: boolean;
+  no_show_by: string | null;
+  player_flags: { date: string; code: string; kind: "no_show" | "unpaid" }[]; // this player's last 90 days
   court_sport: string; // the court's own sport (the booking may be for another activity)
   proof_deleted: boolean; // a screenshot was sent, then deleted once the payment was checked
   paid_amount_reported: number | null; // what the player says they sent (read from their screenshot)

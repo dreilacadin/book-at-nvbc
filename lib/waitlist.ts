@@ -9,6 +9,7 @@ import { formatDateLong, formatRange, isHalfHour } from "./format";
 import { emailSender, sendEmail } from "./mailer";
 import { setupVapid } from "./notify";
 import { courtAllowed, isActivity, sportEmoji, sportLabel } from "./sports";
+import { holidayOn } from "./holidays";
 import { isValidDate, nowAtFacility } from "./time";
 
 // Waitlist: "tell me if this time opens up". When a booking is cancelled, released or moved,
@@ -36,6 +37,8 @@ export async function joinWaitlist(input: Record<string, unknown>): Promise<{ ok
   if (!isHalfHour(start) || !isHalfHour(end) || end <= start || end - start > 12) return fail(400, "Please choose a valid time.");
   if (minutesUntilStart(date, start, nowAtFacility()) <= RELEASE_MINUTES) return fail(400, "That time is about to start.");
   if (email && !isEmail(email)) return fail(400, "Please check your email address.");
+  const holiday = await holidayOn(date);
+  if (holiday?.closed) return fail(400, `NVBC is closed that day (${holiday.name}).`);
   if (!email && !(endpoint && p256dh && auth)) return fail(400, "Turn on notifications or enter an email so we can tell you.");
 
   // A court is already free for that whole time: no need to wait.

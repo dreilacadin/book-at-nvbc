@@ -537,3 +537,36 @@ UPDATE admin_notify_state SET kinds_version = 3 WHERE kinds_version < 3;
 ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 3;
 ALTER TABLE admin_notify_state ALTER COLUMN kinds
   SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message', 'booking_moved'];
+
+-- v25: refunds, no-shows, holidays ------------------------------------------------------------
+-- Refunds: 'due' when a paid booking is cancelled and a refund is owed (by the refund rules, or
+-- when staff cancel), then 'refunded' (with the reference and who did it) or 'none' (staff
+-- decided no refund, with a note).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_status TEXT;
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_refund_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_refund_status_check CHECK (refund_status IS NULL OR refund_status IN ('due', 'refunded', 'none'));
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10,2);
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_ref TEXT NOT NULL DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_by TEXT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS refund_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS bookings_refund_due_idx ON bookings (refund_status) WHERE refund_status = 'due';
+-- No-shows: staff mark a booking whose player didn't turn up. With bookings released for not
+-- being paid, they're shown to staff when the same contact books again.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_show BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_show_by TEXT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS no_show_at TIMESTAMPTZ;
+-- The contact, normalised (last 10 digits of a phone number, or a lowercased email), to match a player's bookings.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS contact_key TEXT GENERATED ALWAYS AS (
+  CASE WHEN contact ~ '@' THEN lower(btrim(contact))
+       WHEN length(regexp_replace(contact, '\D', '', 'g')) >= 10 THEN right(regexp_replace(contact, '\D', '', 'g'), 10)
+       ELSE '' END) STORED;
+CREATE INDEX IF NOT EXISTS bookings_contact_key_idx ON bookings (contact_key, booking_date) WHERE contact_key <> '';
+-- Holidays: priced like weekends (each sport's weekend prices), or closed for booking.
+CREATE TABLE IF NOT EXISTS holidays (
+  holiday_date DATE PRIMARY KEY,
+  name         TEXT NOT NULL,
+  closed       BOOLEAN NOT NULL DEFAULT FALSE,
+  created_by   TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);

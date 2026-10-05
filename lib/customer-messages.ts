@@ -2,7 +2,7 @@
 // imports), so it can be tested.
 import { formatDateLong, formatRange } from "./format.ts";
 
-export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming" | "message";
+export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming" | "message" | "refunded";
 
 /** The "coming up" reminder goes out this long before the start. */
 export const REMINDER_MINUTES = 60;
@@ -19,6 +19,8 @@ export type NoticeBooking = {
   paymentMethod: string;
   status: string;
   rejectedNote: string;
+  refundAmount?: number;
+  refundRef?: string;
 };
 
 export type CustomerNotice = {
@@ -69,6 +71,20 @@ export function customerNotice(
         `We're still holding your slot. Please send a correct payment of ${pesos(b.amount)} and its reference number or screenshot${deadline} ` +
         `on your booking page — otherwise the slot will be released for other players:\n${opts.link}\n\n` +
         `If you think this is a mistake, please contact the front desk.\n\nNV Badminton Center`,
+    };
+  }
+
+  if (kind === "refunded") {
+    const amount = pesos(b.refundAmount ?? b.amount);
+    const ref = b.refundRef ? ` (reference ${b.refundRef})` : "";
+    return {
+      title: "Refund sent",
+      body: `We've refunded ${amount}${ref} for your cancelled booking on ${formatDateLong(b.date)}.`,
+      subject: `Your refund for booking ${b.code}`,
+      text:
+        `Hi ${firstName(b.name)},\n\nWe've sent your refund of ${amount}${ref} for your cancelled booking:\n\n${where}\n` +
+        `Booking code: ${b.code}\n\nIt may take a little while to show in your account. If you have any questions, please reply ` +
+        `on your booking page or contact the front desk:\n${opts.link}\n\nNV Badminton Center`,
     };
   }
 

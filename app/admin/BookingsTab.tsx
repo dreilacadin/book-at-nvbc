@@ -17,7 +17,7 @@ import {
 } from "@/lib/pricing";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 import { nowAtFacility } from "@/lib/time";
-import BookingLookup, { AdminBookingCard, displayLabel, displayStatus, releaseNote, type DisplayStatus } from "./BookingLookup";
+import BookingLookup, { AdminBookingCard, flagSummary, displayLabel, displayStatus, releaseNote, type DisplayStatus } from "./BookingLookup";
 import { api, todayManila, type AdminBooking, type Court } from "./shared";
 
 type Filter = "all" | "action" | "verify" | "upcoming" | "in_progress" | "completed";
@@ -258,6 +258,9 @@ function BookingRow({
   else if (b.status !== "cancelled" && b.payment_status === "rejected") flags.push("✕ Payment rejected — waiting for customer");
   if (release) flags.push(release.replace(/^Released at /, "Releases "));
   if (b.expired_member_id && !b.expired_member_reminded) flags.push("⚠ Membership expired");
+  if (b.refund_status === "due") flags.push("💸 Refund due");
+  if (b.no_show) flags.push("🚫 No-show");
+  if (b.player_flags.length) flags.push(`⚠ ${flagSummary(b.player_flags)} (90 days)`);
   if (b.group_size > 1) flags.push(`👥 Group of ${b.group_size} · ${b.group_code}`);
   if (b.sport !== b.court_sport) flags.push(`${sportEmoji(b.sport)} ${sportLabel(b.sport)}`);
   if (b.unread_messages > 0) flags.push(`💬 ${b.unread_messages} new message${b.unread_messages > 1 ? "s" : ""}`);

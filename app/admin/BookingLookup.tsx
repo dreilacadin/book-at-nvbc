@@ -182,6 +182,73 @@ function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<stri
   );
 }
 
+const shortDay = (d: string) =>
+  new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** "2 no-shows and 1 unpaid booking" */
+export function flagSummary(flags: AdminBooking["player_flags"]): string {
+  const ns = flags.filter((f) => f.kind === "no_show").length;
+  const up = flags.length - ns;
+  return [ns ? `${ns} no-show${ns > 1 ? "s" : ""}` : "", up ? `${up} unpaid booking${up > 1 ? "s" : ""}` : ""].filter(Boolean).join(" and ");
+}
+
+/** A cancelled booking's refund: due → refunded (with a reference) or no refund (with a note). */
+function RefundBox({ b, busy, run }: { b: AdminBooking; busy: boolean; run: (body: Record<string, unknown>) => void }) {
+  const [ref, setRef] = useState("");
+  const [declining, setDeclining] = useState(false);
+  const [note, setNote] = useState("");
+  const amount = formatPeso(b.refund_group_total || b.refund_amount || b.amount);
+  const group = b.group_size > 1 || b.refund_group_total > (b.refund_amount ?? 0) ? " (whole group)" : "";
+  if (b.refund_status === "refunded")
+    return (
+      <div className="refund-box done">
+        ✓ <strong>Refunded {amount}</strong>{group} by {b.refund_by ?? "staff"}{b.refund_at ? `, ${dayFromIso(b.refund_at)}` : ""}
+        {b.refund_ref && <> · ref <span className="mono">{b.refund_ref}</span></>}
+      </div>
+    );
+  if (b.refund_status === "none")
+    return (
+      <div className="refund-box">
+        No refund — {b.refund_note} <span className="muted">({b.refund_by ?? "staff"})</span>{" "}
+        <button type="button" className="link-btn" disabled={busy} onClick={() => run({ action: "refund", id: b.id, refund: "due" })}>Mark refund due</button>
+      </div>
+    );
+  if (b.refund_status !== "due") {
+    if (b.amount <= 0 || !["paid", "for_verification"].includes(b.payment_status)) return null;
+    return (
+      <div className="card-actions">
+        <button type="button" className="btn small secondary" disabled={busy} onClick={() => run({ action: "refund", id: b.id, refund: "due" })}>
+          💸 Mark refund due
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form className="refund-box due" onSubmit={(e) => {
+      e.preventDefault();
+      run({ action: "refund", id: b.id, refund: "refunded", reference: ref });
+    }}>
+      <strong>💸 Refund due: {amount}</strong>{group}
+      <span className="hint">Send it back by {paymentLabel(b.payment_method)}, then record it — the customer is told.</span>
+      {!declining ? (
+        <div className="refund-row">
+          <input aria-label="Refund reference number" placeholder="Reference no. (optional)" maxLength={60} value={ref} onChange={(e) => setRef(e.target.value)} />
+          <button className="btn small" disabled={busy}>✓ Mark refunded</button>
+          <button type="button" className="btn small secondary" onClick={() => setDeclining(true)}>No refund…</button>
+        </div>
+      ) : (
+        <div className="refund-row">
+          <input aria-label="Why no refund" placeholder="Why no refund? e.g. Cancelled less than 12 hours before" maxLength={300} value={note}
+            onChange={(e) => setNote(e.target.value)} />
+          <button type="button" className="btn small secondary danger-text" disabled={busy || note.trim().length < 3}
+            onClick={() => run({ action: "refund", id: b.id, refund: "none", note })}>Save</button>
+          <button type="button" className="btn small secondary" onClick={() => setDeclining(false)}>Back</button>
+        </div>
+      )}
+    </form>
+  );
+}
+
 /** Common reasons, to fill the note with one tap (staff can edit it). */
 const REJECT_REASONS = [
   "The amount on the screenshot doesn't match the booking.",
@@ -414,6 +481,15 @@ export function AdminBookingCard({
           )}
         </div>
       )}
+      {b.player_flags.length > 0 && (
+        <div className="notice player-flags" style={{ marginTop: 10 }}>
+          ⚠ <strong>{flagSummary(b.player_flags)}</strong> in the last 90 days (same phone/email):{" "}
+          {b.player_flags.slice(0, 5).map((f) => `${shortDay(f.date)} (${f.kind === "no_show" ? "no-show" : "not paid in time"})`).join(", ")}
+          {b.player_flags.length > 5 ? ", …" : ""}. Consider asking them to pay before they play.
+        </div>
+      )}
+      {b.no_show && <div className="rejected-note">✕ <strong>No-show</strong> — marked by {b.no_show_by ?? "staff"}.</div>}
+      {b.status === "cancelled" && <RefundBox b={b} busy={busy} run={run} />}
       {b.restored_by && b.status !== "cancelled" && (
         <p className="hint" style={{ margin: "8px 0 0" }}>Restored by {b.restored_by} after an automatic release — it won&apos;t be released again.</p>
       )}
@@ -480,6 +556,16 @@ export function AdminBookingCard({
       {b.status === "cancelled" && manage && (
         <div className="card-actions">
           <button className="btn small secondary danger-text" disabled={busy} onClick={remove}>Delete permanently</button>
+        </div>
+      )}
+      {b.status !== "cancelled" && minutesUntilStart(b.date, b.start_hour, nowAtFacility()) <= 0 && (
+        <div className="card-actions">
+          <button className="btn small secondary" disabled={busy} onClick={() => {
+            if (b.no_show || window.confirm(`Mark ${b.name} as a no-show? Staff will see it when they book again.`))
+              run({ action: "noshow", id: b.id, on: !b.no_show });
+          }}>
+            {b.no_show ? "Undo no-show" : "🚫 Mark no-show"}
+          </button>
         </div>
       )}
       <BookingMessages b={b} onAuthError={onAuthError} />

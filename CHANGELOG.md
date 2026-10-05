@@ -20,6 +20,28 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Holiday notices.** The booking page shows when a day is a holiday (holiday prices — the
+  weekend rates — apply) or when NVBC is closed.
+- **Refund updates.** When NVBC sends your refund for a cancelled booking, you're told by
+  notification or email (if you turned on updates), with the amount and reference.
+- **Staff:** **Reports** tab (owner and managers): for any period — revenue collected, how full
+  the courts were, bookings kept vs made, refunds, money still unpaid, and the share of bookings
+  cancelled by customers or staff, released for non-payment, and no-shows. A weekday × hour chart
+  of how busy the courts are (with a table view), the busiest and quietest times, usage by day of
+  the week, and revenue by sport and by payment method — to help with pricing and staffing.
+- **Staff:** **Refund tracking.** A paid booking cancelled by the customer at least 12 hours ahead,
+  or cancelled by staff, is marked **Refund due**. On its card, record **Refunded** (with the
+  reference — the customer is told) or **No refund** (with a note); you can also mark a refund due
+  by hand. Group bookings are refunded together. Shown as "💸 Refund due" in the Bookings list and
+  as a "refunds due" tile in the Overview; every step is in the booking's History.
+- **Staff:** **No-shows.** Once a booking has started, **Mark no-show** on its card. When the same
+  phone number or email books again, staff see "⚠ 2 no-shows and 1 unpaid booking in the last 90
+  days" (with dates) on the card and in the list. Players don't see it.
+- **Staff:** **Holidays and closures** in Settings: add dates ahead of time, each either open with
+  weekend prices or closed (no online bookings; the booking page shows the day as closed).
+  Closing a day that already has bookings warns you to contact those players.
+- **Database:** Refund status, amount, reference and who recorded it; no-show marks; a normalised
+  contact for matching a player's bookings; and the holidays table.
 - **Waitlist for taken times.** Tap a booked slot and choose **Notify me if it opens** (on your
   phone and/or by email). If any court for that sport frees up for the whole time — for example a
   booking that wasn't paid in time — everyone waiting hears at once, and the first to book gets it.

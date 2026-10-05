@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
-import { cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db, getSettings } from "@/lib/db";
 import { gcashAccounts } from "@/lib/pricing";
 import { readJson, respond, serverError } from "@/lib/http";
@@ -38,6 +38,17 @@ export async function GET(req: NextRequest) {
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (r.payment_proof <> '') AS has_proof, b.pay_by,
               (r.payment_proof = '' AND COALESCE(r.payment_proof_hash, '') <> '') AS proof_deleted, r.paid_amount_reported,
               r.id AS group_root, r.cancel_code AS group_code, b.reschedule_count,
+              b.refund_status, b.refund_amount::float8 AS refund_amount, b.refund_ref, b.refund_note, b.refund_by, b.refund_at,
+              (SELECT COALESCE(sum(g.refund_amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.refund_status = b.refund_status) AS refund_group_total,
+              b.no_show, b.no_show_by,
+              -- The same player (by phone/email) didn't turn up or didn't pay in the last 90 days: warn staff.
+              (SELECT COALESCE(json_agg(json_build_object('date', o.booking_date, 'code', o.cancel_code,
+                        'kind', CASE WHEN o.no_show THEN 'no_show' ELSE 'unpaid' END) ORDER BY o.booking_date DESC), '[]'::json)
+                 FROM bookings o
+                WHERE b.contact_key <> '' AND o.contact_key = b.contact_key AND o.id <> b.id
+                  AND COALESCE(o.group_id, o.id) <> r.id AND o.group_id IS NULL
+                  AND o.booking_date >= $3::date - 90
+                  AND (o.no_show OR (o.status = 'cancelled' AND o.cancelled_by = 'system'))) AS player_flags,
               -- Group bookings: all its courts (still booked), and their total.
               (SELECT count(*)::int FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_size,
               (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_total,
@@ -112,6 +123,8 @@ export async function POST(req: NextRequest) {
     if (body.action === "cancel") return respond(await cancelById(String(body.id ?? ""), me.name));
     if (body.action === "payment")
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name));
+    if (body.action === "refund") return respond(await setRefund(String(body.id ?? ""), body, me.name));
+    if (body.action === "noshow") return respond(await setNoShow(String(body.id ?? ""), body.on, me.name));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "delete" && !canManage(me)) return forbidden();

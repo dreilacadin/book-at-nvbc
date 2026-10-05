@@ -210,3 +210,10 @@ test("gcashAccounts: main account first, then extras; blank numbers skipped", ()
   assert.deepEqual(gcashAccounts({ gcash_name: "", gcash_number: "", gcash_more: [{ name: "", number: "0918" }] }), [{ name: "", number: "0918" }]);
   assert.deepEqual(gcashAccounts({ gcash_name: "x", gcash_number: "" }), []);
 });
+
+test("ratesForDate: holidays use weekend prices", () => {
+  const plan = toSportPricing({ weekendRates: true, weekday: { regular: 400 }, weekend: { regular: 450 } }, { regular: 400, member: 400, coach: 400 });
+  assert.equal(ratesForDate(plan, "2026-12-25").regular, 400); // a Friday
+  assert.equal(ratesForDate(plan, "2026-12-25", true).regular, 450); // Christmas
+  assert.equal(ratesForDate({ ...plan, weekendRates: false }, "2026-12-25", true).regular, 400);
+});

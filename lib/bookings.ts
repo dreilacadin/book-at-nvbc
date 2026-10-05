@@ -26,8 +26,8 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, RELEASE_MINUTES, type Phase } from "./booking-policy";
-import { formatDateLong, formatRange, isHalfHour, publicName, SLOT_HOURS } from "./format";
+import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, refundOnCancel, RELEASE_MINUTES, type Phase } from "./booking-policy";
+import { formatDateLong, formatRange, halfHours, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { notifyStaff, pushConfig } from "./notify";
@@ -37,6 +37,7 @@ import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-hist
 import { describeChanges, type BookingFields } from "./booking-changes";
 import { scheduleWaitlistCheck } from "./waitlist";
 import { allActivities, BOOKING_DEFAULT_SPORT, courtAllowed, isActivity, isSport, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
+import { holidayOn } from "./holidays";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
 /** "🏸 Badminton Court 2 · Wed, Oct 1 · 9:00 AM – 10:00 AM" — for staff notifications. */
@@ -132,6 +133,7 @@ export async function getAvailability(date: string, requestedSport?: string) {
   await releaseUnpaidBookings();
   const settings = await getSettings();
   const today = nowAtFacility();
+  const holiday = await holidayOn(date);
   const [allCourts, taken, blocks] = await Promise.all([
     db().query<{ id: number; name: string; sport: Sport; notes: string }>(
       `SELECT id, name, sport, notes FROM courts WHERE is_active ORDER BY sort_order, id`
@@ -178,9 +180,10 @@ export async function getAvailability(date: string, requestedSport?: string) {
     announcement: settings.announcement,
     // Public pricing info. The member/coach codes themselves are never sent.
     pricing: {
-      rates: ratesForDate(settings.rate_plans[sport], date),
+      rates: ratesForDate(settings.rate_plans[sport], date, !!holiday),
       rateTypes: rateTypesFor(settings.rate_plans[sport]),
-      weekend: settings.rate_plans[sport].weekendRates && isWeekend(date),
+      weekend: settings.rate_plans[sport].weekendRates && (!!holiday || isWeekend(date)),
+      holiday: holiday && !holiday.closed ? holiday.name : null, // priced like a weekend
       memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
       coachCodeRequired: settings.coach_code.trim() !== "",
     },
@@ -198,8 +201,12 @@ export async function getAvailability(date: string, requestedSport?: string) {
         name: publicName(r.player_name),
         status: r.status as "pending" | "reserved" | "confirmed",
       })),
+    // A closed holiday: every court is shown as closed, with the holiday's name.
+    closed: holiday?.closed ? holiday.name : null,
     // Reserved times (Open Play, Queueing, …) with their label, so players see why.
-    blocked: [...blockedSlots(blocks, date)]
+    blocked: holiday?.closed
+      ? courts.flatMap((c) => halfHours(settings.open_hour, settings.close_hour - SLOT_HOURS).map((hour) => ({ courtId: c.id, hour, label: `Closed · ${holiday.name}` })))
+      : [...blockedSlots(blocks, date)]
       .map(([key, label]) => {
         const [courtId, hour] = key.split(":").map(Number);
         return { courtId, hour, label };
@@ -405,6 +412,8 @@ export async function createBooking(
   const today = nowAtFacility().date;
 
   if (startHour < 0 || endHour > 24) return fail(400, "Please choose a valid time.");
+  const holiday = await holidayOn(date);
+  if (!admin && holiday?.closed) return fail(400, `NVBC is closed on ${formatDateLong(date)} (${holiday.name}).`);
   if (!admin) {
     // Admins can block any time (tournaments, maintenance); players follow the rules.
     if (date < today) return fail(400, "That date has already passed.");
@@ -464,7 +473,7 @@ export async function createBooking(
       }
       rateType = "regular"; // staff picked member/coach for a sport without them: charge the standard rate
     }
-    const rates = ratesForDate(plan, date);
+    const rates = ratesForDate(plan, date, !!holiday);
     const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
     // Payment proof (reference number and/or screenshot) may come with the booking, or within the
     // payment window afterwards.
@@ -701,11 +710,14 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
  * (a customer cancelling by code cancels everything booked under it).
  */
 async function cancelWhere(whereSql: string, param: string, by: string, allowStarted: boolean, wholeGroup = false) {
+  // A refund becomes due for paid courts: by the refund rules when the customer cancels online,
+  // always when staff cancel (they can then mark it refunded or "no refund").
+  const byCustomer = by === "player";
   const client = await db().connect();
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      `SELECT id, booking_date, start_hour, status FROM bookings WHERE ${whereSql} FOR UPDATE`,
+      `SELECT id, booking_date, start_hour, status, payment_method, payment_status FROM bookings WHERE ${whereSql} FOR UPDATE`,
       [param]
     );
     const b = rows[0];
@@ -730,6 +742,17 @@ async function cancelWhere(whereSql: string, param: string, by: string, allowSta
       `UPDATE bookings SET status = 'cancelled', cancelled_by = $2, cancelled_at = now(), payment_proof = '' WHERE id = ANY($1::uuid[])`,
       [ids, by]
     );
+    const refundable = byCustomer
+      ? refundOnCancel({ payment_method: b.payment_method, payment_status: b.payment_status, date: b.booking_date, start_hour: Number(b.start_hour) }, nowAtFacility()) === "refundable"
+      : true;
+    if (refundable)
+      await client.query(
+        `UPDATE bookings SET refund_status = 'due', refund_amount = amount
+          WHERE id = ANY($1::uuid[]) AND refund_status IS NULL AND amount > 0
+            AND (payment_status = 'paid' OR ($2 AND payment_status = 'for_verification'))
+            AND ($2 = FALSE OR payment_method <> 'cash')`,
+        [ids, byCustomer]
+      );
     await client.query("COMMIT");
     return { ok: true as const, data: { id: b.id as string, date: b.booking_date as string } };
   } catch (e) {
@@ -1171,4 +1194,56 @@ export async function restoreBooking(id: string, phase: unknown, by: string): Pr
   } finally {
     client.release();
   }
+}
+
+/**
+ * Staff: record a refund for a cancelled, paid booking (the whole group, when it's one):
+ * "refunded" (with the reference), "none" (no refund, with a note), or "due" (owed).
+ */
+export async function setRefund(id: string, input: Record<string, unknown>, by: string): Promise<Result<{ id: string }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  const action = input.refund;
+  if (action !== "refunded" && action !== "none" && action !== "due") return fail(400, "Unknown refund action.");
+  const ref = cleanRef(input.reference);
+  const note = typeof input.note === "string" ? input.note.trim().replace(/\s+/g, " ").slice(0, 300) : "";
+  if (action === "none" && note.length < 3) return fail(400, "Add a short note saying why there's no refund.");
+  const { rows } = await db().query<{ id: string; amount: number; root: string }>(
+    `UPDATE bookings SET
+        refund_status = $2,
+        refund_amount = COALESCE(refund_amount, amount),
+        refund_ref = CASE WHEN $2 = 'refunded' THEN $3 ELSE refund_ref END,
+        refund_note = CASE WHEN $2 = 'none' THEN $4 ELSE refund_note END,
+        refund_by = CASE WHEN $2 = 'due' THEN refund_by ELSE $5 END,
+        refund_at = CASE WHEN $2 = 'due' THEN refund_at ELSE now() END,
+        payment_status = CASE WHEN $2 = 'refunded' THEN 'refunded'
+                              WHEN payment_status = 'refunded' THEN 'paid' ELSE payment_status END
+      WHERE status = 'cancelled' AND amount > 0
+        AND COALESCE(group_id, id) = (SELECT COALESCE(group_id, id) FROM bookings WHERE id = $1)
+        AND (id = $1 OR refund_status IS NOT NULL)
+      RETURNING id, amount::float8 AS amount, COALESCE(group_id, id) AS root`,
+    [id, action, ref, note, by.slice(0, 60) || "Staff"]
+  );
+  if (!rows.length) return fail(400, "Only cancelled bookings with a payment can be refunded.");
+  const total = rows.reduce((n, r) => n + Number(r.amount), 0);
+  const what = action === "refunded" ? `Refunded ${formatPeso(total)}${ref ? ` · ref ${ref}` : ""}`
+    : action === "none" ? `No refund: ${note}` : `Refund due: ${formatPeso(total)}`;
+  await logBooking({ id }, staff(by), "Refund", what + (rows.length > 1 ? ` (${rows.length} courts)` : ""));
+  if (action === "refunded") notifyCustomer(rows[0].root, "refunded");
+  return { ok: true, data: { id } };
+}
+
+/** Staff: mark that the player didn't turn up (or undo it). Shown when the same contact books again. */
+export async function setNoShow(id: string, on: unknown, by: string): Promise<Result<{ id: string }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  const flag = on === true;
+  const { rows } = await db().query<{ booking_date: string; start_hour: number }>(
+    `UPDATE bookings SET no_show = $2, no_show_by = CASE WHEN $2 THEN $3 END, no_show_at = CASE WHEN $2 THEN now() END
+      WHERE id = $1 AND status <> 'cancelled'
+        AND (booking_date + make_interval(mins => (start_hour * 60)::int)) <= (now() AT TIME ZONE 'Asia/Manila') -- it has started
+      RETURNING booking_date, start_hour`,
+    [id, flag, by.slice(0, 60) || "Staff"]
+  );
+  if (!rows[0]) return fail(400, "Only bookings that have started (and weren't cancelled) can be marked as a no-show.");
+  await logBooking({ id }, staff(by), flag ? "No-show" : "No-show undone", flag ? "The player didn't turn up" : "");
+  return { ok: true, data: { id } };
 }
