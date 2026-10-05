@@ -20,6 +20,27 @@ Earlier changes (before this file existed) are in the git history.
 ## [Unreleased]
 
 ### Added
+- **Part-day closures.** When NVBC is closed for only part of a day, the booking page says so
+  (e.g. "Christmas Eve — open 10:00 AM – 5:00 PM only") and just those times are unavailable.
+- **Staff:** **Times for closed days.** Holidays and weekly rest days can now be closed **all
+  day**, **from a time to a time** (e.g. closed 8:00 AM – 3:00 PM every Monday), or **open only
+  from–to** (short hours). Bookings, rescheduling, the waitlist and Reports all follow the times;
+  a partly closed holiday keeps holiday (weekend) prices for its open hours, while weekly rest days
+  keep normal prices.
+- **Database:** Closure times for holidays and weekly rest days.
+- **Closed days show on the booking page.** Days NVBC is closed (weekly rest days and holidays)
+  are marked "Closed" in the date strip.
+- **Staff:** **Split payments.** On a booking's card, **Split payment…** records a payment in parts
+  — e.g. ₱350 cash + ₱100 GCash, with a reference for non-cash parts. The parts must add up to
+  what's due (a group's total for group bookings). The card, Bookings list and export show the
+  split, and Reports count each part under its own payment method.
+- **Staff:** **Weekly rest days** in Settings (e.g. closed every Monday): no online bookings on
+  those days; you're warned if upcoming bookings already fall on them. To open on a rest day for a
+  special occasion, add that date as an open holiday.
+- **Staff:** Holidays can **repeat every year** (e.g. Christmas Day). A specific date always wins
+  over a yearly holiday, which wins over a weekly rest day.
+- **Database:** Split-payment parts on bookings, weekly closed days in settings, and yearly
+  holidays.
 - **Holiday notices.** The booking page shows when a day is a holiday (holiday prices — the
   weekend rates — apply) or when NVBC is closed.
 - **Refund updates.** When NVBC sends your refund for a cancelled booking, you're told by
@@ -212,6 +233,8 @@ Earlier changes (before this file existed) are in the git history.
   been played.
 
 ### Fixed
+- **Staff:** Weekly rest days no longer count as holidays for pricing (they'd have used weekend
+  prices for any open hours).
 - **Staff:** On Android (especially in the installed app), tapping a payment screenshot showed
   "Please log in again" instead of the picture. Screenshots now open full screen right on the page
   (tap or ✕ to close), and links into the admin panel from outside the site keep you logged in.

@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
               b.cancelled_by, b.created_at, b.rate_type, b.hourly_rate, b.discount_pct, b.amount,
               b.payment_method, b.payment_status, b.payment_ref, b.paid_at, (r.payment_proof <> '') AS has_proof, b.pay_by,
               (r.payment_proof = '' AND COALESCE(r.payment_proof_hash, '') <> '') AS proof_deleted, r.paid_amount_reported,
-              r.id AS group_root, r.cancel_code AS group_code, b.reschedule_count,
+              r.id AS group_root, r.cancel_code AS group_code, b.reschedule_count, r.payment_splits,
               b.refund_status, b.refund_amount::float8 AS refund_amount, b.refund_ref, b.refund_note, b.refund_by, b.refund_at,
               (SELECT COALESCE(sum(g.refund_amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.refund_status = b.refund_status) AS refund_group_total,
               b.no_show, b.no_show_by,
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
     const body = await readJson(req);
     if (body.action === "cancel") return respond(await cancelById(String(body.id ?? ""), me.name));
     if (body.action === "payment")
-      return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name));
+      return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name, body.splits));
     if (body.action === "refund") return respond(await setRefund(String(body.id ?? ""), body, me.name));
     if (body.action === "noshow") return respond(await setNoShow(String(body.id ?? ""), body.on, me.name));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));

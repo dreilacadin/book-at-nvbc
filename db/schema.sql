@@ -570,3 +570,25 @@ CREATE TABLE IF NOT EXISTS holidays (
   created_by   TEXT NOT NULL DEFAULT '',
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- v26: split payments, recurring closures ----------------------------------------------------
+-- A payment staff recorded in parts (e.g. ₱350 cash + ₱100 GCash): [{"method": "cash", "amount": 350,
+-- "reference": ""}, ...], on the booking with the code (for a group, covering all its courts).
+-- payment_method then holds the biggest part's method.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_splits JSONB;
+-- Weekdays closed every week (0 = Sunday … 6 = Saturday), e.g. a weekly rest day.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS closed_weekdays INT[] NOT NULL DEFAULT '{}';
+-- Holidays that come back on the same date every year (e.g. Christmas Day).
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS yearly BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- v27: closures for part of a day ------------------------------------------------------------
+-- hours_mode: 'all' (closed all day), 'closed' (closed from_hour–to_hour) or 'open' (open only
+-- from_hour–to_hour). Only used when the holiday is closed.
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS hours_mode TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE holidays DROP CONSTRAINT IF EXISTS holidays_hours_mode_check;
+ALTER TABLE holidays ADD CONSTRAINT holidays_hours_mode_check CHECK (hours_mode IN ('all', 'closed', 'open'));
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS from_hour NUMERIC(4,1);
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS to_hour NUMERIC(4,1);
+-- The same for weekly rest days, by weekday: {"1": {"mode": "closed", "from": 8, "to": 15}}.
+-- A closed weekday without an entry is closed all day.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS weekly_closure_hours JSONB NOT NULL DEFAULT '{}'::jsonb;

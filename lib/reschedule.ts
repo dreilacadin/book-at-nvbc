@@ -9,6 +9,7 @@ import { computePrice, rateFor, ratesForDate, type RateType } from "./pricing";
 import { courtAllowed, sportEmoji, sportLabel } from "./sports";
 import { addDays, daysBetween, isValidDate, nowAtFacility } from "./time";
 import { holidayOn } from "./holidays";
+import { closedAllDay, closedRanges, closureTimeText, overlapsClosure } from "./closures";
 import { scheduleWaitlistCheck } from "./waitlist";
 
 // Customers moving their own booking (My booking → Change time): to another free court or time of
@@ -74,8 +75,10 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
   const date = rawDate;
   const hours = b.end_hour - b.start_hour;
   const holiday = await holidayOn(date);
-  if (holiday?.closed) return { ok: true as const, data: { ...base, options: [], note: `NVBC is closed that day (${holiday.name}).` } };
-  if (!samePrice(b, settings, date, !!holiday))
+  const closedTimes = closedRanges(holiday, 0, 24);
+  if (closedAllDay(holiday, settings.open_hour, settings.close_hour))
+    return { ok: true as const, data: { ...base, options: [], note: `NVBC is closed that day (${holiday!.name}).` } };
+  if (!samePrice(b, settings, date, holiday?.kind === "holiday"))
     return { ok: true as const, data: { ...base, options: [], note: "Prices are different on this day, so your booking can't be moved to it online." } };
 
   const [courts, taken, blocks] = await Promise.all([
@@ -94,6 +97,7 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
       if (minutesUntilStart(date, start, today) <= RELEASE_MINUTES) continue;
       if (halfHours(start, start + hours - SLOT_HOURS).some((h) => busy.has(`${c.id}:${h}`))) continue;
       if (findBlockConflict(blocks, c.id, date, start, start + hours)) continue;
+      if (overlapsClosure(closedTimes, start, start + hours)) continue; // closed for part of the day
       options.push({ courtId: c.id, courtName: c.name, start });
     }
   }
@@ -127,8 +131,9 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
     return fail(400, "Please choose one of the available times.");
   if (minutesUntilStart(date, start, today) <= RELEASE_MINUTES) return fail(400, "That time is about to start — please pick a later one.");
   const holiday = await holidayOn(date);
-  if (holiday?.closed) return fail(400, `NVBC is closed that day (${holiday.name}).`);
-  if (!samePrice(b, settings, date, !!holiday)) return fail(400, "That day has different prices, so the booking can't be moved there online.");
+  if (overlapsClosure(closedRanges(holiday, 0, 24), start, start + hours))
+    return fail(400, `NVBC is closed then (${holiday!.name}: ${closureTimeText(holiday!)}).`);
+  if (!samePrice(b, settings, date, holiday?.kind === "holiday")) return fail(400, "That day has different prices, so the booking can't be moved there online.");
   if (b.rate_type === "member" && b.membership_expires && b.membership_expires < date)
     return fail(400, "Your membership ends before that date, so the member rate can't be used then.");
 

@@ -276,7 +276,7 @@ function BookingRow({
         <span className="bk-main">
           <strong className="bk-name">{b.name}</strong>
           <span className="bk-sub">
-            {showSport ? `${sportEmoji(b.sport)} ` : ""}{b.court_name} · {formatPeso(b.amount)} · {paymentLabel(b.payment_method)}
+            {showSport ? `${sportEmoji(b.sport)} ` : ""}{b.court_name} · {formatPeso(b.amount)} · {b.payment_splits ? "Split" : paymentLabel(b.payment_method)}
             {b.payment_status !== "unpaid" ? ` · ${paymentStatusLabel(b.payment_status)}` : ""}
           </span>
           {flags.length > 0 && <span className="bk-flags">{flags.join(" · ")}</span>}

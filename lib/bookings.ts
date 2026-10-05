@@ -37,7 +37,8 @@ import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-hist
 import { describeChanges, type BookingFields } from "./booking-changes";
 import { scheduleWaitlistCheck } from "./waitlist";
 import { allActivities, BOOKING_DEFAULT_SPORT, courtAllowed, isActivity, isSport, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
-import { holidayOn } from "./holidays";
+import { holidayOn, holidaysBetween } from "./holidays";
+import { closedAllDay, closedRanges, closureTimeText, overlapsClosure } from "./closures";
 import { addDays, daysBetween, isPastSlot, isValidDate, nowAtFacility } from "./time";
 
 /** "🏸 Badminton Court 2 · Wed, Oct 1 · 9:00 AM – 10:00 AM" — for staff notifications. */
@@ -164,6 +165,7 @@ export async function getAvailability(date: string, requestedSport?: string) {
       sharedFrom: courtSport !== sport ? courtSport : null,
     }));
   const courtIds = new Set(courts.map((c) => c.id));
+  const closedTimes = closedRanges(holiday, settings.open_hour, settings.close_hour);
   return {
     sport,
     sports,
@@ -180,10 +182,11 @@ export async function getAvailability(date: string, requestedSport?: string) {
     announcement: settings.announcement,
     // Public pricing info. The member/coach codes themselves are never sent.
     pricing: {
-      rates: ratesForDate(settings.rate_plans[sport], date, !!holiday),
+      rates: ratesForDate(settings.rate_plans[sport], date, holiday?.kind === "holiday"),
       rateTypes: rateTypesFor(settings.rate_plans[sport]),
-      weekend: settings.rate_plans[sport].weekendRates && (!!holiday || isWeekend(date)),
-      holiday: holiday && !holiday.closed ? holiday.name : null, // priced like a weekend
+      weekend: settings.rate_plans[sport].weekendRates && (holiday?.kind === "holiday" || isWeekend(date)),
+      // A holiday (open, or only partly closed) is priced like a weekend.
+      holiday: holiday?.kind === "holiday" && !closedAllDay(holiday, settings.open_hour, settings.close_hour) ? holiday.name : null,
       memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
       coachCodeRequired: settings.coach_code.trim() !== "",
     },
@@ -201,17 +204,26 @@ export async function getAvailability(date: string, requestedSport?: string) {
         name: publicName(r.player_name),
         status: r.status as "pending" | "reserved" | "confirmed",
       })),
-    // A closed holiday: every court is shown as closed, with the holiday's name.
-    closed: holiday?.closed ? holiday.name : null,
-    // Reserved times (Open Play, Queueing, …) with their label, so players see why.
-    blocked: holiday?.closed
-      ? courts.flatMap((c) => halfHours(settings.open_hour, settings.close_hour - SLOT_HOURS).map((hour) => ({ courtId: c.id, hour, label: `Closed · ${holiday.name}` })))
-      : [...blockedSlots(blocks, date)]
-      .map(([key, label]) => {
-        const [courtId, hour] = key.split(":").map(Number);
-        return { courtId, hour, label };
-      })
-      .filter((b) => courtIds.has(b.courtId)),
+    // Closed (all day or part of it): "Christmas Eve — open 8:00 AM – 3:00 PM only".
+    closed: closedTimes.length ? `${holiday!.name} — ${closureTimeText(holiday!)}` : null,
+    // Days closed all day in the booking window (holidays, weekly rest days), for the date strip.
+    closedDates: (await holidaysBetween(today.date, addDays(today.date, settings.booking_window_days)))
+      .filter((h) => closedAllDay(h, settings.open_hour, settings.close_hour))
+      .map((h) => h.date),
+    // Closed times, then reserved times (Open Play, Queueing, …) with their label, so players see why.
+    blocked: [
+      ...courts.flatMap((c) =>
+        halfHours(settings.open_hour, settings.close_hour - SLOT_HOURS)
+          .filter((hour) => overlapsClosure(closedTimes, hour, hour + SLOT_HOURS))
+          .map((hour) => ({ courtId: c.id, hour, label: `Closed · ${holiday!.name}` }))
+      ),
+      ...[...blockedSlots(blocks, date)]
+        .map(([key, label]) => {
+          const [courtId, hour] = key.split(":").map(Number);
+          return { courtId, hour, label };
+        })
+        .filter((b) => courtIds.has(b.courtId) && !overlapsClosure(closedTimes, b.hour, b.hour + SLOT_HOURS)),
+    ],
   };
 }
 
@@ -413,7 +425,13 @@ export async function createBooking(
 
   if (startHour < 0 || endHour > 24) return fail(400, "Please choose a valid time.");
   const holiday = await holidayOn(date);
-  if (!admin && holiday?.closed) return fail(400, `NVBC is closed on ${formatDateLong(date)} (${holiday.name}).`);
+  if (!admin && holiday?.closed) {
+    const times = closedRanges(holiday, 0, 24);
+    if (overlapsClosure(times, startHour, startHour + hours))
+      return fail(400, holiday.mode === "all"
+        ? `NVBC is closed on ${formatDateLong(date)} (${holiday.name}).`
+        : `NVBC is closed for part of ${formatDateLong(date)} (${holiday.name}: ${closureTimeText(holiday)}). Please pick another time.`);
+  }
   if (!admin) {
     // Admins can block any time (tournaments, maintenance); players follow the rules.
     if (date < today) return fail(400, "That date has already passed.");
@@ -473,7 +491,7 @@ export async function createBooking(
       }
       rateType = "regular"; // staff picked member/coach for a sport without them: charge the standard rate
     }
-    const rates = ratesForDate(plan, date, !!holiday);
+    const rates = ratesForDate(plan, date, holiday?.kind === "holiday");
     const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
     // Payment proof (reference number and/or screenshot) may come with the booking, or within the
     // payment window afterwards.
@@ -889,11 +907,37 @@ export async function setPaymentStatus(
   method?: unknown,
   ref?: unknown,
   note?: unknown,
-  by = "admin"
+  by = "admin",
+  rawSplits?: unknown // staff only: a payment in parts, e.g. [{ method: "cash", amount: 350 }, { method: "gcash", amount: 100, reference }]
 ): Promise<Result<{ id: string; status: BookingStatus }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   if (!isPaymentStatus(status)) return fail(400, "Unknown payment status.");
   if (status === "rejected") return rejectPayment(id, note, by);
+  // Split payment: every part valid, and together exactly what's due (a group's total for a group).
+  let splits: { method: PaymentMethod; amount: number; reference: string }[] | null = null;
+  if (rawSplits !== undefined && rawSplits !== null) {
+    if (status !== "paid") return fail(400, "A split payment can only be recorded as Paid.");
+    if (!Array.isArray(rawSplits) || rawSplits.length < 2 || rawSplits.length > 4)
+      return fail(400, "A split payment has 2 to 4 parts.");
+    splits = [];
+    for (const p of rawSplits as Record<string, unknown>[]) {
+      const amount = Math.round(Number(p?.amount) * 100) / 100;
+      if (!isPaymentMethod(p?.method)) return fail(400, "Choose how each part was paid.");
+      if (!Number.isFinite(amount) || amount <= 0) return fail(400, "Enter an amount for each part.");
+      splits.push({ method: p.method, amount, reference: p.method === "cash" ? "" : cleanRef(p.reference) });
+    }
+    const { rows: due } = await db().query<{ total: number }>(
+      `SELECT COALESCE(sum(amount), 0)::float8 AS total FROM bookings
+        WHERE COALESCE(group_id, id) = (SELECT COALESCE(group_id, id) FROM bookings WHERE id = $1) AND (status <> 'cancelled' OR id = $1)`,
+      [id]
+    );
+    const total = splits.reduce((n, p) => n + p.amount, 0);
+    if (Math.abs(total - Number(due[0]?.total ?? 0)) >= 0.01)
+      return fail(400, `The parts add up to ${formatPeso(total)}, but ${formatPeso(Number(due[0]?.total ?? 0))} is due.`);
+    // The biggest part is the booking's payment method; the references are kept together.
+    method = [...splits].sort((a, b) => b.amount - a.amount)[0].method;
+    ref = splits.map((p) => p.reference).filter(Boolean).join(" / ");
+  }
   if (method !== undefined && !isPaymentMethod(method)) return fail(400, "Unknown payment method.");
   const { rows } = await db().query(
     `UPDATE bookings SET
@@ -903,6 +947,7 @@ export async function setPaymentStatus(
         paid_at = CASE WHEN $2 = 'paid' THEN COALESCE(paid_at, now()) ELSE NULL END,
         -- Checked: the screenshot isn't needed any more (its fingerprint and the reference stay).
         payment_proof = CASE WHEN $2 IN ('paid', 'waived', 'refunded') THEN '' ELSE payment_proof END,
+        payment_splits = NULL, -- set again below for a split payment
         pay_by = NULL, -- staff handle the payment from here: no online payment window
         -- Status follows the payment (see activeBookingStatus); cancelled stays cancelled.
         status = CASE
@@ -920,11 +965,13 @@ export async function setPaymentStatus(
   );
   const r = rows.find((x) => x.id === id);
   if (!r) return fail(404, "Booking not found.");
+  if (splits) await db().query(`UPDATE bookings SET payment_splits = $2::jsonb WHERE id = $1`, [r.root, JSON.stringify(splits)]);
   const changes = [
     r.old_status !== status ? `${paymentStatusLabel(r.old_status)} → ${paymentStatusLabel(status)}` : "",
     r.old_method !== r.payment_method ? `method ${paymentLabel(r.old_method)} → ${paymentLabel(r.payment_method)}` : "",
     r.old_ref !== r.payment_ref ? `reference “${r.old_ref}” → “${r.payment_ref}”` : "",
   ].filter(Boolean);
+  if (splits) changes.push(`split: ${splits.map((p) => `${paymentLabel(p.method)} ${formatPeso(p.amount)}${p.reference ? ` (ref ${p.reference})` : ""}`).join(" + ")}`);
   const group = rows.length > 1 ? ` (all ${rows.length} courts of the group)` : "";
   if (changes.length) await logBooking({ id }, staff(by), "Payment status", changes.join(" · ") + group);
   const settled = (s: string) => s === "paid" || s === "waived";

@@ -1,5 +1,6 @@
 import { Pool, types } from "pg";
 import { toSportPricing, type GcashAccount, type SportPricing } from "./pricing";
+import type { ClosureHours } from "./closures";
 import { ACTIVITY_ID, isActivity, isSport, setCustomActivities, SPORTS, type ActivityDef } from "./sports";
 
 // Return DATE columns as plain "YYYY-MM-DD" strings instead of JS Dates,
@@ -82,13 +83,15 @@ export type Settings = {
   activity_courts: Record<string, number[]>; // activity → extra courts it can be booked on
   reschedule_hours: number; // customers can move a booking up to this many hours before it starts
   reschedule_max: number; // ... this many times (0 = not allowed)
+  closed_weekdays: number[]; // closed every week (0 = Sunday … 6 = Saturday)
+  weekly_closure_hours: Record<string, ClosureHours>; // weekday → part-day closure (missing = all day)
 };
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
   booking_window_days, announcement, rate_plans, hourly_rates, member_rates, coach_rates,
   member_code, coach_code, payment_methods, gcash_name, gcash_number, gcash_more, bpi_account_name,
   bpi_account_number, qrph_image, payment_note, membership_fee_student, membership_fee_adult,
-  activities, activity_courts, reschedule_hours, reschedule_max`;
+  activities, activity_courts, reschedule_hours, reschedule_max, closed_weekdays, weekly_closure_hours`;
 
 /** Full settings, including staff-only values. Never send this object to the public as-is. */
 export async function getSettings(): Promise<Settings> {
@@ -119,5 +122,7 @@ export async function getSettings(): Promise<Settings> {
   ]);
   s.reschedule_hours = num(s.reschedule_hours, 12);
   s.reschedule_max = num(s.reschedule_max, 1);
+  s.closed_weekdays = (s.closed_weekdays ?? []).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+  s.weekly_closure_hours = s.weekly_closure_hours && typeof s.weekly_closure_hours === "object" ? s.weekly_closure_hours : {};
   return s;
 }

@@ -249,6 +249,64 @@ function RefundBox({ b, busy, run }: { b: AdminBooking; busy: boolean; run: (bod
   );
 }
 
+type SplitPart = { method: PaymentMethod; amount: string; reference: string };
+
+/** Staff: a payment in parts (e.g. ₱350 cash + ₱100 GCash). The parts must add up to what's due. */
+function SplitPayment({ due, first, busy, onCancel, onConfirm }: {
+  due: number; first: PaymentMethod; busy: boolean; onCancel: () => void;
+  onConfirm: (splits: { method: PaymentMethod; amount: number; reference: string }[]) => void;
+}) {
+  const other: PaymentMethod = first === "cash" ? "gcash" : "cash";
+  const [parts, setParts] = useState<SplitPart[]>([
+    { method: "cash", amount: "", reference: "" },
+    { method: first === "cash" ? other : first, amount: "", reference: "" },
+  ]);
+  const amounts = parts.map((p) => Number(p.amount));
+  const total = Math.round(amounts.reduce((n, a) => n + (Number.isFinite(a) ? a : 0), 0) * 100) / 100;
+  const left = Math.round((due - total) * 100) / 100;
+  const ok = parts.every((p, i) => p.amount.trim() !== "" && amounts[i] > 0) && Math.abs(left) < 0.01;
+  const update = (i: number, patch: Partial<SplitPart>) => setParts(parts.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  return (
+    <div className="split-box">
+      <strong>Split payment · {formatPeso(due)} due</strong>
+      {parts.map((p, i) => (
+        <div key={i} className="split-row">
+          <select aria-label={`Part ${i + 1} paid by`} value={p.method} onChange={(e) => update(i, { method: e.target.value as PaymentMethod })}>
+            {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          <input aria-label={`Part ${i + 1} amount`} inputMode="decimal" placeholder={i === parts.length - 1 && left > 0 ? String(left) : "₱"}
+            value={p.amount} onChange={(e) => update(i, { amount: e.target.value.replace(/[^\d.]/g, "") })}
+            onFocus={() => { if (!p.amount && i === parts.length - 1 && left > 0) update(i, { amount: String(left) }); }} />
+          {p.method !== "cash" ? (
+            <input aria-label={`Part ${i + 1} reference`} placeholder="Reference (optional)" maxLength={60}
+              value={p.reference} onChange={(e) => update(i, { reference: e.target.value })} />
+          ) : <span />}
+          {parts.length > 2 && (
+            <button type="button" className="link-btn" onClick={() => setParts(parts.filter((_, j) => j !== i))} aria-label={`Remove part ${i + 1}`}>✕</button>
+          )}
+        </div>
+      ))}
+      <div className={`split-left${Math.abs(left) < 0.01 ? " done" : ""}`}>
+        {Math.abs(left) < 0.01 ? `✓ Adds up to ${formatPeso(due)}` : left > 0 ? `${formatPeso(left)} still to cover` : `${formatPeso(-left)} too much`}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="btn" disabled={busy || !ok}
+          onClick={() => onConfirm(parts.map((p) => ({ method: p.method, amount: Number(p.amount), reference: p.reference })))}>
+          ✓ Confirm split payment
+        </button>
+        {parts.length < 4 && (
+          <button type="button" className="btn secondary" onClick={() => setParts([...parts, { method: "gcash", amount: "", reference: "" }])}>+ Add part</button>
+        )}
+        <button type="button" className="btn secondary" onClick={onCancel}>Back</button>
+      </div>
+    </div>
+  );
+}
+
+/** "Cash ₱350 + GCash ₱100" */
+export const splitText = (splits: NonNullable<AdminBooking["payment_splits"]>) =>
+  splits.map((p) => `${paymentLabel(p.method)} ${formatPeso(p.amount)}`).join(" + ");
+
 /** Common reasons, to fill the note with one tap (staff can edit it). */
 const REJECT_REASONS = [
   "The amount on the screenshot doesn't match the booking.",
@@ -312,6 +370,7 @@ export function AdminBookingCard({
   const [editing, setEditing] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set()); // payment checklist
   const [rejecting, setRejecting] = useState(false);
+  const [splitting, setSplitting] = useState(false); // recording a payment in parts
   const manage = useCanManage();
   const shown = displayStatus(b);
   const verifying = b.status !== "cancelled" && b.payment_status === "for_verification" && hasOnlineProof(b);
@@ -439,7 +498,7 @@ export function AdminBookingCard({
         <div>
           <dt>Payment</dt>
           <dd>
-            {paymentLabel(b.payment_method)} · {paymentStatusLabel(b.payment_status)}
+            {b.payment_splits ? splitText(b.payment_splits) : paymentLabel(b.payment_method)} · {paymentStatusLabel(b.payment_status)}
             {b.payment_ref && <> · <span style={{ fontFamily: "ui-monospace, monospace" }}>{b.payment_ref}</span></>}
             {b.proof_deleted && !b.has_proof && <span className="muted"> · 📷 screenshot checked (not kept)</span>}
             {b.paid_amount_reported !== null && <> · they entered {formatPeso(b.paid_amount_reported)}</>}
@@ -506,12 +565,20 @@ export function AdminBookingCard({
               <button className="btn" disabled={busy} onClick={confirmPayment}>
                 ✓ Payment received — confirm ({formatPeso(b.group_size > 1 ? b.group_total : b.amount)})
               </button>
+              {!splitting && (
+                <button type="button" className="btn secondary" disabled={busy} onClick={() => setSplitting(true)}>Split payment…</button>
+              )}
               {verifying && !rejecting && (
                 <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setRejecting(true)}>
                   ✕ Reject payment…
                 </button>
               )}
             </div>
+          )}
+          {splitting && b.status !== "confirmed" && (
+            <SplitPayment due={b.group_size > 1 ? b.group_total : b.amount} first={method} busy={busy}
+              onCancel={() => setSplitting(false)}
+              onConfirm={(splits) => run({ action: "payment", id: b.id, status: "paid", splits })} />
           )}
           {verifying && rejecting && (
             <RejectPayment b={b} busy={busy} onCancel={() => setRejecting(false)}

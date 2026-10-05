@@ -36,6 +36,7 @@ export type AdminBooking = {
   group_total: number;
   group_courts: string;
   reschedule_count: number;
+  payment_splits: { method: PaymentMethod; amount: number; reference: string }[] | null; // paid in parts (staff)
   refund_status: "due" | "refunded" | "none" | null;
   refund_amount: number | null;
   refund_group_total: number;
@@ -109,6 +110,8 @@ export type Settings = {
   activity_courts: Record<string, number[]>; // sport/activity → extra courts it can be booked on
   reschedule_hours: number;
   reschedule_max: number; // 0 = customers can't reschedule
+  closed_weekdays: number[]; // closed every week (0 = Sunday … 6 = Saturday)
+  weekly_closure_hours: Record<string, { mode: "all" | "closed" | "open"; from: number | null; to: number | null }>;
 };
 
 export async function api<T>(url: string, body?: unknown): Promise<T> {

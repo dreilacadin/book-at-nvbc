@@ -3,6 +3,9 @@ import { canManage, forbidden, getAdmin, unauthorized } from "@/lib/admin-auth";
 import { db, getSettings } from "@/lib/db";
 import { serverError } from "@/lib/http";
 import { daysBetween, isValidDate } from "@/lib/time";
+import { closedRanges, overlapsClosure } from "@/lib/closures";
+import { halfHours, SLOT_HOURS } from "@/lib/format";
+import { holidaysBetween } from "@/lib/holidays";
 
 export const dynamic = "force-dynamic";
 
@@ -57,21 +60,35 @@ export async function GET(req: NextRequest) {
           WHERE b.booking_date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY 2 DESC`,
         range
       ),
+      // Split payments count each part under its own method (they cover the whole group).
       db().query<{ method: string; revenue: number; count: number }>(
-        `SELECT b.payment_method AS method, sum(b.amount)::float8 AS revenue, count(*) FILTER (WHERE b.group_id IS NULL)::int AS count
-           FROM bookings b WHERE b.booking_date BETWEEN $1 AND $2 AND b.payment_status = 'paid'
-          GROUP BY 1 ORDER BY 2 DESC`,
+        `SELECT method, sum(amount)::float8 AS revenue, sum(n)::int AS count FROM (
+           SELECT p->>'method' AS method, (p->>'amount')::numeric AS amount, 1 AS n
+             FROM bookings b, jsonb_array_elements(b.payment_splits) p
+            WHERE b.booking_date BETWEEN $1 AND $2 AND b.payment_status = 'paid' AND b.payment_splits IS NOT NULL
+           UNION ALL
+           SELECT b.payment_method, b.amount, CASE WHEN b.group_id IS NULL THEN 1 ELSE 0 END
+             FROM bookings b LEFT JOIN bookings r ON r.id = b.group_id
+            WHERE b.booking_date BETWEEN $1 AND $2 AND b.payment_status = 'paid'
+              AND b.payment_splits IS NULL AND r.payment_splits IS NULL
+         ) x GROUP BY method ORDER BY 2 DESC`,
         range
       ),
       db().query<{ n: number }>(`SELECT count(*)::int AS n FROM courts WHERE is_active`),
-      db().query<{ d: string }>(`SELECT holiday_date AS d FROM holidays WHERE closed AND holiday_date BETWEEN $1 AND $2`, range),
+      holidaysBetween(from, to),
     ]);
-    // How many of each weekday the range has (closed holidays left out): the capacity for usage %.
-    const closed = new Set(closedDays.rows.map((r) => r.d));
-    const days = [0, 0, 0, 0, 0, 0, 0, 0]; // index 1..7
+    // Capacity for usage %: for each weekday and half-hour, how many days in the range were open
+    // then (closures — all day or part of it, holidays or weekly rest days — left out).
+    const closures = new Map(closedDays.map((h) => [h.date, h]));
+    const days = [0, 0, 0, 0, 0, 0, 0, 0]; // index 1..7: how many of each weekday the range has
+    const open: Record<number, Record<string, number>> = {};
     for (let d = new Date(from + "T00:00:00Z"); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
-      if (closed.has(d.toISOString().slice(0, 10))) continue;
-      days[d.getUTCDay() === 0 ? 7 : d.getUTCDay()]++;
+      const date = d.toISOString().slice(0, 10);
+      const dow = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+      days[dow]++;
+      const shut = closedRanges(closures.get(date) ?? null, settings.open_hour, settings.close_hour);
+      for (const hh of halfHours(settings.open_hour, settings.close_hour - SLOT_HOURS))
+        if (!overlapsClosure(shut, hh, hh + SLOT_HOURS)) (open[dow] ??= {})[String(hh)] = (open[dow]?.[String(hh)] ?? 0) + 1;
     }
     return NextResponse.json(
       {
@@ -79,6 +96,7 @@ export async function GET(req: NextRequest) {
         openHour: settings.open_hour, closeHour: settings.close_hour,
         courts: courts.rows[0].n,
         dayCounts: days,
+        open, // weekday → half-hour → days open then
         totals: totals.rows[0],
         heat: heat.rows,
         bySport: bySport.rows,

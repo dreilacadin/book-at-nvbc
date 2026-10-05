@@ -71,6 +71,7 @@ type Availability = {
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
   blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
   closed: string | null; // closed for a holiday: its name
+  closedDates: string[]; // closed days in the booking window
 };
 
 type GridCell = {
@@ -306,13 +307,14 @@ export default function BookingBoard() {
           return (
             <button
               key={d}
-              className="date-chip"
+              className={`date-chip${data.closedDates.includes(d) ? " closed" : ""}`}
               aria-pressed={d === data.date}
               onClick={() => setDate(d)}
+              aria-label={data.closedDates.includes(d) ? `${f.dow} ${f.day} ${f.month} — closed` : undefined}
             >
               <div className="dow">{d === data.today ? "Today" : f.dow}</div>
               <div className="day">{f.day}</div>
-              <div className="mon">{f.month}</div>
+              <div className="mon">{data.closedDates.includes(d) ? "Closed" : f.month}</div>
             </button>
           );
         })}

@@ -538,6 +538,8 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         </div>
       </fieldset>
 
+      <WeeklyClosures s={s} set={set} />
+
       <HolidaysSettings />
 
       <fieldset>
@@ -815,7 +817,90 @@ function ActivitiesSettings({
   );
 }
 
-type HolidayRow = { date: string; name: string; closed: boolean; created_by: string; bookings: number };
+type HolidayRow = {
+  date: string; name: string; closed: boolean; yearly: boolean; created_by: string; bookings: number;
+  mode: "all" | "closed" | "open"; from: number | null; to: number | null;
+};
+type HoursChoice = { mode: "all" | "closed" | "open"; from: number; to: number };
+
+/** All day / closed from–to / open only from–to, with half-hour times. */
+function ClosureHoursPicker({ value, onChange, label }: { value: HoursChoice; onChange: (v: HoursChoice) => void; label: string }) {
+  const times = Array.from({ length: 49 }, (_, i) => i / 2);
+  return (
+    <span className="closure-hours">
+      <select aria-label={`${label}: hours`} value={value.mode} onChange={(e) => onChange({ ...value, mode: e.target.value as HoursChoice["mode"] })}>
+        <option value="all">All day</option>
+        <option value="closed">Closed from…</option>
+        <option value="open">Open only from…</option>
+      </select>
+      {value.mode !== "all" && (
+        <>
+          <select aria-label={`${label}: from`} value={value.from} onChange={(e) => onChange({ ...value, from: Number(e.target.value) })}>
+            {times.slice(0, -1).map((t) => <option key={t} value={t}>{formatHour(t)}</option>)}
+          </select>
+          <span>to</span>
+          <select aria-label={`${label}: to`} value={value.to} onChange={(e) => onChange({ ...value, to: Number(e.target.value) })}>
+            {times.slice(1).map((t) => <option key={t} value={t}>{formatHour(t)}</option>)}
+          </select>
+        </>
+      )}
+    </span>
+  );
+}
+
+const hoursText = (h: { mode: string; from: number | null; to: number | null }) =>
+  h.mode === "closed" ? `Closed ${formatHour(h.from!)} – ${formatHour(h.to!)}`
+  : h.mode === "open" ? `Open ${formatHour(h.from!)} – ${formatHour(h.to!)} only`
+  : "Closed all day";
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Settings → Weekly rest days: closed every week (saved with "Save settings"). */
+function WeeklyClosures({ s, set }: { s: Settings; set: <K extends keyof Settings>(k: K, v: Settings[K]) => void }) {
+  const [note, setNote] = useState("");
+  async function toggle(d: number, on: boolean) {
+    const next = on ? [...new Set([...s.closed_weekdays, d])].sort() : s.closed_weekdays.filter((x) => x !== d);
+    set("closed_weekdays", next);
+    setNote("");
+    if (!on) return;
+    try {
+      const r = await api<{ bookings: number }>("/api/admin/holidays", { action: "weekday-check", weekdays: [d] });
+      if (r.bookings > 0)
+        setNote(`${r.bookings} upcoming booking(s) fall on ${WEEKDAYS[d]}days. They stay booked — please contact those players.`);
+    } catch {
+      /* the warning is only a help */
+    }
+  }
+  return (
+    <fieldset>
+      <legend>Weekly rest days</legend>
+      <p className="hint" style={{ margin: "0 0 10px" }}>
+        Days NVBC is closed every week — all day, or part of the day (e.g. closed until 3:00 PM). To open on one of these days
+        for a special occasion, add that date below as an open holiday.
+      </p>
+      <div className="weekly-closures">
+        {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+          const on = s.closed_weekdays.includes(d);
+          const h = s.weekly_closure_hours[String(d)];
+          const value: HoursChoice = { mode: h?.mode ?? "all", from: h?.from ?? 8, to: h?.to ?? 12 };
+          return (
+            <div key={d} className="weekly-row">
+              <label>
+                <input type="checkbox" checked={on} onChange={(e) => toggle(d, e.target.checked)} />
+                Closed every {WEEKDAYS[d]}
+              </label>
+              {on && (
+                <ClosureHoursPicker label={`${WEEKDAYS[d]}days`} value={value}
+                  onChange={(v) => set("weekly_closure_hours", { ...s.weekly_closure_hours, [String(d)]: v })} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {note && <div className="notice" style={{ marginTop: 8 }}>{note}</div>}
+    </fieldset>
+  );
+}
 
 /**
  * Settings → Holidays and closures. Saved straight away (not with "Save settings"). Open holidays
@@ -823,7 +908,8 @@ type HolidayRow = { date: string; name: string; closed: boolean; created_by: str
  */
 function HolidaysSettings() {
   const [rows, setRows] = useState<HolidayRow[] | null>(null);
-  const [form, setForm] = useState({ date: "", name: "", closed: false });
+  const [form, setForm] = useState({ date: "", name: "", closed: false, yearly: false });
+  const [hoursChoice, setHoursChoice] = useState<HoursChoice>({ mode: "all", from: 8, to: 12 });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -844,12 +930,13 @@ function HolidaysSettings() {
     }
   }
   async function add() {
-    const saved = await call({ action: "save", ...form });
+    const saved = await call({ action: "save", ...form, ...(form.closed ? hoursChoice : { mode: "all" }) });
     if (!saved) return;
     const row = saved.find((h) => h.date === form.date);
     if (row?.closed && row.bookings > 0)
       window.alert(`${row.bookings} booking(s) are already on ${shortDate(row.date)}. Closing only stops new online bookings — please contact those players (Bookings tab).`);
-    setForm({ date: "", name: "", closed: false });
+    setForm({ date: "", name: "", closed: false, yearly: false });
+    setHoursChoice({ mode: "all", from: 8, to: 12 });
   }
   const today = todayManila();
   return (
@@ -857,16 +944,19 @@ function HolidaysSettings() {
       <legend>Holidays and closures</legend>
       <p className="hint" style={{ margin: "0 0 10px" }}>
         Set these ahead of time. On an <strong>open</strong> holiday, every sport uses its weekend prices; a <strong>closed</strong>{" "}
-        day can&apos;t be booked online. Saved as soon as you add or remove one.
+        day can&apos;t be booked online — all day, or only at the times you set (the other hours are open at holiday prices). Saved as soon as you add or remove one.
       </p>
       {error && <div className="error" style={{ marginBottom: 8 }}>{error}</div>}
       {rows && rows.length > 0 && (
         <div className="holiday-list">
           {rows.map((h) => (
-            <div key={h.date} className={`holiday-row${h.date < today ? " past" : ""}`}>
-              <span className="holiday-date">{shortDate(h.date)}</span>
+            <div key={h.date} className={`holiday-row${!h.yearly && h.date < today ? " past" : ""}`}>
+              <span className="holiday-date">
+                {h.yearly ? new Date(h.date + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: "UTC" }) : shortDate(h.date)}
+              </span>
               <span className="holiday-name">{h.name}</span>
-              <span className={`badge ${h.closed ? "grey" : ""}`}>{h.closed ? "Closed" : "Weekend prices"}</span>
+              <span className={`badge ${h.closed ? "grey" : ""}`}>{h.closed ? hoursText(h) : "Weekend prices"}</span>
+              {h.yearly && <span className="badge">Every year</span>}
               {h.bookings > 0 && <span className="hint">{h.bookings} booking{h.bookings > 1 ? "s" : ""}</span>}
               <button type="button" className="link-btn" disabled={busy}
                 onClick={() => window.confirm(`Remove ${h.name} (${shortDate(h.date)})?`) && call({ action: "remove", date: h.date })}>Remove</button>
@@ -885,6 +975,15 @@ function HolidaysSettings() {
         </select>
         <button type="button" className="btn small" disabled={busy || !form.date || form.name.trim().length < 2} onClick={add}>+ Add</button>
       </div>
+      {form.closed && (
+        <div style={{ marginTop: 8 }}>
+          <ClosureHoursPicker label="Closed day" value={hoursChoice} onChange={setHoursChoice} />
+        </div>
+      )}
+      <label className="check-row" style={{ marginTop: 8 }}>
+        <input type="checkbox" checked={form.yearly} onChange={(e) => setForm({ ...form, yearly: e.target.checked })} />
+        <span>Every year on this date (e.g. Christmas Day)</span>
+      </label>
     </fieldset>
   );
 }

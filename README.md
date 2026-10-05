@@ -125,7 +125,8 @@ Each booking has its own conversation. Customers write from **My booking**; staf
 - **Reports** (owner/managers): pick a period for revenue, court usage (weekday × hour, busiest/quietest times, by weekday), revenue by sport and payment method, refunds, unpaid money, and cancellation / release / no-show rates. Usage is booked court-hours out of open court-hours (closed holidays left out).
 - **Refunds:** paid bookings cancelled by the customer 12+ hours ahead, or by staff, become **Refund due**; staff record **Refunded** (reference; the customer is notified) or **No refund** (note). Group bookings are handled together.
 - **No-shows:** staff mark a started booking as a no-show; the player's no-shows and unpaid (released) bookings from the last 90 days, matched by phone/email, are shown when they book again.
-- **Holidays** (Settings): open holidays use weekend prices; closed days can't be booked online.
+- **Holidays** (Settings): open holidays use weekend prices; closed days can't be booked online. Holidays can repeat every year, and **Weekly rest days** close a weekday every week. Each closure is all day, closed from–to, or open only from–to. A specific date wins over a yearly holiday, which wins over a weekly rest day.
+- **Split payments** (staff only): record a payment in 2–4 parts (method, amount, reference) that add up to what's due; Reports count each part under its own method.
 
 ### Activities, groups, rescheduling and the waitlist
 

@@ -104,7 +104,7 @@ function FilteredList({
                 <span className="bk-main">
                   <strong className="bk-name">{b.name}</strong>
                   <span className="bk-sub">
-                    {sportEmoji(b.sport)} {b.court_name} · {formatPeso(b.amount)} · {paymentLabel(b.payment_method)}
+                    {sportEmoji(b.sport)} {b.court_name} · {formatPeso(b.amount)} · {b.payment_splits ? "Split" : paymentLabel(b.payment_method)}
                     {b.payment_ref ? ` · ref ${b.payment_ref}` : ""}{b.has_proof ? " · 📷 screenshot" : ""}
                     {b.status === "cancelled" && b.cancelled_by && b.cancelled_by !== "system" ? ` · by ${b.cancelled_by}` : ""}
                   </span>

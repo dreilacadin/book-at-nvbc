@@ -10,6 +10,7 @@ import { emailSender, sendEmail } from "./mailer";
 import { setupVapid } from "./notify";
 import { courtAllowed, isActivity, sportEmoji, sportLabel } from "./sports";
 import { holidayOn } from "./holidays";
+import { closedRanges, overlapsClosure } from "./closures";
 import { isValidDate, nowAtFacility } from "./time";
 
 // Waitlist: "tell me if this time opens up". When a booking is cancelled, released or moved,
@@ -38,7 +39,7 @@ export async function joinWaitlist(input: Record<string, unknown>): Promise<{ ok
   if (minutesUntilStart(date, start, nowAtFacility()) <= RELEASE_MINUTES) return fail(400, "That time is about to start.");
   if (email && !isEmail(email)) return fail(400, "Please check your email address.");
   const holiday = await holidayOn(date);
-  if (holiday?.closed) return fail(400, `NVBC is closed that day (${holiday.name}).`);
+  if (overlapsClosure(closedRanges(holiday, 0, 24), start, end)) return fail(400, `NVBC is closed then (${holiday!.name}).`);
   if (!email && !(endpoint && p256dh && auth)) return fail(400, "Turn on notifications or enter an email so we can tell you.");
 
   // A court is already free for that whole time: no need to wait.
@@ -65,12 +66,14 @@ export async function joinWaitlist(input: Record<string, unknown>): Promise<{ ok
 
 /** A court that can be used for `activity` and is free (not booked or reserved) for the whole time, if any. */
 async function freeCourt(activity: string, date: string, start: number, end: number): Promise<number | null> {
-  const [settings, blocks, courts, taken] = await Promise.all([
+  const [settings, blocks, courts, taken, closure] = await Promise.all([
     getSettings(),
     blocksOn(date),
     db().query<{ id: number; sport: string }>(`SELECT id, sport FROM courts WHERE is_active`),
     db().query<{ court_id: number; slot_hour: number }>(`SELECT court_id, slot_hour::float8 AS slot_hour FROM booking_slots WHERE slot_date = $1`, [date]),
+    holidayOn(date),
   ]);
+  if (overlapsClosure(closedRanges(closure, 0, 24), start, end)) return null; // closed then
   const busy = new Set(taken.rows.map((t) => `${t.court_id}:${t.slot_hour}`));
   const c = courts.rows.find((c) => {
     if (!courtAllowed(activity, c, settings.activity_courts)) return false;

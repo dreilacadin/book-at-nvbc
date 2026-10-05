@@ -14,6 +14,7 @@ type Report = {
   closeHour: number;
   courts: number;
   dayCounts: number[]; // index 1 (Mon) … 7 (Sun): how many of that weekday the range has
+  open: Record<string, Record<string, number>>; // weekday → half-hour → days open then (closures left out)
   totals: {
     bookings: number; kept: number; court_hours: number; revenue: number; refunded: number; refunds_due: number; unpaid: number;
     cancelled_customer: number; cancelled_staff: number; released: number; no_shows: number; started: number;
@@ -99,6 +100,7 @@ function ReportBody({ r }: { r: Report }) {
     for (let h = Math.floor(r.openHour); h < r.closeHour; h++) list.push(h);
     return list;
   }, [r.openHour, r.closeHour]);
+  const openAt = (dow: number, hh: number) => r.open[dow]?.[String(hh)] ?? 0;
   const cell = useMemo(() => {
     const m = new Map<string, number>();
     for (const x of r.heat) {
@@ -106,17 +108,17 @@ function ReportBody({ r }: { r: Report }) {
       m.set(key, (m.get(key) ?? 0) + x.n);
     }
     return (dow: number, h: number) => {
-      const cap = r.courts * r.dayCounts[dow] * 2; // half-hours available
+      const cap = r.courts * (openAt(dow, h) + openAt(dow, h + 0.5)); // half-hours available
       return cap > 0 ? (m.get(`${dow}:${h}`) ?? 0) / cap : 0;
     };
   }, [r]);
-  const openHours = r.closeHour - r.openHour;
-  const totalCap = r.courts * openHours * r.dayCounts.reduce((a, b) => a + b, 0);
+  const daySlots = (dow: number) => Object.values(r.open[dow] ?? {}).reduce((a, b) => a + b, 0); // open half-hours
+  const totalCap = (r.courts * [1, 2, 3, 4, 5, 6, 7].reduce((n, d) => n + daySlots(d), 0)) / 2; // court-hours
   const usage = rate(t.court_hours, totalCap);
   const byDay = [1, 2, 3, 4, 5, 6, 7].map((dow) => {
-    const cap = r.courts * openHours * r.dayCounts[dow] * 2;
+    const cap = r.courts * daySlots(dow);
     const booked = r.heat.filter((x) => x.dow === dow).reduce((a, x) => a + x.n, 0);
-    return { dow, value: cap > 0 ? booked / cap : 0, has: r.dayCounts[dow] > 0 };
+    return { dow, value: cap > 0 ? booked / cap : 0, has: cap > 0 };
   });
   const busiest = [1, 2, 3, 4, 5, 6, 7]
     .flatMap((dow) => hours.map((h) => ({ dow, h, v: cell(dow, h) })))
@@ -124,7 +126,7 @@ function ReportBody({ r }: { r: Report }) {
     .sort((a, b) => b.v - a.v)
     .slice(0, 5);
   const quietest = [1, 2, 3, 4, 5, 6, 7]
-    .filter((dow) => r.dayCounts[dow] > 0)
+    .filter((dow) => daySlots(dow) > 0)
     .flatMap((dow) => hours.map((h) => ({ dow, h, v: cell(dow, h) })))
     .sort((a, b) => a.v - b.v)
     .slice(0, 3);
@@ -152,7 +154,7 @@ function ReportBody({ r }: { r: Report }) {
       <section className="card report-card">
         <h2>When courts are busy</h2>
         <p className="hint">Share of courts booked, by weekday and hour — the strongest green is the busiest time in this period. Hover a cell for details.</p>
-        <Heatmap hours={hours} cell={cell} dayCounts={r.dayCounts} />
+        <Heatmap hours={hours} cell={cell} isOpen={(dow, h) => openAt(dow, h) + openAt(dow, h + 0.5) > 0} />
         <div className="report-two">
           <div>
             <h3>Busiest times</h3>
@@ -234,7 +236,7 @@ function Bars({ rows, max }: { rows: { key: string; label: string; value: number
 }
 
 /** Weekday × hour heatmap: one green, from the surface (no bookings) to full (all courts booked). */
-function Heatmap({ hours, cell, dayCounts }: { hours: number[]; cell: (dow: number, h: number) => number; dayCounts: number[] }) {
+function Heatmap({ hours, cell, isOpen }: { hours: number[]; cell: (dow: number, h: number) => number; isOpen: (dow: number, h: number) => boolean }) {
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
   const days = [1, 2, 3, 4, 5, 6, 7];
   // Shades run from empty to the busiest cell, so quiet periods still show their pattern.
@@ -251,7 +253,7 @@ function Heatmap({ hours, cell, dayCounts }: { hours: number[]; cell: (dow: numb
             <span className="heat-day">{DAYS[dow]}</span>
             {hours.map((h) => {
               const v = cell(dow, h);
-              const text = dayCounts[dow] === 0 ? `${DAYS[dow]} ${formatHour(h)}: not in this period` : `${DAYS[dow]} ${formatHour(h)}: ${pct(v)} of courts booked`;
+              const text = !isOpen(dow, h) ? `${DAYS[dow]} ${formatHour(h)}: closed or not in this period` : `${DAYS[dow]} ${formatHour(h)}: ${pct(v)} of courts booked`;
               return (
                 <span key={h} className="heat-cell" aria-label={text}
                   style={{ background: v > 0 && peak > 0 ? `color-mix(in oklab, var(--chart) ${Math.round(12 + (v / peak) * 88)}%, var(--surface))` : undefined }}

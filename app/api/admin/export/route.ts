@@ -24,6 +24,7 @@ type Row = {
   hourly_rate: number;
   amount: number;
   payment_method: string;
+  splits: { method: string; amount: number }[] | null; // paid in parts (for a group: on every court)
   payment_status: string;
   payment_ref: string;
   has_proof: boolean;
@@ -58,8 +59,9 @@ export async function GET(req: NextRequest) {
       `SELECT b.cancel_code AS code, b.booking_date AS date, b.start_hour, b.end_hour, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport,
               b.player_name AS name, b.contact, b.notes, b.rate_type, b.hourly_rate, b.amount, b.payment_method,
               b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.status, b.created_at, b.cancelled_by,
-              mb.member_code, b.phase
+              mb.member_code, b.phase, COALESCE(b.payment_splits, g.payment_splits) AS splits
          FROM bookings b JOIN courts c ON c.id = b.court_id
+         LEFT JOIN bookings g ON g.id = b.group_id
          LEFT JOIN memberships mb ON mb.id = b.membership_id
         WHERE b.booking_date BETWEEN $1 AND $2 AND ($3::text IS NULL OR COALESCE(b.activity, c.sport) = $3)
         ORDER BY b.booking_date, b.start_hour, c.sort_order, c.id`,
@@ -75,7 +77,8 @@ export async function GET(req: NextRequest) {
     const bookingRows: Cell[][] = rows.map((b) => [
       b.date, dow(b.date), time(b.start_hour), time(b.end_hour), b.end_hour - b.start_hour, b.court_name,
       sportLabel(b.sport), b.name, b.contact === "(admin)" ? "" : b.contact, b.notes, rateTypeLabel(b.rate_type), b.member_code ?? "",
-      b.hourly_rate, b.amount, paymentLabel(b.payment_method), paymentStatusLabel(b.payment_status), b.payment_ref,
+      b.hourly_rate, b.amount, b.splits ? `Split: ${b.splits.map((p) => `${paymentLabel(p.method)} ${p.amount}`).join(" + ")}` : paymentLabel(b.payment_method),
+      paymentStatusLabel(b.payment_status), b.payment_ref,
       b.has_proof ? "Yes" : "",
       b.status === "cancelled" && b.cancelled_by === "system" ? "Released" : bookingStatusLabel(b.status),
       (() => { const p = bookingPhase(b, now); return p ? phaseLabel(p) : ""; })(), b.code, manila(new Date(b.created_at)), b.cancelled_by ?? "",

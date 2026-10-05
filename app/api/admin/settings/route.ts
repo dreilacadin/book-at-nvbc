@@ -99,6 +99,26 @@ export async function POST(req: NextRequest) {
     const resMax = b.reschedule_max === undefined ? existing.reschedule_max : Number(b.reschedule_max);
     if (!Number.isInteger(resHours) || resHours < 0 || resHours > 168) return bad("Rescheduling: enter 0–168 hours before the start.");
     if (!Number.isInteger(resMax) || resMax < 0 || resMax > 5) return bad("Rescheduling: allow 0–5 changes per booking.");
+    // Weekly closed days (0 = Sunday … 6 = Saturday). Older admin pages don't send them: keep.
+    const closedWeekdays = Array.isArray(b.closed_weekdays)
+      ? [...new Set((b.closed_weekdays as unknown[]).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
+      : existing.closed_weekdays;
+    if (closedWeekdays.length === 7) return bad("At least one day of the week must be open.");
+    // Part-day weekly closures: { "1": { mode: "closed" | "open", from, to } }; "all" or missing = all day.
+    let weeklyHours = existing.weekly_closure_hours;
+    if (b.weekly_closure_hours !== undefined) {
+      const src = (b.weekly_closure_hours && typeof b.weekly_closure_hours === "object" ? b.weekly_closure_hours : {}) as Record<string, Record<string, unknown>>;
+      weeklyHours = {};
+      for (const d of closedWeekdays) {
+        const h = src[String(d)];
+        if (!h || (h.mode !== "closed" && h.mode !== "open")) continue;
+        const from = Number(h.from);
+        const to = Number(h.to);
+        if (!Number.isInteger(from * 2) || !Number.isInteger(to * 2) || from < 0 || to > 24 || to <= from)
+          return bad("Weekly rest days: the closing time must be after the opening time.");
+        weeklyHours[String(d)] = { mode: h.mode, from, to };
+      }
+    }
 
     // Price plan per sport and activity (₱ per court per hour). Prices that are switched off are
     // still kept (or copied from the ones in use), so switching back on restores them.
@@ -177,7 +197,8 @@ export async function POST(req: NextRequest) {
          gcash_name = $11, gcash_number = $12, bpi_account_name = $13, bpi_account_number = $14,
          qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18,
          gcash_more = $19::jsonb, activities = $20::jsonb, activity_courts = $21::jsonb,
-         reschedule_hours = $22, reschedule_max = $23
+         reschedule_hours = $22, reschedule_max = $23, closed_weekdays = $24::int[],
+         weekly_closure_hours = $25::jsonb
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -186,7 +207,7 @@ export async function POST(req: NextRequest) {
         s.gcash_name, s.gcash_number, s.bpi_account_name, s.bpi_account_number, s.qrph_image, s.payment_note,
         Math.round(feeStudent * 100) / 100, Math.round(feeAdult * 100) / 100,
         JSON.stringify(gcashMore),
-        JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax,
+        JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax, closedWeekdays, JSON.stringify(weeklyHours),
       ]
     );
     return NextResponse.json(await getSettings());
