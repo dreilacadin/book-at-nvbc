@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#0d4f30",
+  themeColor: "#1e274b",
 };
 
 export default function RootLayout({
@@ -32,7 +32,8 @@ export default function RootLayout({
         <header className="site-header">
           <div className="container">
             <Link href="/" className="logo">
-              <span className="logo-ball" aria-hidden="true" />
+              {/* eslint-disable-next-line @next/next/no-img-element -- small static logo */}
+              <img src="/nvbc-logo.png" alt="" width={36} height={36} className="logo-mark" />
               <span>
                 NVBC Courts
                 <small>Badminton &amp; pickleball court reservations</small>

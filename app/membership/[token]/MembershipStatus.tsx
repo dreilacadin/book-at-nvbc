@@ -121,7 +121,8 @@ export default function MembershipStatus({ token }: { token: string }) {
           className={`member-card${v.state === "expired" ? " expired" : ""}`}
         >
           <div className="member-card-head">
-            <span className="logo-ball" aria-hidden="true" />
+            {/* eslint-disable-next-line @next/next/no-img-element -- small static logo */}
+            <img src="/nvbc-logo.png" alt="" width={36} height={36} className="logo-mark" />
             <div>
               <strong>NVBC Member</strong>
               <small>NV Badminton Center</small>

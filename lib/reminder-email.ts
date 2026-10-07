@@ -38,11 +38,11 @@ export function textToHtml(text: string): string {
     .split(/\n{2,}/)
     .map((p) => {
       const safe = escapeHtml(p).replace(/\n/g, "<br>");
-      const linked = safe.replace(/https?:\/\/[^\s<]+/g, (url) => `<a href="${url}" style="color:#146c43">${url}</a>`);
+      const linked = safe.replace(/https?:\/\/[^\s<]+/g, (url) => `<a href="${url}" style="color:#1e274b">${url}</a>`);
       return `<p style="margin:0 0 14px">${linked}</p>`;
     })
     .join("");
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#17231b;max-width:560px">${paras}</div>`;
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#000023;max-width:560px">${paras}</div>`;
 }
 
 export const niceLongDate = (d: string) =>

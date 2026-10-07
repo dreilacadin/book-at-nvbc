@@ -153,7 +153,7 @@ function ReportBody({ r }: { r: Report }) {
 
       <section className="card report-card">
         <h2>When courts are busy</h2>
-        <p className="hint">Share of courts booked, by weekday and hour — the strongest green is the busiest time in this period. Hover a cell for details.</p>
+        <p className="hint">Share of courts booked, by weekday and hour — the strongest colour is the busiest time in this period. Hover a cell for details.</p>
         <Heatmap hours={hours} cell={cell} isOpen={(dow, h) => openAt(dow, h) + openAt(dow, h + 0.5) > 0} />
         <div className="report-two">
           <div>
