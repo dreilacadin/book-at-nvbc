@@ -45,6 +45,13 @@ export type AdminBooking = {
   refund_by: string | null;
   refund_at: string | null;
   no_show: boolean;
+  coach_id: string | null; // booked with this coach's own code
+  coach_name: string | null;
+  coach_code_shared: boolean; // booked with the old shared coach code
+  coach_code_misuse: boolean;
+  coaching_status: "requested" | "accepted" | "declined" | "cancelled" | null; // a customer asked for a coach
+  coaching_note: string;
+  coaching_coach: string | null;
   no_show_by: string | null;
   player_flags: { date: string; code: string; kind: "no_show" | "unpaid" }[]; // this player's last 90 days
   court_sport: string; // the court's own sport (the booking may be for another activity)

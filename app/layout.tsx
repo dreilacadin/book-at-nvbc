@@ -54,7 +54,10 @@ export default function RootLayout({
         <footer className="site-footer">
           <div className="container">
             <span>© NV Badminton Center</span>
-            <Link href="/admin">Staff login</Link>
+            <span className="footer-links">
+              <Link href="/coach">Coach login</Link>
+              <Link href="/admin">Staff login</Link>
+            </span>
           </div>
         </footer>
       </body>

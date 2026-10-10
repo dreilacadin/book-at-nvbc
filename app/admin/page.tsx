@@ -25,6 +25,7 @@ import Notifications from "./Notifications";
 import StaffTab from "./StaffTab";
 import ActivityLog from "./ActivityLog";
 import Reports from "./Reports";
+import CoachesTab from "./CoachesTab";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
@@ -39,7 +40,7 @@ const shortDate = (d: string | null) =>
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "reports" | "courts" | "staff" | "settings">("overview");
+  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "coaches" | "reports" | "courts" | "staff" | "settings">("overview");
   const [bookingsDate, setBookingsDate] = useState(todayManila);
   const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
   // A booking opened from a notification (or /admin?booking=NV-…), shown in a pop-up card.
@@ -52,6 +53,7 @@ export default function AdminPage() {
     const code = q.get("booking");
     if (code) setOpenCode(code);
     if (q.get("tab") === "members") setTab("members");
+    if (q.get("tab") === "coaches") setTab("coaches");
     if (code || q.get("tab")) window.history.replaceState(null, "", "/admin");
   }, []);
 
@@ -100,8 +102,8 @@ export default function AdminPage() {
   const role: AdminRole = me?.role ?? "staff";
   const manage = role !== "staff";
   // Staff accounts don't see Courts (setup) or Settings.
-  const tabs = (["overview", "bookings", "members", "reports", "courts", "staff", "settings"] as const).filter(
-    (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports")
+  const tabs = (["overview", "bookings", "members", "coaches", "reports", "courts", "staff", "settings"] as const).filter(
+    (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports" && t !== "coaches")
   );
 
   return (
@@ -149,6 +151,7 @@ export default function AdminPage() {
       )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
       {tab === "reports" && manage && <Reports onAuthError={onAuthError} />}
+      {tab === "coaches" && manage && <CoachesTab onAuthError={onAuthError} />}
       {tab === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}
       {tab === "staff" && (
         <>

@@ -72,6 +72,10 @@ export default function BookingsTab({
   const [scrollTo, setScrollTo] = useState<string | null>(initialOpen);
   const [filter, setFilter] = useState<Filter>("all");
   const [bySport, setBySport] = useState(false);
+  // Search across every date: booker name, email or contact.
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<AdminBooking[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [, setTick] = useState(0); // re-render every 30 s: In progress / Completed follow the clock
 
   useEffect(() => {
@@ -116,6 +120,25 @@ export default function BookingsTab({
   useEffect(() => {
     load();
   }, [load]);
+
+  const search = useCallback(async (q: string) => {
+    setSearching(true);
+    try {
+      setResults((await api<{ bookings: AdminBooking[] }>(`/api/admin/bookings?q=${encodeURIComponent(q)}`)).bookings);
+      setError("");
+    } catch (e) {
+      onAuthError(e);
+      setError(e instanceof Error ? e.message : "Search failed");
+    } finally {
+      setSearching(false);
+    }
+  }, [onAuthError]);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return setResults(null);
+    const t = setTimeout(() => search(q), 300); // wait until typing pauses
+    return () => clearTimeout(t);
+  }, [query, search]);
 
   // Keep the day fresh (new bookings, payments sent, releases) while the tab is open.
   useEffect(() => {
@@ -167,8 +190,38 @@ export default function BookingsTab({
     </BookingRow>
   );
 
+  const searchRow = (b: AdminBooking) => (
+    <BookingRow key={b.id} b={b} open={open === b.id} onToggle={() => setOpen(open === b.id ? null : b.id)} showSport>
+      <AdminBookingCard key={b.id + b.status + b.payment_status + (b.phase ?? "")} b={b} onAuthError={onAuthError}
+        onOpenDate={(d) => { setQuery(""); setDate(d); }} onChanged={() => search(query.trim())} />
+    </BookingRow>
+  );
+  const byDate = new Map<string, AdminBooking[]>();
+  for (const b of results ?? []) byDate.set(b.date, [...(byDate.get(b.date) ?? []), b]);
+
   return (
     <div className="stack bookings-tab">
+      <div className="bk-search">
+        <input type="search" aria-label="Search bookings" placeholder="🔍 Search by name, email or phone (all dates)"
+          value={query} onChange={(e) => setQuery(e.target.value)} />
+        {query && <button type="button" className="btn small secondary" onClick={() => setQuery("")}>Clear</button>}
+      </div>
+
+      {results !== null ? (
+        <section className="stack">
+          <p className="muted" style={{ margin: 0 }}>
+            {searching ? "Searching…" : `${results.length}${results.length === 100 ? "+" : ""} booking${results.length === 1 ? "" : "s"} for “${query.trim()}” — upcoming first, then the most recent.`}
+          </p>
+          {error && <div className="error">{error}</div>}
+          {[...byDate].map(([d, list]) => (
+            <section key={d} className="bk-group">
+              <h3 className="bk-group-title">{formatDateLong(d)} <span className="muted">· {list.length}</span></h3>
+              <div className="bk-list">{list.map(searchRow)}</div>
+            </section>
+          ))}
+        </section>
+      ) : (
+      <>
       <div className="day-nav">
         <button type="button" className="btn small secondary" aria-label="Previous day" onClick={() => setDate(shiftDate(date, -1))}>‹</button>
         <input type="date" aria-label="Date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
@@ -228,6 +281,8 @@ export default function BookingsTab({
           <div className="bk-list">{gone.map(row)}</div>
         </details>
       )}
+      </>
+      )}
     </div>
   );
 }
@@ -258,6 +313,9 @@ function BookingRow({
   else if (b.status !== "cancelled" && b.payment_status === "rejected") flags.push("✕ Payment rejected — waiting for customer");
   if (release) flags.push(release.replace(/^Released at /, "Releases "));
   if (b.expired_member_id && !b.expired_member_reminded) flags.push("⚠ Membership expired");
+  if (b.coach_name) flags.push(`🧑‍🏫 ${b.coach_name}`);
+  if (b.coach_code_misuse) flags.push("⚠ Coach code misuse");
+  if (b.coaching_status === "requested" || b.coaching_status === "accepted") flags.push(`🎓 Coaching: ${b.coaching_coach} (${b.coaching_status})`);
   if (b.refund_status === "due") flags.push("💸 Refund due");
   if (b.no_show) flags.push("🚫 No-show");
   if (b.player_flags.length) flags.push(`⚠ ${flagSummary(b.player_flags)} (90 days)`);

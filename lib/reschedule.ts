@@ -23,6 +23,7 @@ type Current = {
   id: string; code: string; name: string; court_id: number; court_name: string; activity: string; date: string;
   start_hour: number; end_hour: number; amount: number; rate_type: RateType; status: string; phase: string | null;
   reschedule_count: number; group_id: string | null; members: number; membership_expires: string | null;
+  coaching_status: string | null;
 };
 
 async function current(code: string): Promise<Current | null> {
@@ -30,6 +31,7 @@ async function current(code: string): Promise<Current | null> {
     `SELECT b.id, b.cancel_code AS code, b.player_name AS name, b.court_id, c.name AS court_name,
             COALESCE(b.activity, c.sport) AS activity, b.booking_date AS date, b.start_hour::float8 AS start_hour,
             b.end_hour::float8 AS end_hour, b.amount::float8 AS amount, b.rate_type, b.status, b.phase, b.reschedule_count, b.group_id,
+            b.coaching_status,
             (SELECT count(*)::int FROM bookings g WHERE g.group_id = b.id AND g.status <> 'cancelled') AS members,
             m.expires_on AS membership_expires
        FROM bookings b JOIN courts c ON c.id = b.court_id LEFT JOIN memberships m ON m.id = b.membership_id
@@ -45,6 +47,8 @@ function blocker(b: Current, settings: Awaited<ReturnType<typeof getSettings>>):
   if (b.status === "cancelled") return "This booking is cancelled.";
   if (b.group_id || b.members > 0) return "Group bookings can't be moved online — please message staff or contact the front desk.";
   if (b.phase) return "This booking has already been played.";
+  if (b.coaching_status === "requested" || b.coaching_status === "accepted")
+    return "This booking has a coaching session — please message staff or contact the front desk to change the time.";
   if (b.reschedule_count >= settings.reschedule_max)
     return `This booking has already been moved ${b.reschedule_count === 1 ? "once" : `${b.reschedule_count} times`} — please contact the front desk for more changes.`;
   if (minutesUntilStart(b.date, b.start_hour, nowAtFacility()) < settings.reschedule_hours * 60)

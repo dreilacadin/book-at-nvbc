@@ -6,6 +6,7 @@ import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingQr from "@/components/BookingQr";
 import { BookingHeader, Fold } from "@/components/BookingSummary";
 import AddToCalendar from "@/components/AddToCalendar";
+import BookingCoaching from "@/components/BookingCoaching";
 import RescheduleBooking from "@/components/RescheduleBooking";
 import { setCustomActivities, SPORTS } from "@/lib/sports";
 import PaymentPanel from "@/components/PaymentPanel";
@@ -46,6 +47,8 @@ type Booking = {
   rejectedNote: string; // payment rejected by staff: why
   unreadMessages: number; // new messages from staff
   courts: string[]; // a group booking's courts
+  coaching: { coachId: string; coach: string; status: "requested" | "accepted" | "declined" | "cancelled"; note: string } | null;
+  coachBooking: string | null; // booked with this coach's own code
   activity: { id: string; label: string; emoji: string };
 };
 
@@ -242,6 +245,10 @@ export default function MyBookingPage() {
             />
             {booking.status !== "cancelled" && !booking.phase && (
               <BookingAlerts key={`alerts-${booking.code}`} code={booking.code} />
+            )}
+            {!booking.coachBooking && (booking.coaching || (booking.status !== "cancelled" && booking.canCancel)) && (
+              <BookingCoaching key={`coach-${booking.code}-${booking.coaching?.status ?? ""}`} code={booking.code} coaching={booking.coaching}
+                onChanged={() => lookup(booking.code)} />
             )}
             {booking.status !== "cancelled" && !booking.phase && booking.canCancel && (
               <RescheduleBooking

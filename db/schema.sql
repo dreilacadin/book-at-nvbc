@@ -592,3 +592,86 @@ ALTER TABLE holidays ADD COLUMN IF NOT EXISTS to_hour NUMERIC(4,1);
 -- The same for weekly rest days, by weekday: {"1": {"mode": "closed", "from": 8, "to": 15}}.
 -- A closed weekday without an entry is closed all day.
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS weekly_closure_hours JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- v28: coaches ---------------------------------------------------------------------------------
+-- Coaches apply with the shared sign-up link (settings.coach_signup_key), wait for an owner or
+-- manager to approve them, then log in to the Coaches Dashboard. Each has their own coach code:
+-- booking with it gives the coach rate, fills in the coach's details and allows cash at the desk
+-- (only while the coach is active).
+CREATE TABLE IF NOT EXISTS coaches (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name        TEXT NOT NULL,
+  email            TEXT NOT NULL,
+  mobile           TEXT NOT NULL,
+  phpa_id          TEXT NOT NULL DEFAULT '',     -- Philippine Pickleball / Badminton association ID
+  phpa_photo       TEXT NOT NULL DEFAULT '',     -- photo of the ID card (image data: URL), optional
+  photo            TEXT NOT NULL DEFAULT '',     -- profile photo (image data: URL)
+  sports           TEXT[] NOT NULL DEFAULT '{}', -- what they coach
+  rates            TEXT NOT NULL DEFAULT '',     -- their coaching rates, in their own words
+  availability     JSONB NOT NULL DEFAULT '[]'::jsonb, -- [{"day": 1, "from": 8, "to": 12}, ...] (0 = Sunday)
+  password_hash    TEXT NOT NULL,
+  token_version    INT NOT NULL DEFAULT 0,       -- changes when the password changes: logs out old sessions
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'inactive', 'rejected')),
+  coach_code       TEXT UNIQUE,                  -- set when approved, e.g. COACH-7K3Q-9PXM
+  remind_bookings  BOOLEAN NOT NULL DEFAULT TRUE, -- remind the coach 1 hour before each of their bookings
+  staff_notes      TEXT NOT NULL DEFAULT '',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  approved_at      TIMESTAMPTZ,
+  approved_by      TEXT,
+  status_by        TEXT,
+  last_login_at    TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS coaches_email_idx ON coaches (lower(email));
+-- One-time links: password reset (made by staff).
+CREATE TABLE IF NOT EXISTS coach_tokens (
+  token       TEXT PRIMARY KEY,
+  coach_id    UUID NOT NULL REFERENCES coaches(id) ON DELETE CASCADE,
+  purpose     TEXT NOT NULL CHECK (purpose IN ('reset')),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  used_at     TIMESTAMPTZ
+);
+-- Coaches' devices with push notifications on.
+CREATE TABLE IF NOT EXISTS coach_push_subscriptions (
+  coach_id    UUID NOT NULL REFERENCES coaches(id) ON DELETE CASCADE,
+  endpoint    TEXT NOT NULL,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (coach_id, endpoint)
+);
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS coach_signup_key TEXT NOT NULL DEFAULT encode(gen_random_bytes(12), 'hex');
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_coach_code_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+-- Bookings: made with a coach's own code (coach_id), or a customer asking for a coaching session.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_id UUID REFERENCES coaches(id) ON DELETE SET NULL;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coaching_coach_id UUID REFERENCES coaches(id) ON DELETE SET NULL;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coaching_status TEXT;
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_coaching_status_check;
+ALTER TABLE bookings ADD CONSTRAINT bookings_coaching_status_check
+  CHECK (coaching_status IS NULL OR coaching_status IN ('requested', 'accepted', 'declined', 'cancelled'));
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coaching_note TEXT NOT NULL DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coaching_responded_at TIMESTAMPTZ;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_reminded_at TIMESTAMPTZ; -- the coach's "coming up" reminder
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_remind BOOLEAN;           -- per booking (NULL = the coach's default)
+-- Staff found a coach's code used by someone else.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_code_misuse BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_code_shared BOOLEAN NOT NULL DEFAULT FALSE; -- booked with the old shared code
+CREATE INDEX IF NOT EXISTS bookings_coach_idx ON bookings (coach_id) WHERE coach_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS bookings_coaching_idx ON bookings (coaching_coach_id) WHERE coaching_coach_id IS NOT NULL;
+-- New staff notification kind "coach_applied": on for everyone once.
+UPDATE admin_notify_state SET kinds = array_append(kinds, 'coach_applied')
+ WHERE kinds_version < 4 AND NOT ('coach_applied' = ANY(kinds));
+UPDATE admin_notify_state SET kinds_version = 4 WHERE kinds_version < 4;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 4;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds
+  SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message', 'booking_moved', 'coach_applied'];
+
+-- v29: more about coaches --------------------------------------------------------------------
+-- full_name is the coach's full legal name (for NVBC's records); nickname is what customers and
+-- bookings show (e.g. "Coach Marvin"). gender: man | woman | non_binary | self_describe |
+-- prefer_not_to_say (gender_self holds the self-description). The profile photo is optional.
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS nickname TEXT NOT NULL DEFAULT '';
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS gender TEXT NOT NULL DEFAULT '';
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS gender_self TEXT NOT NULL DEFAULT '';
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS birthday DATE;
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS credentials TEXT NOT NULL DEFAULT ''; -- credentials and tournament achievements
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';

@@ -20,6 +20,51 @@ Improved, Fixed and Removed), and can start with a tag:
 
 Earlier changes (before this file existed) are in the git history.
 
+## [Unreleased]
+
+### Added
+
+- **Request a coaching session.** When booking, tick **Request a coaching
+  session** and choose from the NVBC coaches who are free at that time (with
+  their photo and rates; tap a coach to see their credentials, achievements and
+  bio). The coach accepts or declines and you're told either way; you pay the
+  coach's fee to them directly. You can also ask a coach later — or another
+  coach if one declines — from My booking.
+- **NVBC coaches.** Coaches sign up with NVBC's coach link: full legal name, a
+  nickname (the name shown on bookings, e.g. "Coach Drei"), gender, birthday,
+  contact, PHPA ID and ID photo, coaching rates, the days and times they're
+  available, a password, and optionally a profile photo (cropped to a square
+  after choosing it; it can be added later from the dashboard), credentials &
+  achievements and a bio. Once NVBC approves
+  them, they log in to the **Coaches Dashboard** (Coach login, at the bottom of
+  every page): their upcoming and past bookings with Add to calendar and a
+  1-hour reminder for each, coaching requests to accept or decline,
+  notifications on their phone, and **My coach profile** with their photo, PHPA
+  ID (or a link to add it) and their own **coach code** with a QR code. On their birthday, the
+  dashboard wishes them a happy birthday. While an account is inactive, the
+  coach card is greyed out and marked "Inactive".
+- **Coach codes fill in the coach's details.** Booking at the Coach rate now
+  uses the coach's own code, which fills in (and locks) their name and contact.
+  Inactive coaches' codes don't work.
+- **Staff:** **Coaches tab** (owner and managers): the coach sign-up link (copy,
+  or make a new one), approve or decline applications, set coaches **Active /
+  Inactive** (inactive: no coach rate, no cash at the desk, not offered to
+  customers), give a **new code** (the old one stops working), make a password
+  reset link, staff notes, and each coach's bookings and coaching sessions. A
+  switch keeps the old shared coach code working until your coaches have their
+  own.
+- **Staff:** Bookings made with a coach code say whose code it was; **Flag
+  misuse** marks one used by someone else (counted on the coach). Coaches are
+  told about every booking made with their code, so they can spot misuse too.
+  Coaching requests show on the booking card and in the list.
+- **Staff:** New notification type "New coach applications" (on for everyone).
+- **Staff:** **Search bookings** in the Bookings tab by name, email or phone
+  number, across all dates (upcoming first, then the most recent).
+- **Database:** Coaches (legal name, nickname, gender, birthday, credentials,
+  bio), their reset links and devices; the coach sign-up key and shared-code
+  switch in settings; bookings' coach, coaching request, coach reminders and
+  misuse flag.
+
 ## 2026-10-08
 
 ### Added

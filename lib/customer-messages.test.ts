@@ -54,3 +54,14 @@ test("refunded: amount and reference", () => {
   assert.match(n.body, /₱1,200 \(reference GC 555\)/);
   assert.match(n.text, /refund of ₱1,200/);
 });
+
+test("coaching accepted / declined", () => {
+  const a = customerNotice("coaching_accepted", { ...b, coachName: "Coach Ana", coachNote: "Bring water!" }, { link });
+  assert.equal(a.title, "Coaching session confirmed");
+  assert.match(a.text, /Coach Ana accepted/);
+  assert.match(a.text, /Coach Ana says: “Bring water!”/);
+  assert.match(a.text, /pay your coaching fee to Coach Ana directly/);
+  const d = customerNotice("coaching_declined", { ...b, coachName: "Coach Ana", coachNote: "" }, { link });
+  assert.match(d.body, /Your court booking is still on/);
+  assert.doesNotMatch(d.text, /says:/);
+});

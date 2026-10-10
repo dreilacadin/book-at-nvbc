@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
-import { setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { setCoachMisuse, setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { db, getSettings } from "@/lib/db";
 import { gcashAccounts } from "@/lib/pricing";
 import { readJson, respond, serverError } from "@/lib/http";
@@ -21,6 +21,9 @@ export async function GET(req: NextRequest) {
       { error: /NVBC/i.test(rawCode) ? "That's a member code — check it in the Members tab." : "Booking codes look like NV-ABC123." },
       { status: 400 }
     );
+  // ?q= searches every date by booker name, email or contact (phone numbers ignore spaces / +63).
+  const search = (q.get("q") ?? "").trim().slice(0, 60) || null;
+  const digits = search ? search.replace(/\D/g, "").replace(/^63(?=9\d{9}$)/, "0") : "";
   const date = q.get("date") || nowAtFacility().date;
   const from = q.get("from") || date;
   const to = q.get("to") || from;
@@ -41,6 +44,8 @@ export async function GET(req: NextRequest) {
               b.refund_status, b.refund_amount::float8 AS refund_amount, b.refund_ref, b.refund_note, b.refund_by, b.refund_at,
               (SELECT COALESCE(sum(g.refund_amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.refund_status = b.refund_status) AS refund_group_total,
               b.no_show, b.no_show_by,
+              b.coach_id, (SELECT COALESCE(NULLIF(nickname, ''), full_name) FROM coaches WHERE id = b.coach_id) AS coach_name, b.coach_code_shared, b.coach_code_misuse,
+              r.coaching_status, r.coaching_note, (SELECT COALESCE(NULLIF(nickname, ''), full_name) FROM coaches WHERE id = r.coaching_coach_id) AS coaching_coach,
               -- The same player (by phone/email) didn't turn up or didn't pay in the last 90 days: warn staff.
               (SELECT COALESCE(json_agg(json_build_object('date', o.booking_date, 'code', o.cancel_code,
                         'kind', CASE WHEN o.no_show THEN 'no_show' ELSE 'unpaid' END) ORDER BY o.booking_date DESC), '[]'::json)
@@ -88,9 +93,15 @@ export async function GET(req: NextRequest) {
               AND right(regexp_replace(m.mobile, '\\D', '', 'g'), 10) = right(regexp_replace(b.contact, '\\D', '', 'g'), 10)
             ORDER BY m.expires_on DESC LIMIT 1
          ) ex ON b.status <> 'cancelled'
-        WHERE ($4::text IS NULL AND b.booking_date BETWEEN $1 AND $2) OR b.cancel_code = $4
-        ORDER BY b.booking_date, (b.status = 'cancelled'), (b.cancel_code <> $4) NULLS FIRST, c.sport, b.start_hour, c.sort_order, c.id`,
-      [from, to, nowAtFacility().date, code]
+        WHERE ($4::text IS NULL AND $5::text IS NULL AND b.booking_date BETWEEN $1 AND $2) OR b.cancel_code = $4
+           OR ($5::text IS NOT NULL AND (
+                b.player_name ILIKE '%' || $5 || '%' OR b.customer_email ILIKE '%' || $5 || '%' OR b.contact ILIKE '%' || $5 || '%'
+                OR (length($6) >= 4 AND regexp_replace(b.contact, '\\D', '', 'g') LIKE '%' || $6 || '%')))
+        ORDER BY ${search
+          ? "(b.booking_date < $3), CASE WHEN b.booking_date >= $3 THEN b.booking_date END, b.booking_date DESC, b.start_hour, c.sort_order"
+          : "b.booking_date, (b.status = 'cancelled'), (b.cancel_code <> $4) NULLS FIRST, c.sport, b.start_hour, c.sort_order, c.id"}
+        ${search ? "LIMIT 100" : ""}`,
+      [from, to, nowAtFacility().date, code, search, digits.replace(/^0/, "")]
     );
     // Where online payments should have gone, for staff to compare with the screenshot.
     const s = await getSettings();
@@ -124,6 +135,7 @@ export async function POST(req: NextRequest) {
     if (body.action === "payment")
       return respond(await setPaymentStatus(String(body.id ?? ""), body.status, body.method, body.reference, body.note, me.name, body.splits));
     if (body.action === "refund") return respond(await setRefund(String(body.id ?? ""), body, me.name));
+    if (body.action === "coach-misuse") return respond(await setCoachMisuse(String(body.id ?? ""), body.on, me.name));
     if (body.action === "noshow") return respond(await setNoShow(String(body.id ?? ""), body.on, me.name));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));

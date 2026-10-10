@@ -7,6 +7,7 @@ export const NOTIFY_KINDS = [
   { id: "member_applied", label: "New membership applications", icon: "🪪" },
   { id: "message", label: "Messages from customers", icon: "💬" },
   { id: "booking_moved", label: "Bookings rescheduled by customers", icon: "🔁" },
+  { id: "coach_applied", label: "New coach applications", icon: "🧑‍🏫" },
 ] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]["id"];
 export const ALL_KINDS: NotifyKind[] = NOTIFY_KINDS.map((k) => k.id);
@@ -27,6 +28,7 @@ export type AdminEvent = {
 export function eventLink(e: Pick<AdminEvent, "booking_code" | "membership_id" | "kind">): string {
   if (e.booking_code) return `/admin?booking=${encodeURIComponent(e.booking_code)}`;
   if (e.kind === "member_applied") return "/admin?tab=members";
+  if (e.kind === "coach_applied") return "/admin?tab=coaches";
   return "/admin";
 }
 

@@ -540,6 +540,23 @@ export function AdminBookingCard({
           )}
         </div>
       )}
+      {(b.coach_id || b.coach_code_shared) && (
+        <div className={b.coach_code_misuse ? "rejected-note" : "group-note"}>
+          🧑‍🏫 Booked with {b.coach_id ? <>coach <strong>{b.coach_name}</strong>&apos;s own code</> : <>the <strong>shared coach code</strong></>}
+          {b.coach_code_misuse && <> — <strong>flagged: code used by someone else</strong></>}.{" "}
+          <button type="button" className="link-btn" disabled={busy} onClick={() => {
+            if (b.coach_code_misuse || window.confirm(`Flag this booking: the coach code was used by someone who isn't ${b.coach_name ?? "a coach"}? It's counted on the coach in the Coaches tab. Consider charging the regular rate at the desk${b.coach_id ? " and giving the coach a new code" : ""}.`))
+              run({ action: "coach-misuse", id: b.id, on: !b.coach_code_misuse });
+          }}>{b.coach_code_misuse ? "Remove flag" : "Flag misuse"}</button>
+        </div>
+      )}
+      {b.coaching_status && (
+        <div className="group-note">
+          🎓 Coaching requested with <strong>{b.coaching_coach}</strong> —{" "}
+          {{ requested: "waiting for the coach", accepted: "accepted", declined: "declined by the coach", cancelled: "cancelled" }[b.coaching_status]}
+          {b.coaching_note && <> · “{b.coaching_note}”</>}
+        </div>
+      )}
       {b.player_flags.length > 0 && (
         <div className="notice player-flags" style={{ marginTop: 10 }}>
           ⚠ <strong>{flagSummary(b.player_flags)}</strong> in the last 90 days (same phone/email):{" "}

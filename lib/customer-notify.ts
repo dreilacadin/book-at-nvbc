@@ -26,6 +26,7 @@ type Row = {
   id: string; code: string; name: string; court_name: string; date: string; start_hour: number; end_hour: number;
   amount: number; payment_status: string; payment_method: string; status: string; rejected_note: string;
   pay_by: string | null; customer_email: string; activity: string; refund_ref: string; refund_total: number | null;
+  coach_name: string | null; coaching_note: string;
 };
 // For a group booking (several courts under one code): all its courts still booked, and their total.
 const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name,
@@ -35,7 +36,8 @@ const ROW_SQL = `b.id, b.cancel_code AS code, b.player_name AS name,
   COALESCE((SELECT sum(g.amount) FROM bookings g WHERE (g.id = b.id OR g.group_id = b.id) AND g.status <> 'cancelled'), b.amount) AS amount,
   b.payment_status, b.payment_method, b.status, b.rejected_note, b.pay_by, b.customer_email, b.refund_ref,
   (SELECT sum(g.refund_amount) FROM bookings g WHERE (g.id = b.id OR g.group_id = b.id) AND g.refund_status = 'refunded') AS refund_total,
-  COALESCE(b.activity, c.sport) AS activity`;
+  COALESCE(b.activity, c.sport) AS activity,
+  (SELECT COALESCE(NULLIF(nickname, ''), full_name) FROM coaches WHERE id = b.coaching_coach_id) AS coach_name, b.coaching_note`;
 
 const manilaClock = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", hour12: true });
@@ -64,6 +66,8 @@ async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: stri
     rejectedNote: r.rejected_note,
     refundAmount: r.refund_total === null ? undefined : Number(r.refund_total),
     refundRef: r.refund_ref,
+    coachName: r.coach_name ?? undefined,
+    coachNote: r.coaching_note,
   };
   const n = customerNotice(kind, b, {
     link: siteOrigin() + bookingPath(r.code), payByClock: r.pay_by ? manilaClock(r.pay_by) : undefined, message: extra.message, from: extra.from,
@@ -111,6 +115,14 @@ export function later(job: () => Promise<unknown>) {
   } catch {
     void run(); // outside a request (shouldn't happen): best effort
   }
+}
+
+/** Tells the customer whether the coach they asked for accepted the session. */
+export function notifyCustomerCoaching(bookingId: string, kind: "coaching_accepted" | "coaching_declined"): void {
+  later(async () => {
+    const { rows } = await db().query<Row>(`SELECT ${ROW_SQL} FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`, [bookingId]);
+    if (rows[0]) await deliver(kind, rows[0]);
+  });
 }
 
 /** Tells the customer their payment was confirmed or rejected. */
@@ -163,6 +175,8 @@ export async function sendUpcomingReminders(force = false): Promise<number> {
     [REMINDER_MINUTES]
   );
   for (const r of rows) await deliver("upcoming", r);
+  const { sendCoachReminders } = await import("./coaches");
+  await sendCoachReminders(); // coaches' own reminders, at the same time
   return rows.length;
 }
 

@@ -2,7 +2,7 @@
 // imports), so it can be tested.
 import { formatDateLong, formatRange } from "./format.ts";
 
-export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming" | "message" | "refunded";
+export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming" | "message" | "refunded" | "coaching_accepted" | "coaching_declined";
 
 /** The "coming up" reminder goes out this long before the start. */
 export const REMINDER_MINUTES = 60;
@@ -21,6 +21,8 @@ export type NoticeBooking = {
   rejectedNote: string;
   refundAmount?: number;
   refundRef?: string;
+  coachName?: string;
+  coachNote?: string;
 };
 
 export type CustomerNotice = {
@@ -72,6 +74,28 @@ export function customerNotice(
         `on your booking page — otherwise the slot will be released for other players:\n${opts.link}\n\n` +
         `If you think this is a mistake, please contact the front desk.\n\nNV Badminton Center`,
     };
+  }
+
+  if (kind === "coaching_accepted" || kind === "coaching_declined") {
+    const coach = b.coachName ?? "Your coach";
+    const note = b.coachNote?.trim() ? `\n\n${coach} says: “${b.coachNote.trim()}”` : "";
+    return kind === "coaching_accepted"
+      ? {
+          title: "Coaching session confirmed",
+          body: `${coach} will coach you on ${formatDateLong(b.date)}, ${formatRange(b.startHour, b.endHour)}.`,
+          subject: `${coach} accepted your coaching request (${b.code})`,
+          text:
+            `Hi ${firstName(b.name)},\n\n${coach} accepted your coaching request for:\n\n${where}\nBooking code: ${b.code}${note}\n\n` +
+            `Please pay your coaching fee to ${coach} directly. Your booking: ${opts.link}\n\nNV Badminton Center`,
+        }
+      : {
+          title: "Coaching request declined",
+          body: `${coach} can't coach you on ${formatDateLong(b.date)}. Your court booking is still on.`,
+          subject: `${coach} can't make your coaching session (${b.code})`,
+          text:
+            `Hi ${firstName(b.name)},\n\nSorry — ${coach} can't coach you on ${formatDateLong(b.date)}, ${formatRange(b.startHour, b.endHour)}.${note}\n\n` +
+            `Your court booking is still on. You can ask another coach from your booking page:\n${opts.link}\n\nNV Badminton Center`,
+        };
   }
 
   if (kind === "refunded") {

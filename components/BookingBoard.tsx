@@ -40,6 +40,8 @@ import PaymentPanel from "./PaymentPanel";
 import { AdminBookingCard } from "@/app/admin/BookingLookup";
 import { AuthError, type AdminBooking } from "@/app/admin/shared";
 import { ACTIVITY_ID, setCustomActivities, sportLabel, type ActivityDef } from "@/lib/sports";
+import { normalizeCoachCode } from "@/lib/coach";
+import { CoachChoice, type CoachOption } from "./BookingCoaching";
 import FullScreenLoader from "./FullScreenLoader";
 
 type Availability = {
@@ -542,6 +544,45 @@ function BookingDialog({
   const noWayToPay = hasPrices && price.total > 0 && methodChoices.length === 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
 
+  // A coach's own code: check it and book under the coach's details (filled in and locked).
+  const [coachInfo, setCoachInfo] = useState<{ name: string; mobile: string; email: string } | null>(null);
+  const [coachError, setCoachError] = useState("");
+  useEffect(() => {
+    setCoachError("");
+    if (rateType !== "coach" || !normalizeCoachCode(rateCode)) return setCoachInfo(null);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/coaches/verify-code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: rateCode }) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) { setCoachInfo(null); return setCoachError(j.error || "That coach code isn't right."); }
+        if (j.coach) {
+          setCoachInfo(j.coach);
+          setName(j.coach.name);
+          setContact(j.coach.mobile);
+          setEmail((e) => e || j.coach.email);
+        }
+      } catch {
+        /* checked again when booking */
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [rateCode, rateType]);
+
+  // A regular booking can ask for a coaching session with a coach who's free then.
+  const [wantCoach, setWantCoach] = useState(false);
+  const [coaches, setCoaches] = useState<(CoachOption & { availability: string })[] | null>(null);
+  const [coachingId, setCoachingId] = useState("");
+  useEffect(() => {
+    if (!wantCoach || rateType === "coach") return;
+    setCoaches(null);
+    const qs = new URLSearchParams({ sport: data.sport, date: data.date, start: String(selection.hour), end: String(selection.hour + hours) });
+    fetch(`/api/coaches/available?${qs}`).then((r) => r.json()).then((j) => {
+      setCoaches(j.coaches ?? []);
+      setCoachingId((id) => ((j.coaches ?? []).some((c: { id: string }) => c.id === id) ? id : ""));
+    }).catch(() => setCoaches([]));
+  }, [wantCoach, rateType, data.sport, data.date, selection.hour, hours]);
+  const coachingName = coaches?.find((c) => c.id === coachingId)?.name ?? "";
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -550,6 +591,7 @@ function BookingDialog({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (wantCoach && rateType !== "coach" && !coachingId) return setError("Choose a coach, or untick “Request a coaching session”.");
     setBusy(true);
     setError("");
     try {
@@ -570,6 +612,7 @@ function BookingDialog({
           extraCourtIds: extraIds,
           rateType,
           rateCode: codeRequired ? rateCode : "",
+          coachingCoachId: rateType !== "coach" && wantCoach ? coachingId : "",
           paymentMethod,
         }),
       });
@@ -622,6 +665,9 @@ function BookingDialog({
                 : done.status === "pending" ? "Booking received"
                 : "You're booked! 🎉"}
             </h2>
+            {coachingName && (
+              <div className="notice info" style={{ marginBottom: 10 }}>🎓 Coaching requested with <strong>{coachingName}</strong> — they&apos;ll accept or decline, and you&apos;ll see it on My booking.</div>
+            )}
             <BookingHeader
               b={done}
               extra={done.rateType !== "regular" ? `${rateTypeLabel(done.rateType)} rate · ${formatPeso(done.hourlyRate)}/hour` : undefined}
@@ -737,7 +783,7 @@ function BookingDialog({
                   <input
                     type="text"
                     aria-label={`${rateTypeLabel(rateType)} code`}
-                    placeholder={rateType === "member" ? "Your member code (NVBC-XXXX-XXXX)" : "Coach code (ask the front desk)"}
+                    placeholder={rateType === "member" ? "Your member code (NVBC-XXXX-XXXX)" : "Your coach code (COACH-XXXX-XXXX)"}
                     required
                     autoComplete="off"
                     spellCheck={false}
@@ -745,6 +791,15 @@ function BookingDialog({
                     onChange={(e) => setRateCode(e.target.value)}
                     style={{ marginTop: 8, textTransform: rateType === "member" ? "uppercase" : undefined }}
                   />
+                )}
+                {rateType === "coach" && coachInfo && (
+                  <p className="success" style={{ margin: "8px 0 0" }}>✓ Booking as coach <strong>{coachInfo.name}</strong> — your details are filled in below.</p>
+                )}
+                {rateType === "coach" && coachError && <div className="error" style={{ marginTop: 8 }}>{coachError}</div>}
+                {rateType === "coach" && !coachInfo && (
+                  <p className="hint" style={{ margin: "6px 0 0" }}>
+                    It&apos;s on your <Link href="/coach">Coaches Dashboard</Link>. A coach? <Link href="/coach/login">Log in</Link>.
+                  </p>
                 )}
                 {rateType === "member" && (
                   <p className="hint" style={{ margin: "6px 0 0" }}>
@@ -765,7 +820,7 @@ function BookingDialog({
                 Your name{" "}
                 <span className="hint">— the schedule shows {name.trim() ? `“${publicName(name)}”` : "your first name and last initial"}</span>
               </label>
-              <input id="name" type="text" required minLength={2} maxLength={60} autoComplete="name"
+              <input id="name" type="text" required minLength={2} maxLength={60} autoComplete="name" readOnly={!!coachInfo && rateType === "coach"}
                 value={name} onChange={(e) => setName(e.target.value)} />
             </div>
 
@@ -774,7 +829,7 @@ function BookingDialog({
                 Mobile number <span className="hint">— in case staff need to reach you</span>
               </label>
               <input id="contact" type="tel" required minLength={7} maxLength={60} autoComplete="tel"
-                placeholder="09XX XXX XXXX" value={contact} onChange={(e) => setContact(e.target.value)} />
+                placeholder="09XX XXX XXXX" value={contact} readOnly={!!coachInfo && rateType === "coach"} onChange={(e) => setContact(e.target.value)} />
             </div>
 
             <div className="field">
@@ -784,6 +839,27 @@ function BookingDialog({
               <input id="email" type="email" maxLength={120} autoComplete="email" placeholder="you@example.com"
                 value={email} onChange={(e) => setEmail(e.target.value)} />
             </div>
+
+            {rateType !== "coach" && (
+              <div className="field coaching-pick">
+                <label className="check-row">
+                  <input type="checkbox" checked={wantCoach} onChange={(e) => setWantCoach(e.target.checked)} />
+                  <span><strong>🎓 Request a coaching session</strong> <span className="hint">— a coach joins you on court</span></span>
+                </label>
+                {wantCoach && (
+                  coaches === null ? <p className="hint">Finding coaches who are free then…</p>
+                  : coaches.length === 0 ? <p className="hint">No coaches are available for this time. Try another time, or book without one.</p>
+                  : (
+                    <div className="coach-options" role="radiogroup" aria-label="Choose a coach">
+                      {coaches.map((c) => (
+                        <CoachChoice key={c.id} coach={c} checked={coachingId === c.id} onPick={() => setCoachingId(c.id)} />
+                      ))}
+                      <p className="hint" style={{ margin: 0 }}>The coach accepts or declines — we&apos;ll let you know. You pay the coach&apos;s fee to them directly.</p>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
 
             <div className="field">
               <label htmlFor="notes">Notes <span className="hint">(optional)</span></label>
