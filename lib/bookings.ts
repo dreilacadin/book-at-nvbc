@@ -36,7 +36,7 @@ import { isEmail } from "./customer-messages";
 import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-history";
 import { describeChanges, type BookingFields } from "./booking-changes";
 import { scheduleWaitlistCheck } from "./waitlist";
-import { activeCoachCount, availableCoaches, coachForCode, coachingCancelled, notifyCoachCodeUsed, notifyCoachingRequest, type CodeCoach } from "./coaches";
+import { activeCoachCount, availableCoaches, coachForCode, coachingCancelled, notifyCoachCodeUsed, notifyCoachingRequest, restoreCoaching, type CodeCoach } from "./coaches";
 import { allActivities, BOOKING_DEFAULT_SPORT, courtAllowed, isActivity, isSport, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { holidayOn, holidaysBetween } from "./holidays";
 import { closedAllDay, closedRanges, closureTimeText, overlapsClosure } from "./closures";
@@ -1221,7 +1221,9 @@ export async function setBookingPhase(id: string, phase: unknown, by = "Staff"):
  * booked them since), keeps its payment status, and won't be released for non-payment again.
  * `phase` optionally marks it in progress or completed straight away.
  */
-export async function restoreBooking(id: string, phase: unknown, by: string): Promise<Result<{ id: string; status: BookingStatus }>> {
+export async function restoreBooking(
+  id: string, phase: unknown, by: string
+): Promise<Result<{ id: string; status: BookingStatus; coaching: string | null }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
   if (phase !== null && phase !== undefined && phase !== "in_progress" && phase !== "completed")
     return fail(400, "Unknown progress status.");
@@ -1279,7 +1281,10 @@ export async function restoreBooking(id: string, phase: unknown, by: string): Pr
     );
     await client.query("COMMIT");
     await logBooking({ id }, staff(by), "Restored", `After an automatic release${phase ? `, as ${phaseLabel(phase as Phase)}` : ""}`);
-    return { ok: true, data: { id, status } };
+    // A coaching session cancelled by the release comes back too (unless the coach can't take it now).
+    const c = await restoreCoaching(id, staff(by));
+    const coaching = c.ok ? null : c.status === 400 ? null : c.error;
+    return { ok: true, data: { id, status, coaching } };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     throw e;

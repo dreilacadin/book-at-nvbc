@@ -398,7 +398,9 @@ export function AdminBookingCard({
     setBusy(true);
     setError("");
     try {
-      await api("/api/admin/bookings", body);
+      const r = await api<{ coaching?: string | null }>("/api/admin/bookings", body);
+      // Restored, but its coaching session couldn't come back (the coach is busy or inactive now).
+      if (r && typeof r.coaching === "string") window.alert(`Booking restored. ${r.coaching}`);
       onChanged();
     } catch (e) {
       onAuthError(e);
@@ -555,6 +557,15 @@ export function AdminBookingCard({
           🎓 Coaching requested with <strong>{b.coaching_coach}</strong> —{" "}
           {{ requested: "waiting for the coach", accepted: "accepted", declined: "declined by the coach", cancelled: "cancelled" }[b.coaching_status]}
           {b.coaching_note && <> · “{b.coaching_note}”</>}
+          {b.coaching_status === "cancelled" && b.status !== "cancelled" && (
+            <>
+              {" "}
+              <button type="button" className="link-btn" disabled={busy}
+                onClick={() => window.confirm(`Put ${b.coaching_coach}'s coaching session back on this booking? ${b.coaching_coach} will be told.`) && run({ action: "restore-coaching", id: b.id })}>
+                Put coaching back
+              </button>
+            </>
+          )}
         </div>
       )}
       {b.player_flags.length > 0 && (

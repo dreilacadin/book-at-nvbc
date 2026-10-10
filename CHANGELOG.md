@@ -57,6 +57,10 @@ Earlier changes (before this file existed) are in the git history.
   misuse** marks one used by someone else (counted on the coach). Coaches are
   told about every booking made with their code, so they can spot misuse too.
   Coaching requests show on the booking card and in the list.
+- **Staff:** Restoring a booking that was released automatically also brings back
+  its coaching session (accepted again, or waiting for the coach again), and the
+  coach is told. If the coach is now busy at that time or inactive, you're told
+  why, and **Put coaching back** on the booking card tries again later.
 - **Staff:** New notification type "New coach applications" (on for everyone).
 - **Staff:** **Search bookings** in the Bookings tab by name, email or phone
   number, across all dates (upcoming first, then the most recent).

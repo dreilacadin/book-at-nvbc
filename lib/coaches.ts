@@ -1,5 +1,6 @@
 import { randomBytes, randomInt } from "node:crypto";
 import webpush from "web-push";
+import { logBooking, staff, type Actor } from "./booking-history";
 import { db, getSettings } from "./db";
 import { availableAt, availabilityText, newCoachCode, normalizeCoachCode, validateCoachForm, type AvailabilitySlot, type CoachStatus } from "./coach";
 import { later, siteOrigin } from "./customer-notify";
@@ -304,6 +305,66 @@ export async function coachingCancelled(bookingIds: string[]) {
         }
       )
     );
+}
+
+/**
+ * Puts back a coaching session that was cancelled with its booking, once the booking is active
+ * again (staff restored it after an automatic release). Accepted sessions are accepted again and
+ * requests wait for the coach again — a cancelled session was accepted exactly when it has a
+ * response time (a new request clears it; a decline isn't cancelled). The coach is told.
+ * Refused if the coach is no longer active or has taken something else at that time.
+ */
+export async function restoreCoaching(bookingId: string, by: Actor): Promise<Ok<{ status: "accepted" | "requested"; coach: string }> | Fail> {
+  if (!isId(bookingId)) return fail(400, "Invalid booking.");
+  const { rows } = await db().query<{
+    coach_id: string; coach: string; coach_status: string; was_accepted: boolean; status: string;
+    booking_date: string; start_hour: number; end_hour: number; cancel_code: string; player_name: string;
+  }>(
+    `SELECT b.coaching_coach_id AS coach_id, ${COACH_NAME("c")} AS coach, c.status AS coach_status,
+            b.coaching_responded_at IS NOT NULL AS was_accepted, b.status, b.booking_date,
+            b.start_hour::float8, b.end_hour::float8, b.cancel_code, b.player_name
+       FROM bookings b JOIN coaches c ON c.id = b.coaching_coach_id
+      WHERE b.id = $1 AND b.coaching_status = 'cancelled'`,
+    [bookingId]
+  );
+  const b = rows[0];
+  if (!b) return fail(400, "This booking has no cancelled coaching session.");
+  if (b.status === "cancelled") return fail(400, "Restore the booking first.");
+  if (b.coach_status !== "active") return fail(409, `${b.coach}'s coach account isn't active, so the session can't be put back.`);
+  const clash = await db().query(
+    `SELECT 1 FROM bookings WHERE id <> $1 AND booking_date = $2 AND status <> 'cancelled' AND start_hour < $4 AND end_hour > $3
+        AND (coach_id = $5 OR (coaching_coach_id = $5 AND coaching_status IN ('requested', 'accepted'))) LIMIT 1`,
+    [bookingId, b.booking_date, b.start_hour, b.end_hour, b.coach_id]
+  );
+  if (clash.rows.length) return fail(409, `${b.coach} has another booking or coaching session at that time now, so the session can't be put back.`);
+  const status = b.was_accepted ? "accepted" : "requested";
+  const done = await db().query(
+    `UPDATE bookings SET coaching_status = $2 WHERE id = $1 AND coaching_status = 'cancelled' AND status <> 'cancelled'`,
+    [bookingId, status]
+  );
+  if (!done.rowCount) return fail(409, "This booking changed in the meantime. Please refresh.");
+  await logBooking({ id: bookingId }, by, "Coaching back on", `${b.coach} (${status === "accepted" ? "accepted" : "request waiting for the coach"})`);
+  const when = `${formatDateLong(b.booking_date)}, ${formatRange(b.start_hour, b.end_hour)}`;
+  later(() =>
+    tellCoach(
+      b.coach_id,
+      {
+        title: status === "accepted" ? "Coaching session back on" : "Coaching request is back",
+        body: `${publicName(b.player_name)} · ${formatDateLong(b.booking_date)}`,
+        url: "/coach",
+      },
+      {
+        subject: `${status === "accepted" ? "Coaching session back on" : "Coaching request is back"} — ${formatDateLong(b.booking_date)}`,
+        text:
+          `Hi!\n\nThe booking ${b.cancel_code} (${b.player_name}, ${when}) was restored by NVBC, so ` +
+          (status === "accepted"
+            ? "the coaching session you accepted is back on."
+            : "its coaching request is waiting for your answer again on your Coaches Dashboard.") +
+          `\n\n${siteOrigin()}/coach\n\nNV Badminton Center`,
+      }
+    )
+  );
+  return { ok: true, data: { status, coach: b.coach } };
 }
 
 export type CoachBooking = {

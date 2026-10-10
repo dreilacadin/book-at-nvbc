@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { setCoachMisuse, setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { staff } from "@/lib/booking-history";
+import { restoreCoaching } from "@/lib/coaches";
 import { db, getSettings } from "@/lib/db";
 import { gcashAccounts } from "@/lib/pricing";
 import { readJson, respond, serverError } from "@/lib/http";
@@ -139,6 +141,7 @@ export async function POST(req: NextRequest) {
     if (body.action === "noshow") return respond(await setNoShow(String(body.id ?? ""), body.on, me.name));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
+    if (body.action === "restore-coaching") return respond(await restoreCoaching(String(body.id ?? ""), staff(me.name)));
     if (body.action === "delete" && !canManage(me)) return forbidden();
     if (body.action === "delete") return respond(await deleteCancelledBooking(String(body.id ?? ""), me.name));
     if (body.action === "update") return respond(await updateBooking(String(body.id ?? ""), body, me.name));
