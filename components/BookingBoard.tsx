@@ -68,6 +68,7 @@ type Availability = {
   };
   paymentMethods: PaymentMethod[];
   cashForCoaches: boolean; // cash (at the desk) is only for the coach rate + coach code
+  coach: { name: string; code: string } | null; // a coach logged in on this device
   courts: { id: number; name: string; notes: string; sharedFrom: string | null }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
@@ -236,7 +237,8 @@ export default function BookingBoard() {
 
   const isPast = (h: number) => data.date < data.today || (data.date === data.today && h <= data.currentHour);
   const reservedFor = (courtId: number, h: number) => blockedMap.get(`${courtId}:${h}`)?.label;
-  // Reserved times coaches can book, if this sport has a Coach rate to book them at.
+  // Reserved times coaches can book — only sent when a coach is logged in on this device — if this
+  // sport has a Coach rate to book them at.
   const coachesMay = (courtId: number, h: number) =>
     data.pricing.rateTypes.includes("coach") && !!blockedMap.get(`${courtId}:${h}`)?.coaches;
   const first = slots[0];
@@ -539,8 +541,15 @@ function BookingDialog({
   // A reserved time coaches can book: the Coach rate only, with the coach's own code, paid online.
   const coachOnly = selection.coachOnly ?? null;
   const [rateType, setRateType] = useState<RateType>(coachOnly ? "coach" : "regular");
-  // A member's code is saved on their phone when they open their member page: fill it in.
-  const [rateCode, setRateCode] = useState(() => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? ""));
+  // A member's code is saved on their phone when they open their member page, and a coach logged in
+  // here gets theirs: fill in the one for the chosen rate.
+  const memberCode = () => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? "");
+  const [rateCode, setRateCode] = useState(() => (coachOnly && data.coach ? data.coach.code : memberCode()));
+  const chooseRate = (r: RateType) => {
+    setRateType(r);
+    if (r === "coach" && data.coach) setRateCode(data.coach.code);
+    else if (r === "member") setRateCode((c) => (data.coach && c === data.coach.code ? memberCode() : c || memberCode()));
+  };
   // Unpaid bookings are released RELEASE_MINUTES before the start: too late to book online.
   const startsSoon = minutesUntilStart(data.date, selection.hour, { date: data.today, time: data.currentHour }) <= RELEASE_MINUTES;
   // Online payment for everyone; cash at the desk only for coaches (coach rate + coach code).
@@ -807,7 +816,7 @@ function BookingDialog({
                       type="button"
                       role="radio"
                       aria-checked={rateType === r.id}
-                      onClick={() => setRateType(r.id)}
+                      onClick={() => chooseRate(r.id)}
                     >
                       {r.label}
                       {hasPrices && <small>{formatPeso(r.rate)}/hr</small>}

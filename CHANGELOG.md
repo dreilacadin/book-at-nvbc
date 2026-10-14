@@ -64,10 +64,13 @@ Earlier changes (before this file existed) are in the git history.
 - **Staff:** New notification type "New coach applications" (on for everyone).
 - **Staff:** **Search bookings** in the Bookings tab by name, email or phone
   number, across all dates (upcoming first, then the most recent).
-- **Coaches can book some reserved times.** Reserved times marked for coaches
-  (shown with a dashed border and 🎓 Coaches) can be booked by NVBC coaches at
-  the Coach rate with their own coach code, paying online — cash isn't available
-  for these times. Everyone else sees them as reserved, as before.
+- **Coaches can book some reserved times.** When a coach is logged in on their
+  device, reserved times marked for coaches show with a dashed border and
+  🎓 Coaches, and they can book them at the Coach rate (their coach code is
+  filled in), paying online — cash isn't available for these times. Everyone
+  else sees them as reserved, as before.
+- **Coach code filled in.** While a coach is logged in, choosing the Coach rate
+  fills in their coach code.
 - **Staff:** Reserved times have a **Bookable by coaches** option, when adding
   one and as a switch on each reserved time in the list.
 - **Database:** Coaches (legal name, nickname, gender, birthday, credentials,

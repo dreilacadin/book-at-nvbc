@@ -132,8 +132,17 @@ export async function releaseUnpaidBookings(): Promise<number> {
  * Public, anonymous availability for one date and sport: bookers show as first name + last
  * initial only. If no sport is given, the booking page's default sport (or the first with courts).
  */
-export async function getAvailability(date: string, requestedSport?: string) {
+export async function getAvailability(date: string, requestedSport?: string, viewerCoachId: string | null = null) {
   await releaseUnpaidBookings();
+  // A coach logged in on this device (active, with their own code): they may book reserved times
+  // marked for coaches, and their code is filled in for them.
+  const viewer = viewerCoachId
+    ? (await db().query<{ name: string; code: string }>(
+        `SELECT COALESCE(NULLIF(nickname, ''), full_name) AS name, coach_code AS code FROM coaches
+          WHERE id = $1 AND status = 'active' AND coach_code IS NOT NULL`,
+        [viewerCoachId]
+      )).rows[0] ?? null
+    : null;
   const settings = await getSettings();
   const today = nowAtFacility();
   const holiday = await holidayOn(date);
@@ -196,6 +205,7 @@ export async function getAvailability(date: string, requestedSport?: string) {
     // GCash / QR Ph / bank transfer for everyone; cash only with the coach rate and coach code.
     paymentMethods: enabledMethods(settings),
     cashForCoaches: cashAllowedForCoaches(settings, await activeCoachCount()),
+    coach: viewer, // { name, code } when a coach is logged in on this device
     courts,
     // Booked times, shown with the booker's first name and last initial only ("Ana C.").
     bookings: taken.rows
@@ -223,7 +233,8 @@ export async function getAvailability(date: string, requestedSport?: string) {
       ...[...blockedSlots(blocks, date)]
         .map(([key, { label, coaches }]) => {
           const [courtId, hour] = key.split(":").map(Number);
-          return { courtId, hour, label, coaches }; // coaches: coaches can still book it (coach code, online payment)
+          // coaches: a coach logged in here can still book it (coach code, online payment); others see it reserved.
+          return { courtId, hour, label, coaches: coaches && !!viewer };
         })
         .filter((b) => courtIds.has(b.courtId) && !overlapsClosure(closedTimes, b.hour, b.hour + SLOT_HOURS)),
     ],
