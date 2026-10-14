@@ -5,11 +5,11 @@ import { blockAppliesOn, blockedSlots, describeRepeat, findBlockConflict, type C
 
 const openPlay: CourtBlock = {
   id: 1, label: "Open Play", court_ids: [1, 2], weekdays: [2, 4], // Tue, Thu
-  start_date: "2026-09-01", end_date: null, start_hour: 18, end_hour: 21, notes: "",
+  start_date: "2026-09-01", end_date: null, start_hour: 18, end_hour: 21, notes: "", coach_bookable: false,
 };
 const oneOff: CourtBlock = {
   id: 2, label: "Maintenance", court_ids: [3], weekdays: [],
-  start_date: "2026-10-05", end_date: "2026-10-05", start_hour: 8, end_hour: 12, notes: "",
+  start_date: "2026-10-05", end_date: "2026-10-05", start_hour: 8, end_hour: 12, notes: "", coach_bookable: false,
 };
 
 test("blockAppliesOn: weekly blocks repeat on their weekdays within the date range", () => {
@@ -28,9 +28,9 @@ test("blockAppliesOn: one-off blocks apply on their date only", () => {
 test("blockedSlots lists each reserved court-hour with its label", () => {
   const m = blockedSlots([openPlay, oneOff], "2026-09-29");
   assert.equal(m.size, 12); // 2 courts × 6 half-hour slots
-  assert.equal(m.get("1:18"), "Open Play");
-  assert.equal(m.get("1:18.5"), "Open Play");
-  assert.equal(m.get("2:20.5"), "Open Play");
+  assert.deepEqual(m.get("1:18"), { label: "Open Play", coaches: false });
+  assert.equal(m.get("1:18.5")?.label, "Open Play");
+  assert.equal(m.get("2:20.5")?.label, "Open Play");
   assert.equal(m.get("1:21"), undefined); // end hour is exclusive
   assert.equal(m.get("3:8"), undefined);
 });
@@ -43,6 +43,17 @@ test("findBlockConflict: overlapping hours on a blocked court conflict; touching
   assert.equal(findBlockConflict([openPlay], 1, "2026-09-29", 17, 18), undefined);
   assert.equal(findBlockConflict([openPlay], 3, "2026-09-29", 18, 20), undefined); // other court
   assert.equal(findBlockConflict([openPlay], 1, "2026-09-30", 18, 20), undefined); // Wednesday
+});
+
+test("reserved times coaches can book", () => {
+  const training: CourtBlock = { ...openPlay, id: 3, label: "Training", coach_bookable: true };
+  assert.equal(blockedSlots([training], "2026-09-29").get("1:18")?.coaches, true);
+  // Covered by another reserved time that coaches can't book: not bookable by coaches.
+  assert.equal(blockedSlots([training, { ...openPlay, start_hour: 18, end_hour: 19 }], "2026-09-29").get("1:18")?.coaches, false);
+  assert.equal(blockedSlots([training, { ...openPlay, start_hour: 18, end_hour: 19 }], "2026-09-29").get("1:19")?.coaches, true);
+  assert.equal(findBlockConflict([training], 1, "2026-09-29", 18, 19)?.label, "Training"); // not a coach
+  assert.equal(findBlockConflict([training], 1, "2026-09-29", 18, 19, true), undefined); // a coach
+  assert.equal(findBlockConflict([training, openPlay], 1, "2026-09-29", 18, 19, true)?.label, "Open Play");
 });
 
 test("describeRepeat", () => {

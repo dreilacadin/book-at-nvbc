@@ -391,7 +391,7 @@ function DaySchedule({
   date: string;
   bookings: AdminBooking[];
   courts: Court[];
-  reserved: Map<string, string>; // "courtId:hour" → label (Open Play, …)
+  reserved: Map<string, { label: string; coaches: boolean }>; // "courtId:hour" → label (Open Play, …)
   open: number;
   close: number;
   onOpen: (bookingId?: string) => void;
@@ -425,7 +425,7 @@ function DaySchedule({
                 {courts.map((c) => {
                   const b = at(c.id, h);
                   if (!b) {
-                    const label = reserved.get(`${c.id}:${h}`);
+                    const label = reserved.get(`${c.id}:${h}`)?.label;
                     return label ? <td key={c.id} className="day-reserved">{label}</td> : <td key={c.id} />;
                   }
                   if (b.start_hour !== h) return null; // covered by the rowSpan above

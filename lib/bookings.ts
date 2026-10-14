@@ -221,9 +221,9 @@ export async function getAvailability(date: string, requestedSport?: string) {
           .map((hour) => ({ courtId: c.id, hour, label: `Closed · ${holiday!.name}` }))
       ),
       ...[...blockedSlots(blocks, date)]
-        .map(([key, label]) => {
+        .map(([key, { label, coaches }]) => {
           const [courtId, hour] = key.split(":").map(Number);
-          return { courtId, hour, label };
+          return { courtId, hour, label, coaches }; // coaches: coaches can still book it (coach code, online payment)
         })
         .filter((b) => courtIds.has(b.courtId) && !overlapsClosure(closedTimes, b.hour, b.hour + SLOT_HOURS)),
     ],
@@ -497,13 +497,23 @@ export async function createBooking(
     const court = { rows: [courtsById.get(courtId)!] };
     const sport = activity;
     if (!admin) {
-      // Staff may book over reserved times (e.g. to sell a slot); players may not.
+      // Staff may book over reserved times (e.g. to sell a slot); players may not. Some reserved
+      // times let coaches book: with their own coach code (not the shared one), paying online.
       const dayBlocks = await blocksOn(date);
+      const coachOk = !!coach && paymentMethod !== "cash";
       for (const id of allIds) {
-        const block = findBlockConflict(dayBlocks, id, date, startHour, endHour);
+        const block = findBlockConflict(dayBlocks, id, date, startHour, endHour, coachOk);
         if (block) {
           await client.query("ROLLBACK");
-          return fail(409, `${courtsById.get(id)!.name} is reserved for ${block.label} at that time. Please pick another time or court.`);
+          const name = courtsById.get(id)!.name;
+          if (!block.coach_bookable)
+            return fail(409, `${name} is reserved for ${block.label} at that time. Please pick another time or court.`);
+          return fail(
+            409,
+            coach
+              ? `Cash isn't available for ${block.label} times — please pay by GCash, QR Ph or bank transfer.`
+              : `${name} is reserved for ${block.label} at that time — only NVBC coaches can book it, at the Coach rate with their own coach code.`
+          );
         }
       }
     }

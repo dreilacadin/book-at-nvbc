@@ -234,6 +234,13 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-widt
 .slot.blocked { background: #efe9fb; color: #4b3a78; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .slot.blocked { background: #2a2440; color: #cfc2f5; } }
 :root[data-theme="dark"] .slot.blocked { background: #2a2440; color: #cfc2f5; }
+/* A reserved time coaches can book: still the reserved colour, but tappable (dashed border). */
+.slot.coach-open { width: 100%; font: inherit; font-size: 12px; cursor: pointer; flex-direction: column; gap: 1px;
+  border: 1px dashed currentColor; }
+.slot.coach-open .slot-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.swatch.coach-open { border: 1px dashed #4b3a78; }
+.slot.coach-open small { font-size: 11px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slot.coach-open:hover, .slot.coach-open:focus-visible { border-style: solid; outline: none; filter: brightness(.96); }
 .slot.past { background: repeating-linear-gradient(45deg, var(--booked), var(--booked) 4px, transparent 4px, transparent 8px); color: var(--booked-text); font-weight: 400; }
 
 /* Forms */

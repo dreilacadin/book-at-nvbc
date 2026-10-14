@@ -71,7 +71,8 @@ type Availability = {
   courts: { id: number; name: string; notes: string; sharedFrom: string | null }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
-  blocked: { courtId: number; hour: number; label: string }[]; // reserved times (Open Play, …)
+  // Reserved times (Open Play, …); `coaches`: coaches can still book them (coach code, online payment).
+  blocked: { courtId: number; hour: number; label: string; coaches?: boolean }[];
   closed: string | null; // closed for a holiday: its name
   closedDates: string[]; // closed days in the booking window
 };
@@ -84,11 +85,15 @@ type GridCell = {
   start: number;
   end: number;
   span: number; // rows (half hours) the cell covers
+  coaches?: boolean; // a reserved time coaches can book: one cell per half hour, each tappable
 };
 
 const ROW_PX = 45; // height of one half-hour row: slot min-height 36 + padding 8 + border 1
 
-type Selection = { courtId: number; courtName: string; hour: number };
+type Selection = {
+  courtId: number; courtName: string; hour: number;
+  coachOnly?: string; // a reserved time coaches can book (its label): Coach rate, coach code, no cash
+};
 type Confirmed = {
   code: string;
   courtName: string; // a group's courts, joined
@@ -212,7 +217,7 @@ export default function BookingBoard() {
     return set;
   }, [data]);
   const blockedMap = useMemo(
-    () => new Map((data?.blocked ?? []).map((b) => [`${b.courtId}:${b.hour}`, b.label])),
+    () => new Map((data?.blocked ?? []).map((b) => [`${b.courtId}:${b.hour}`, { label: b.label, coaches: !!b.coaches }])),
     [data]
   );
 
@@ -230,7 +235,10 @@ export default function BookingBoard() {
   const slots = halfHours(data.openHour, data.closeHour - SLOT_HOURS);
 
   const isPast = (h: number) => data.date < data.today || (data.date === data.today && h <= data.currentHour);
-  const reservedFor = (courtId: number, h: number) => blockedMap.get(`${courtId}:${h}`);
+  const reservedFor = (courtId: number, h: number) => blockedMap.get(`${courtId}:${h}`)?.label;
+  // Reserved times coaches can book, if this sport has a Coach rate to book them at.
+  const coachesMay = (courtId: number, h: number) =>
+    data.pricing.rateTypes.includes("coach") && !!blockedMap.get(`${courtId}:${h}`)?.coaches;
   const first = slots[0];
   const last = slots[slots.length - 1];
   /**
@@ -252,6 +260,7 @@ export default function BookingBoard() {
     }
     const label = reservedFor(courtId, h);
     if (!label) return null;
+    if (coachesMay(courtId, h)) return { kind: "blocked", label, start: h, end: h + SLOT_HOURS, span: 1, coaches: true };
     const same = (t: number) => reservedFor(courtId, t) === label && !data.bookings.some((x) => x.courtId === courtId && x.start <= t && t < x.end);
     if (h > first && same(h - SLOT_HOURS)) return "covered";
     let end = h + SLOT_HOURS;
@@ -260,6 +269,9 @@ export default function BookingBoard() {
   };
   // Taken = booked or reserved; either way it can't be part of a new booking.
   const isBooked = (courtId: number, h: number) => bookedSet.has(`${courtId}:${h}`) || blockedMap.has(`${courtId}:${h}`);
+  // For a coach booking a reserved time coaches can book: those times are free too.
+  const isBookedForCoach = (courtId: number, h: number) =>
+    bookedSet.has(`${courtId}:${h}`) || (blockedMap.has(`${courtId}:${h}`) && !coachesMay(courtId, h));
 
   const courtNotes = data.courts.filter((c) => c.notes);
 
@@ -330,6 +342,9 @@ export default function BookingBoard() {
           <span><i className="swatch pending" /> Pending payment</span>
           <span><i className="swatch reserved" /> Reserved (coach)</span>
           {data.blocked.length > 0 && <span><i className="swatch blocked" /> Blocked</span>}
+          {data.pricing.rateTypes.includes("coach") && data.blocked.some((b) => b.coaches) && (
+            <span><i className="swatch blocked coach-open" /> 🎓 Coaches only</span>
+          )}
           <span><i className="swatch past" /> Past</span>
         </div>
       </div>
@@ -399,6 +414,16 @@ export default function BookingBoard() {
                             </div>
                           )}
                         </td>
+                      ) : cell.coaches && !isPast(cell.start) ? (
+                        // Reserved, but coaches can book it (their own coach code, online payment).
+                        <td key={c.id}>
+                          <button type="button" className="slot blocked coach-open" title={`${cell.label} — coaches can book`}
+                            aria-label={`${c.name} ${formatHour(h)}: reserved for ${cell.label} — coaches can book with their coach code`}
+                            onClick={() => setSelection({ courtId: c.id, courtName: c.name, hour: h, coachOnly: cell.label })}>
+                            <span className="slot-name">{cell.label}</span>
+                            <small>🎓 Coaches</small>
+                          </button>
+                        </td>
                       ) : (
                         <td key={c.id} rowSpan={cell.span}>
                           <div className="slot blocked" style={style} title={cell.label}
@@ -465,7 +490,7 @@ export default function BookingBoard() {
         <BookingDialog
           data={data}
           selection={selection}
-          isBooked={isBooked}
+          isBooked={selection.coachOnly ? isBookedForCoach : isBooked}
           onClose={() => setSelection(null)}
           onChanged={() => load(data.date, data.sport)}
         />
@@ -511,14 +536,16 @@ function BookingDialog({
   const [extra, setExtra] = useState<number[]>([]);
   const extraIds = extra.filter((id) => freeOthers.some((c) => c.id === id)); // still free for the chosen length
   const courtCount = 1 + extraIds.length;
-  const [rateType, setRateType] = useState<RateType>("regular");
+  // A reserved time coaches can book: the Coach rate only, with the coach's own code, paid online.
+  const coachOnly = selection.coachOnly ?? null;
+  const [rateType, setRateType] = useState<RateType>(coachOnly ? "coach" : "regular");
   // A member's code is saved on their phone when they open their member page: fill it in.
   const [rateCode, setRateCode] = useState(() => (typeof window === "undefined" ? "" : loadMembership()?.memberCode ?? ""));
   // Unpaid bookings are released RELEASE_MINUTES before the start: too late to book online.
   const startsSoon = minutesUntilStart(data.date, selection.hour, { date: data.today, time: data.currentHour }) <= RELEASE_MINUTES;
   // Online payment for everyone; cash at the desk only for coaches (coach rate + coach code).
   const onlineMethods = data.paymentMethods.filter((m) => m !== "cash");
-  const cashOk = rateType === "coach" && data.cashForCoaches;
+  const cashOk = rateType === "coach" && data.cashForCoaches && !coachOnly;
   const methodChoices = PAYMENT_METHODS.filter((m) => (m.id === "cash" ? cashOk : onlineMethods.includes(m.id)));
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(onlineMethods[0] ?? "cash");
   useEffect(() => {
@@ -542,7 +569,7 @@ function BookingDialog({
   const standardOnly = p.rateTypes.length === 1;
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
   const noWayToPay = hasPrices && price.total > 0 && methodChoices.length === 0;
-  const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired : false;
+  const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired || !!coachOnly : false;
 
   // A coach's own code: check it and book under the coach's details (filled in and locked).
   const [coachInfo, setCoachInfo] = useState<{ name: string; mobile: string; email: string } | null>(null);
@@ -646,7 +673,9 @@ function BookingDialog({
     }
   }
 
-  const rateOptions = RATE_TYPES.filter((r) => p.rateTypes.includes(r.id)).map((r) => ({ ...r, rate: rateFor(p.rates, r.id) }));
+  const rateOptions = RATE_TYPES.filter((r) => p.rateTypes.includes(r.id) && (!coachOnly || r.id === "coach")).map((r) => ({
+    ...r, rate: rateFor(p.rates, r.id),
+  }));
 
   return (
     <div className="backdrop" onClick={onClose}>
@@ -721,6 +750,12 @@ function BookingDialog({
               <br />
               {formatRange(selection.hour, selection.hour + hours)}
             </div>
+            {coachOnly && (
+              <div className="notice info">
+                🎓 This time is reserved for <strong>{coachOnly}</strong>. Only NVBC coaches can book it — at the Coach rate with
+                their own coach code, paying online (no cash).
+              </div>
+            )}
             {court?.notes && (
               <div className="court-note">
                 <strong>Please note:</strong> {court.notes}
@@ -889,7 +924,9 @@ function BookingDialog({
                     {paymentMethod === "cash"
                       ? `Your slot will be Reserved — please pay at the front desk at least ${RELEASE_MINUTES} minutes before your start time.`
                       : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number.`}
-                    {!cashOk && data.cashForCoaches && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}
+                    {coachOnly
+                      ? ` Cash isn't available for ${coachOnly} times.`
+                      : !cashOk && data.cashForCoaches && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}
                   </p>
                   {noWayToPay && (
                     <p className="error" style={{ marginTop: 8 }}>

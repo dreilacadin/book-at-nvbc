@@ -39,6 +39,17 @@ export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]
     }
   }
 
+  async function setCoaches(b: CourtBlock, on: boolean) {
+    try {
+      await api("/api/admin/blocks", { action: "coaches", id: b.id, on });
+      setNotice(on ? `Coaches can now book "${b.label}" times (coach code, online payment).` : `Only staff can book "${b.label}" times now.`);
+      load();
+    } catch (e) {
+      onAuthError(e);
+      setError(e instanceof Error ? e.message : "Update failed");
+    }
+  }
+
   const today = todayManila();
   const current = blocks.filter((b) => b.end_date === null || b.end_date >= today);
   const past = blocks.length - current.length;
@@ -51,7 +62,8 @@ export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]
       </div>
       <p className="muted" style={{ margin: 0 }}>
         Take courts out of online booking for Open Play, Queueing, training and the like — once or every week.
-        Players see the slot marked with its name. Staff can still add bookings in those times.
+        Players see the slot marked with its name. Staff can still add bookings in those times, and you can let
+        coaches book them too (with their own coach code, paying online — no cash).
       </p>
       {showAdd && (
         <AddReservedTime
@@ -81,6 +93,7 @@ export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]
                 <th>When</th>
                 <th>Time</th>
                 <th>Courts</th>
+                <th>Coaches can book</th>
                 <th></th>
               </tr>
             </thead>
@@ -94,6 +107,13 @@ export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]
                   <td style={{ fontSize: 14 }}>{when(b)}</td>
                   <td style={{ whiteSpace: "nowrap" }}>{formatRange(b.start_hour, b.end_hour)}</td>
                   <td style={{ fontSize: 14 }}>{courtNames(b, courts)}</td>
+                  <td>
+                    <label className="check" style={{ whiteSpace: "nowrap" }}>
+                      <input type="checkbox" checked={b.coach_bookable} onChange={(e) => setCoaches(b, e.target.checked)}
+                        aria-label={`Coaches can book ${b.label} (${summary(b, courts)})`} />
+                      {b.coach_bookable ? "🎓 Yes" : "No"}
+                    </label>
+                  </td>
                   <td><button className="btn small secondary danger-text" onClick={() => remove(b)}>Remove</button></td>
                 </tr>
               ))}
@@ -142,6 +162,7 @@ function AddReservedTime({
   const [start, setStart] = useState(18);
   const [end, setEnd] = useState(21);
   const [notes, setNotes] = useState("");
+  const [coachBookable, setCoachBookable] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const hourOptions = halfHours(0, 24);
@@ -164,6 +185,7 @@ function AddReservedTime({
         startHour: start,
         endHour: end,
         notes,
+        coachBookable,
       });
       onAdded(r.conflicts);
     } catch (err) {
@@ -265,6 +287,14 @@ function AddReservedTime({
         <label htmlFor="rt-notes">Notes <span className="hint">(optional, staff only)</span></label>
         <input id="rt-notes" type="text" maxLength={200} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
+
+      <label className="check-row">
+        <input type="checkbox" checked={coachBookable} onChange={(e) => setCoachBookable(e.target.checked)} />
+        <span>
+          <strong>🎓 Bookable by coaches</strong>{" "}
+          <span className="hint">— coaches can still book these times at the Coach rate with their own coach code, paying online (no cash)</span>
+        </span>
+      </label>
 
       {error && <div className="error">{error}</div>}
       <div className="actions" style={{ marginTop: 0 }}>

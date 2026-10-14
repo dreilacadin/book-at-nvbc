@@ -5,7 +5,7 @@ import { isHalfHour } from "./format";
 import { isValidDate } from "./time";
 
 const fail = (status: number, error: string) => ({ ok: false as const, status, error });
-const COLUMNS = `id, label, court_ids, weekdays, start_date, end_date, start_hour, end_hour, notes`;
+const COLUMNS = `id, label, court_ids, weekdays, start_date, end_date, start_hour, end_hour, notes, coach_bookable`;
 
 /** Every reserved time, soonest first. */
 export async function listBlocks(): Promise<CourtBlock[]> {
@@ -33,6 +33,7 @@ export type NewBlockInput = {
   startHour?: unknown;
   endHour?: unknown;
   notes?: unknown;
+  coachBookable?: unknown; // coaches can still book it (coach code, online payment)
 };
 
 /**
@@ -50,6 +51,7 @@ export async function createBlock(input: NewBlockInput): Promise<Result<{ block:
   const startHour = Number(input.startHour);
   const endHour = Number(input.endHour);
   const notes = typeof input.notes === "string" ? input.notes.trim().slice(0, 200) : "";
+  const coachBookable = input.coachBookable === true;
 
   if (label.length < 2) return fail(400, `Give the reserved time a name, e.g. ${BLOCK_LABELS.slice(0, 3).join(", ")}.`);
   if (courtIds.length === 0) return fail(400, "Choose at least one court.");
@@ -62,9 +64,9 @@ export async function createBlock(input: NewBlockInput): Promise<Result<{ block:
   if (known.rows.length !== courtIds.length) return fail(400, "One of those courts doesn't exist.");
 
   const { rows } = await db().query<CourtBlock>(
-    `INSERT INTO court_blocks (label, court_ids, weekdays, start_date, end_date, start_hour, end_hour, notes)
-     VALUES ($1, $2::int[], $3::int[], $4, $5, $6, $7, $8) RETURNING ${COLUMNS}`,
-    [label, courtIds, weekdays, startDate, endDate, startHour, endHour, notes]
+    `INSERT INTO court_blocks (label, court_ids, weekdays, start_date, end_date, start_hour, end_hour, notes, coach_bookable)
+     VALUES ($1, $2::int[], $3::int[], $4, $5, $6, $7, $8, $9) RETURNING ${COLUMNS}`,
+    [label, courtIds, weekdays, startDate, endDate, startHour, endHour, notes, coachBookable]
   );
   const block = rows[0];
 
@@ -77,6 +79,18 @@ export async function createBlock(input: NewBlockInput): Promise<Result<{ block:
   );
   const conflicts = upcoming.rows.filter((r) => blockAppliesOn(block, r.booking_date)).length;
   return { ok: true, data: { block, conflicts } };
+}
+
+/** Staff: let coaches book a reserved time (or not). */
+export async function setBlockCoachBookable(id: unknown, on: unknown): Promise<Result<{ block: CourtBlock }>> {
+  const n = Number(id);
+  if (!Number.isInteger(n)) return fail(400, "Invalid id.");
+  const { rows } = await db().query<CourtBlock>(
+    `UPDATE court_blocks SET coach_bookable = $2 WHERE id = $1 RETURNING ${COLUMNS}`,
+    [n, on === true]
+  );
+  if (!rows[0]) return fail(404, "That reserved time was removed.");
+  return { ok: true, data: { block: rows[0] } };
 }
 
 export async function deleteBlock(id: unknown): Promise<Result<{ id: number }>> {

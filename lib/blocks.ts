@@ -27,6 +27,7 @@ export type CourtBlock = {
   start_hour: number;
   end_hour: number;
   notes: string;
+  coach_bookable: boolean; // coaches can still book it (coach code, online payment)
 };
 
 /** Does the block apply on this date ("YYYY-MM-DD")? */
@@ -35,27 +36,40 @@ export function blockAppliesOn(b: Pick<CourtBlock, "weekdays" | "start_date" | "
   return b.weekdays.length === 0 || b.weekdays.includes(new Date(date + "T00:00:00Z").getUTCDay());
 }
 
-/** Every reserved half-hour slot on a date, keyed "courtId:hour" (e.g. "3:10.5") → label. */
-export function blockedSlots(blocks: CourtBlock[], date: string): Map<string, string> {
-  const out = new Map<string, string>();
+/**
+ * Every reserved half-hour slot on a date, keyed "courtId:hour" (e.g. "3:10.5") → its label, and
+ * whether coaches can book it (only if every reserved time covering the slot allows them).
+ */
+export function blockedSlots(blocks: CourtBlock[], date: string): Map<string, { label: string; coaches: boolean }> {
+  const out = new Map<string, { label: string; coaches: boolean }>();
   for (const b of blocks) {
     if (!blockAppliesOn(b, date)) continue;
     for (const courtId of b.court_ids)
-      for (let h = b.start_hour; h < b.end_hour; h += 0.5) if (!out.has(`${courtId}:${h}`)) out.set(`${courtId}:${h}`, b.label);
+      for (let h = b.start_hour; h < b.end_hour; h += 0.5) {
+        const key = `${courtId}:${h}`;
+        const had = out.get(key);
+        out.set(key, had ? { label: had.label, coaches: had.coaches && b.coach_bookable } : { label: b.label, coaches: b.coach_bookable });
+      }
   }
   return out;
 }
 
-/** The first block that overlaps a booking of `courtId` from startHour to endHour on `date`, if any. */
+/**
+ * The first block that overlaps a booking of `courtId` from startHour to endHour on `date`, if any.
+ * With `coach`, reserved times coaches can book don't count.
+ */
 export function findBlockConflict(
   blocks: CourtBlock[],
   courtId: number,
   date: string,
   startHour: number,
-  endHour: number
+  endHour: number,
+  coach = false
 ): CourtBlock | undefined {
   return blocks.find(
-    (b) => b.court_ids.includes(courtId) && blockAppliesOn(b, date) && b.start_hour < endHour && startHour < b.end_hour
+    (b) =>
+      b.court_ids.includes(courtId) && blockAppliesOn(b, date) && b.start_hour < endHour && startHour < b.end_hour &&
+      !(coach && b.coach_bookable)
   );
 }
 

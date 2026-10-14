@@ -675,3 +675,8 @@ ALTER TABLE coaches ADD COLUMN IF NOT EXISTS gender_self TEXT NOT NULL DEFAULT '
 ALTER TABLE coaches ADD COLUMN IF NOT EXISTS birthday DATE;
 ALTER TABLE coaches ADD COLUMN IF NOT EXISTS credentials TEXT NOT NULL DEFAULT ''; -- credentials and tournament achievements
 ALTER TABLE coaches ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
+
+-- v30: reserved times coaches can book ------------------------------------------------------
+-- A reserved time (Open Play, Training, …) that coaches may still book, at the Coach rate with
+-- their own coach code and an online payment (no cash).
+ALTER TABLE court_blocks ADD COLUMN IF NOT EXISTS coach_bookable BOOLEAN NOT NULL DEFAULT FALSE;

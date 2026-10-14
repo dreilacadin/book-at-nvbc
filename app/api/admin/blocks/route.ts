@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin, unauthorized } from "@/lib/admin-auth";
-import { createBlock, deleteBlock, listBlocks } from "@/lib/court-blocks";
+import { createBlock, deleteBlock, listBlocks, setBlockCoachBookable } from "@/lib/court-blocks";
 import { readJson, respond, serverError } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +15,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// { action: "create", label, courtIds, weekdays, startDate, endDate?, startHour, endHour, notes? } | { action: "delete", id }
+// { action: "create", label, courtIds, weekdays, startDate, endDate?, startHour, endHour, notes?, coachBookable? }
+// | { action: "coaches", id, on } | { action: "delete", id }
 export async function POST(req: NextRequest) {
   if (!(await isAdmin(req))) return unauthorized();
   try {
     const body = await readJson(req);
     if (body.action === "create") return respond(await createBlock(body), 201);
+    if (body.action === "coaches") return respond(await setBlockCoachBookable(body.id, body.on));
     if (body.action === "delete") return respond(await deleteBlock(body.id));
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (e) {
