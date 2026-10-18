@@ -168,6 +168,13 @@ export default function BookingBoard() {
     setStaffOpen(null);
   }
 
+  // A coach logged in on this device: log out here, and the grid goes back to the public view.
+  async function coachLogout() {
+    await fetch("/api/coaches/logout", { method: "POST" }).catch(() => {});
+    setSelection(null);
+    if (data) load(data.date, data.sport);
+  }
+
   // Allow links like /?sport=badminton&date=2026-10-12 (waitlist notifications link here).
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -287,6 +294,18 @@ export default function BookingBoard() {
           <span className="staff-bar-actions">
             <Link href="/admin" className="btn small secondary">Admin panel</Link>
             <button type="button" className="btn small secondary" onClick={staffLogout}>Log out</button>
+          </span>
+        </div>
+      )}
+      {data?.coach && (
+        <div className="staff-bar" role="status">
+          <span>
+            🎓 Logged in as <strong>{data.coach.name}</strong>. Your coach code is filled in for the Coach rate, and you can
+            book reserved times marked 🎓 Coaches.
+          </span>
+          <span className="staff-bar-actions">
+            <Link href="/coach" className="btn small secondary">Coaches Dashboard</Link>
+            <button type="button" className="btn small secondary" onClick={coachLogout}>Log out</button>
           </span>
         </div>
       )}
