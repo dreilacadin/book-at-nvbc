@@ -71,6 +71,9 @@ Earlier changes (before this file existed) are in the git history.
   else sees them as reserved, as before.
 - **Coach code filled in.** While a coach is logged in, choosing the Coach rate
   fills in their coach code.
+- **Logged in as a coach?** The booking page shows a bar with the coach's name,
+  a link to the Coaches Dashboard and a **Log out** button, so it's clear when
+  the coach view is on.
 - **Staff:** Reserved times have a **Bookable by coaches** option, when adding
   one and as a switch on each reserved time in the list.
 - **Database:** Coaches (legal name, nickname, gender, birthday, credentials,
