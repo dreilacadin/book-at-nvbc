@@ -95,6 +95,9 @@ Earlier changes (before this file existed) are in the git history.
 
 - When scrolling the booking grid sideways, the half-hour times (e.g. 5:30 PM)
   no longer show the slots behind them, and "Time" stays in the corner.
+- The booking grid loads faster, especially when switching dates: it now asks
+  the database for everything at once instead of one question at a time, and no
+  longer loads the QR Ph payment code each time.
 
 ## 2026-10-08
 

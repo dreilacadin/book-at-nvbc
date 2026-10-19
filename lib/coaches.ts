@@ -1,7 +1,7 @@
 import { randomBytes, randomInt } from "node:crypto";
 import webpush from "web-push";
 import { logBooking, staff, type Actor } from "./booking-history";
-import { db, getSettings } from "./db";
+import { db, getSettings, settingsChanged } from "./db";
 import { availableAt, availabilityText, newCoachCode, normalizeCoachCode, validateCoachForm, type AvailabilitySlot, type CoachStatus } from "./coach";
 import { later, siteOrigin } from "./customer-notify";
 import { formatDateLong, formatRange, publicName } from "./format";
@@ -572,6 +572,7 @@ export async function setCoachNotes(id: unknown, notes: unknown): Promise<Ok<{ i
 export async function newSignupKey(): Promise<string> {
   const key = randomBytes(12).toString("hex");
   await db().query(`UPDATE settings SET coach_signup_key = $1`, [key]);
+  settingsChanged();
   return key;
 }
 

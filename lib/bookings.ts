@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { db, getSettings, type Settings } from "./db";
+import { db, getQrphImage, getSettings, type Settings } from "./db";
 import {
   activeBookingStatus,
   computePrice,
@@ -133,27 +133,32 @@ export async function releaseUnpaidBookings(): Promise<number> {
  * initial only. If no sport is given, the booking page's default sport (or the first with courts).
  */
 export async function getAvailability(date: string, requestedSport?: string, viewerCoachId: string | null = null) {
-  await releaseUnpaidBookings();
-  // A coach logged in on this device (active, with their own code): they may book reserved times
-  // marked for coaches, and their code is filled in for them.
-  const viewer = viewerCoachId
-    ? (await db().query<{ name: string; code: string }>(
-        `SELECT COALESCE(NULLIF(nickname, ''), full_name) AS name, coach_code AS code FROM coaches
-          WHERE id = $1 AND status = 'active' AND coach_code IS NOT NULL`,
-        [viewerCoachId]
-      )).rows[0] ?? null
-    : null;
-  const settings = await getSettings();
   const today = nowAtFacility();
-  const holiday = await holidayOn(date);
-  const [allCourts, taken, blocks] = await Promise.all([
+  // One round of queries, run together. Booked times are read after releasing unpaid bookings,
+  // so freed slots show as open. Settings are cached, so the holiday lookups share one read.
+  const [viewer, settings, holiday, closedDays, activeCoaches, allCourts, taken, blocks] = await Promise.all([
+    // A coach logged in on this device (active, with their own code): they may book reserved times
+    // marked for coaches, and their code is filled in for them.
+    viewerCoachId
+      ? db().query<{ name: string; code: string }>(
+          `SELECT COALESCE(NULLIF(nickname, ''), full_name) AS name, coach_code AS code FROM coaches
+            WHERE id = $1 AND status = 'active' AND coach_code IS NOT NULL`,
+          [viewerCoachId]
+        ).then((r) => r.rows[0] ?? null)
+      : null,
+    getSettings(),
+    holidayOn(date),
+    getSettings().then((s) => holidaysBetween(today.date, addDays(today.date, s.booking_window_days))),
+    activeCoachCount(),
     db().query<{ id: number; name: string; sport: Sport; notes: string }>(
       `SELECT id, name, sport, notes FROM courts WHERE is_active ORDER BY sort_order, id`
     ),
-    db().query<{ court_id: number; start_hour: number; end_hour: number; player_name: string; status: BookingStatus; coach_id: string | null }>(
-      `SELECT court_id, start_hour, end_hour, player_name, status, coach_id FROM bookings
-        WHERE booking_date = $1 AND status <> 'cancelled' ORDER BY court_id, start_hour`,
-      [date]
+    releaseUnpaidBookings().then(() =>
+      db().query<{ court_id: number; start_hour: number; end_hour: number; player_name: string; status: BookingStatus; coach_id: string | null }>(
+        `SELECT court_id, start_hour, end_hour, player_name, status, coach_id FROM bookings
+          WHERE booking_date = $1 AND status <> 'cancelled' ORDER BY court_id, start_hour`,
+        [date]
+      )
     ),
     blocksOn(date),
   ]);
@@ -200,11 +205,11 @@ export async function getAvailability(date: string, requestedSport?: string, vie
       holiday: holiday?.kind === "holiday" && !closedAllDay(holiday, settings.open_hour, settings.close_hour) ? holiday.name : null,
       memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
       // Coaches type their own code (or the old shared one while it's on).
-      coachCodeRequired: (settings.shared_coach_code_enabled && settings.coach_code.trim() !== "") || (await activeCoachCount()) > 0,
+      coachCodeRequired: (settings.shared_coach_code_enabled && settings.coach_code.trim() !== "") || activeCoaches > 0,
     },
     // GCash / QR Ph / bank transfer for everyone; cash only with the coach rate and coach code.
     paymentMethods: enabledMethods(settings),
-    cashForCoaches: cashAllowedForCoaches(settings, await activeCoachCount()),
+    cashForCoaches: cashAllowedForCoaches(settings, activeCoaches),
     coach: viewer, // { name, code } when a coach is logged in on this device
     courts,
     // Booked times, shown with the booker's first name and last initial only ("Ana C.").
@@ -220,7 +225,7 @@ export async function getAvailability(date: string, requestedSport?: string, vie
     // Closed (all day or part of it): "Christmas Eve — open 8:00 AM – 3:00 PM only".
     closed: closedTimes.length ? `${holiday!.name} — ${closureTimeText(holiday!)}` : null,
     // Days closed all day in the booking window (holidays, weekly rest days), for the date strip.
-    closedDates: (await holidaysBetween(today.date, addDays(today.date, settings.booking_window_days)))
+    closedDates: closedDays
       .filter((h) => closedAllDay(h, settings.open_hour, settings.close_hour))
       .map((h) => h.date),
     // Closed times, then reserved times (Open Play, Queueing, …) with their label, so players see why.
@@ -251,7 +256,7 @@ export function enabledMethods(s: Settings): PaymentMethod[] {
   const ready: Record<PaymentMethod, boolean> = {
     cash: true,
     gcash: gcashAccounts(s).length > 0,
-    qrph: s.qrph_image !== "",
+    qrph: s.has_qrph_image,
     bpi: s.bpi_account_number.trim() !== "",
   };
   const list = PAYMENT_METHODS.map((m) => m.id).filter((id) => on.includes(id) && ready[id]);
@@ -268,13 +273,13 @@ export function cashAllowedForCoaches(s: Settings, activeCoaches = 0): boolean {
 
 /** Payment instructions players see after booking. */
 export async function getPaymentInfo(): Promise<PaymentInfo> {
-  const s = await getSettings();
+  const [s, qrphImage] = await Promise.all([getSettings(), getQrphImage()]);
   return {
     methods: enabledMethods(s),
     gcashAccounts: gcashAccounts(s),
     bpiAccountName: s.bpi_account_name,
     bpiAccountNumber: s.bpi_account_number,
-    qrphImage: s.qrph_image,
+    qrphImage,
     note: s.payment_note,
   };
 }
