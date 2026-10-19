@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
-import { db, getSettings } from "@/lib/db";
+import { db, getQrphImage, getSettings, settingsChanged } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
 import { isPaymentMethod, MAX_EXTRA_GCASH, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
 import { ACTIVITY_ID, isSport, SPORTS, type ActivityDef } from "@/lib/sports";
@@ -9,10 +9,17 @@ export const dynamic = "force-dynamic";
 
 const MAX_QR_CHARS = 700_000; // ~500 KB image; the admin page shrinks uploads well below this
 
+/** The settings form: settings plus the QR Ph image (left out of getSettings() for speed). */
+async function settingsForm() {
+  const [s, qrph_image] = await Promise.all([getSettings(), getQrphImage()]);
+  const { has_qrph_image: _, ...rest } = s;
+  return { ...rest, qrph_image };
+}
+
 export async function GET(req: NextRequest) {
   if (!(await isAdmin(req))) return unauthorized();
   try {
-    return NextResponse.json(await getSettings());
+    return NextResponse.json(await settingsForm());
   } catch (e) {
     return serverError(e);
   }
@@ -210,7 +217,8 @@ export async function POST(req: NextRequest) {
         JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax, closedWeekdays, JSON.stringify(weeklyHours),
       ]
     );
-    return NextResponse.json(await getSettings());
+    settingsChanged();
+    return NextResponse.json(await settingsForm());
   } catch (e) {
     return serverError(e);
   }

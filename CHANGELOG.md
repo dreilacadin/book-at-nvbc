@@ -78,6 +78,12 @@ Earlier changes (before this file existed) are in the git history.
   switch in settings; bookings' coach, coaching request, coach reminders and
   misuse flag; whether coaches can book a reserved time.
 
+### Changed
+
+- The booking grid loads faster, especially when switching dates: it now asks
+  the database for everything at once instead of one question at a time, and no
+  longer loads the QR Ph payment code each time.
+
 ## 2026-10-08
 
 ### Added

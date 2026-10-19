@@ -75,7 +75,7 @@ export type Settings = {
   gcash_more: GcashAccount[]; // extra GCash accounts, after the main one
   bpi_account_name: string;
   bpi_account_number: string;
-  qrph_image: string;
+  has_qrph_image: boolean; // the QR Ph image itself is large: read it with getQrphImage() where it's shown
   payment_note: string;
   membership_fee_student: number;
   membership_fee_adult: number;
@@ -92,12 +92,42 @@ export type Settings = {
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
   booking_window_days, announcement, rate_plans, hourly_rates, member_rates, coach_rates,
   member_code, coach_code, payment_methods, gcash_name, gcash_number, gcash_more, bpi_account_name,
-  bpi_account_number, qrph_image, payment_note, membership_fee_student, membership_fee_adult,
+  bpi_account_number, (qrph_image <> '') AS has_qrph_image, payment_note, membership_fee_student, membership_fee_adult,
   activities, activity_courts, reschedule_hours, reschedule_max, closed_weekdays, weekly_closure_hours,
   coach_signup_key, shared_coach_code_enabled`;
 
+// Settings are read many times per request (a booking-grid load needed three), so each server
+// instance keeps them for a few seconds. Saving settings clears this instance's copy; others
+// catch up within SETTINGS_TTL_MS.
+const SETTINGS_TTL_MS = 3_000;
+let settingsCache: { at: number; value: Promise<Settings> } | null = null;
+
+/** Forget the cached settings (call after changing the settings row). */
+export function settingsChanged(): void {
+  settingsCache = null;
+}
+
 /** Full settings, including staff-only values. Never send this object to the public as-is. */
 export async function getSettings(): Promise<Settings> {
+  if (!settingsCache || Date.now() - settingsCache.at > SETTINGS_TTL_MS) {
+    const value = loadSettings();
+    settingsCache = { at: Date.now(), value };
+    value.catch(() => {
+      if (settingsCache?.value === value) settingsCache = null; // don't keep a failed read
+    });
+  }
+  const s = structuredClone(await settingsCache.value); // callers may change their copy
+  setCustomActivities(s.activities);
+  return s;
+}
+
+/** The QR Ph code image (data: URL, or ""), read only where it's shown. */
+export async function getQrphImage(): Promise<string> {
+  const { rows } = await db().query<{ qrph_image: string }>(`SELECT qrph_image FROM settings WHERE id = 1`);
+  return rows[0]?.qrph_image ?? "";
+}
+
+async function loadSettings(): Promise<Settings> {
   const { rows } = await db().query<Settings>(`SELECT ${SETTINGS_COLUMNS} FROM settings WHERE id = 1`);
   const s = rows[0];
   if (!s) throw new Error("Settings row missing. Run `npm run db:setup`.");
