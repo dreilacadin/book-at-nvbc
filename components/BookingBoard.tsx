@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatDateLong,
   formatDateShort,
@@ -120,6 +120,32 @@ function shortName(name: string, sport: string) {
   return name.toLowerCase().startsWith(prefix.toLowerCase()) ? name.slice(prefix.length) : name;
 }
 
+// Phones: "Badminton Court 3" → "Badm. 3", "Outdoor Court" → "Outdoor" ("Court 1" stays).
+function compactName(name: string, sport: string) {
+  return shortName(name, sport)
+    .split(" ")
+    .filter((w, i) => i === 0 || w.toLowerCase() !== "court")
+    .map((w) => (w.length > 8 ? w.slice(0, 4) + "." : w))
+    .join(" ");
+}
+
+// Phones: "4PM" on the hour, "4:30" on the half hour.
+function compactHour(h: number) {
+  const [time, ampm] = formatHour(h).split(" ");
+  return h % 1 ? time : time.replace(":00", "") + ampm;
+}
+
+/** A label with a shorter version for phones (CSS shows one or the other). */
+function Fit({ full, short }: { full: string; short: string }) {
+  if (full === short) return <>{full}</>;
+  return (
+    <>
+      <span className="fit-wide">{full}</span>
+      <span className="fit-narrow" aria-hidden="true">{short}</span>
+    </>
+  );
+}
+
 function addDays(date: string, n: number) {
   const d = new Date(date + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
@@ -236,6 +262,25 @@ export default function BookingBoard() {
     return list;
   }, [data]);
 
+  // Court names stay in view while scrolling down a long grid: once the real header row scrolls
+  // off the top, a copy is pinned there, scrolled sideways with the grid.
+  const gridWrapRef = useRef<HTMLDivElement>(null);
+  const pinnedHeadRef = useRef<HTMLDivElement>(null);
+  const [pinHead, setPinHead] = useState(false);
+  const syncPinnedHead = () => {
+    if (pinnedHeadRef.current && gridWrapRef.current) pinnedHeadRef.current.scrollLeft = gridWrapRef.current.scrollLeft;
+  };
+  const watchHead = useCallback((head: HTMLTableSectionElement | null) => {
+    if (!head) return;
+    const io = new IntersectionObserver(([e]) => setPinHead(!e.isIntersecting && e.boundingClientRect.top < 0));
+    io.observe(head);
+    return () => {
+      io.disconnect();
+      setPinHead(false);
+    };
+  }, []);
+  useEffect(syncPinnedHead, [pinHead]);
+
   if (!data) {
     return loadError ? <div className="error">{loadError}</div> : <FullScreenLoader label="Loading courts…" />;
   }
@@ -283,6 +328,17 @@ export default function BookingBoard() {
     bookedSet.has(`${courtId}:${h}`) || (blockedMap.has(`${courtId}:${h}`) && !coachesMay(courtId, h));
 
   const courtNotes = data.courts.filter((c) => c.notes);
+  const headRow = (
+    <tr>
+      <th className="time" scope="col">Time</th>
+      {data.courts.map((c) => (
+        <th key={c.id} scope="col">
+          <Fit full={shortName(c.name, data.sport)} short={compactName(c.name, data.sport)} />
+          {c.notes && <span className="court-note-icon" title={c.notes} aria-label={`Note: ${c.notes}`}> ⓘ</span>}
+        </th>
+      ))}
+    </tr>
+  );
 
   return (
     <>
@@ -386,23 +442,19 @@ export default function BookingBoard() {
       {data.courts.length === 0 ? (
         <div className="card">No {sportLabel(data.sport).toLowerCase()} courts are open for booking right now.</div>
       ) : (
-        <div className="grid-wrap">
-          <table className="grid">
-            <thead>
-              <tr>
-                <th className="time" scope="col">Time</th>
-                {data.courts.map((c) => (
-                  <th key={c.id} scope="col">
-                    {shortName(c.name, data.sport)}
-                    {c.notes && <span className="court-note-icon" title={c.notes} aria-label={`Note: ${c.notes}`}> ⓘ</span>}
-                  </th>
-                ))}
-              </tr>
-            </thead>
+        <div className="grid-area">
+        <div className="grid-pin" aria-hidden="true">
+          <div ref={pinnedHeadRef} className="grid-pin-head" hidden={!pinHead}>
+            <table className="grid" style={{ "--courts": data.courts.length } as React.CSSProperties}><thead>{headRow}</thead></table>
+          </div>
+        </div>
+        <div className="grid-wrap" ref={gridWrapRef} onScroll={syncPinnedHead}>
+          <table className="grid" style={{ "--courts": data.courts.length } as React.CSSProperties}>
+            <thead ref={watchHead}>{headRow}</thead>
             <tbody>
               {slots.map((h) => (
                 <tr key={h} className={h % 1 ? "half" : undefined}>
-                  <th className="time" scope="row">{formatHour(h)}</th>
+                  <th className="time" scope="row"><Fit full={formatHour(h)} short={compactHour(h)} /></th>
                   {data.courts.map((c) => {
                     const cell = cellAt(c.id, h);
                     if (cell === "covered") return null; // part of a merged cell above
@@ -447,9 +499,12 @@ export default function BookingBoard() {
                         </td>
                       ) : (
                         <td key={c.id} rowSpan={cell.span}>
-                          <div className="slot blocked" style={style} title={cell.label}
+                          <div className={`slot blocked${cell.span > 1 ? " tall" : ""}`} style={style} title={cell.label}
                             aria-label={`${c.name} ${formatRange(cell.start, cell.end)} reserved for ${cell.label}`}>
-                            {cell.label}
+                            {cell.span > 1 && cell.label.includes(" · ") ? (
+                              // "Closed · Christmas Eve": the reason on its own line
+                              <>{cell.label.split(" · ")[0]}<small>{cell.label.split(" · ").slice(1).join(" · ")}</small></>
+                            ) : cell.label}
                           </div>
                         </td>
                       );
@@ -476,6 +531,7 @@ export default function BookingBoard() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 

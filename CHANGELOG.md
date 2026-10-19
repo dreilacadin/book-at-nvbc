@@ -83,6 +83,18 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Changed
 
+- On phones, the court names stay pinned at the top of the booking grid as you
+  scroll down, so it's always clear which court you're picking.
+- The booking grid is roomier on phones: shorter times ("4PM", "4:30") and court
+  names ("Badm. 3"), so up to four courts fit without scrolling sideways. Long
+  closures and reserved times now show their full label instead of cutting it
+  off, and weekly closures say "Closed on Mondays" instead of "Closed · Closed on
+  Mondays".
+
+### Fixed
+
+- When scrolling the booking grid sideways, the half-hour times (e.g. 5:30 PM)
+  no longer show the slots behind them, and "Time" stays in the corner.
 - The booking grid loads faster, especially when switching dates: it now asks
   the database for everything at once instead of one question at a time, and no
   longer loads the QR Ph payment code each time.
