@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, unauthorized } from "@/lib/admin-auth";
 import { coachBookings, listCoaches, makeResetLink, newSignupKey, setCoachNotes, setCoachStatus } from "@/lib/coaches";
 import { siteOrigin } from "@/lib/customer-notify";
-import { db, getSettings } from "@/lib/db";
+import { db, getSettings, settingsChanged } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
     }
     if (b.action === "shared-code") {
       await db().query(`UPDATE settings SET shared_coach_code_enabled = $1`, [b.enabled === true]);
+      settingsChanged();
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
