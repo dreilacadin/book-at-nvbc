@@ -228,7 +228,7 @@ export async function getAvailability(date: string, requestedSport?: string, vie
       ...courts.flatMap((c) =>
         halfHours(settings.open_hour, settings.close_hour - SLOT_HOURS)
           .filter((hour) => overlapsClosure(closedTimes, hour, hour + SLOT_HOURS))
-          .map((hour) => ({ courtId: c.id, hour, label: `Closed · ${holiday!.name}` }))
+          .map((hour) => ({ courtId: c.id, hour, label: /^closed\b/i.test(holiday!.name) ? holiday!.name : `Closed · ${holiday!.name}` }))
       ),
       ...[...blockedSlots(blocks, date)]
         .map(([key, { label, coaches }]) => {
