@@ -24,6 +24,11 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Staff:** **＋ Add member** in the Members tab, to sign someone up at the
+  front desk. If the fee is paid (or no charge), they're approved right away
+  with a member code, and you get the link to their member page to send them.
+  If they haven't paid yet, they're saved as a pending application. Someone who
+  is already a member (same name and birthday) can't be added twice.
 - **Request a coaching session.** When booking, tick **Request a coaching
   session** and choose from the NVBC coaches who are free at that time (with
   their photo and rates; tap a coach to see their credentials, achievements and
