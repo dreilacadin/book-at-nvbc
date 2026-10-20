@@ -316,6 +316,7 @@ export default function PaymentPanel({
   payBy,
   deadline = null,
   rejectedNote = "",
+  coachRate = false,
   secondaryAction,
   onUpdated,
 }: {
@@ -328,6 +329,7 @@ export default function PaymentPanel({
   payBy?: string; // "9:50 AM on Thu, Oct 1": unpaid bookings are released then
   deadline?: string | null; // online booking: send the payment by this time (ISO) or the slot is released
   rejectedNote?: string; // staff rejected the payment sent: why
+  coachRate?: boolean; // booked at the coach rate: paid the ways coaches may pay (Settings → Payment)
   secondaryAction?: React.ReactNode; // e.g. "Cancel this booking", shown beside the main button
   onUpdated?: (p: {
     paymentMethod: PaymentMethod;
@@ -368,8 +370,9 @@ export default function PaymentPanel({
     );
   }
 
-  // Online methods; cash only for a booking already made as cash (coaches).
-  const eMethods = (info?.methods ?? []).filter((m) => m !== "cash");
+  // Online methods (for coach-rate bookings, the ones coaches may use); cash only for a booking
+  // already made as cash (coaches).
+  const eMethods = ((coachRate ? info?.coachMethods : info?.methods) ?? []).filter((m) => m !== "cash");
   const choices: PaymentMethod[] =
     initialMethod === "cash" ? ["cash", ...eMethods] : eMethods;
 

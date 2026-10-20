@@ -104,6 +104,7 @@ export type Settings = {
   member_code: string;
   coach_code: string;
   payment_methods: PaymentMethod[];
+  coach_payment_methods: PaymentMethod[]; // how coaches may pay (only the methods switched on count)
   gcash_name: string;
   gcash_number: string;
   gcash_more: GcashAccount[]; // extra GCash accounts

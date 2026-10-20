@@ -166,6 +166,7 @@ export function gcashAccounts(s: { gcash_name: string; gcash_number: string; gca
 /** What players see about payments (no staff-only data). */
 export type PaymentInfo = {
   methods: PaymentMethod[];
+  coachMethods: PaymentMethod[]; // how coach-rate bookings may be paid (Settings → Payment)
   gcashAccounts: GcashAccount[]; // pay to any one of them
   bpiAccountName: string;
   bpiAccountNumber: string;

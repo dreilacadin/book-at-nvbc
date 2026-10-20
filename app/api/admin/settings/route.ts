@@ -169,8 +169,15 @@ export async function POST(req: NextRequest) {
     if (payment_methods.length === 0) return bad("Turn on at least one payment method.");
     if (payment_methods.includes("gcash") && !s.gcash_number) return bad("Enter the GCash number, or turn GCash off.");
 
-    // Extra GCash accounts. Blank rows are dropped; older admin pages don't send them (keep them).
     const current = await getSettings();
+    // How coaches may pay. Older admin pages don't send it (keep it). Methods switched off keep
+    // their tick for when they're switched back on.
+    const coach_payment_methods = Array.isArray(b.coach_payment_methods)
+      ? [...new Set(b.coach_payment_methods.filter(isPaymentMethod))]
+      : current.coach_payment_methods.filter(isPaymentMethod);
+    if (!coach_payment_methods.some((m) => payment_methods.includes(m)))
+      return bad("Choose at least one way coaches can pay (under Payment methods).");
+    // Extra GCash accounts. Blank rows are dropped; older admin pages don't send them (keep them).
     let gcashMore = current.gcash_more;
     if (b.gcash_more !== undefined) {
       if (!Array.isArray(b.gcash_more)) return bad("Invalid extra GCash accounts.");
@@ -205,7 +212,7 @@ export async function POST(req: NextRequest) {
          qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18,
          gcash_more = $19::jsonb, activities = $20::jsonb, activity_courts = $21::jsonb,
          reschedule_hours = $22, reschedule_max = $23, closed_weekdays = $24::int[],
-         weekly_closure_hours = $25::jsonb
+         weekly_closure_hours = $25::jsonb, coach_payment_methods = $26::text[]
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -215,6 +222,7 @@ export async function POST(req: NextRequest) {
         Math.round(feeStudent * 100) / 100, Math.round(feeAdult * 100) / 100,
         JSON.stringify(gcashMore),
         JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax, closedWeekdays, JSON.stringify(weeklyHours),
+        `{${coach_payment_methods.join(",")}}`,
       ]
     );
     settingsChanged();

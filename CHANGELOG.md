@@ -29,6 +29,12 @@ Earlier changes (before this file existed) are in the git history.
   with a member code, and you get the link to their member page to send them.
   If they haven't paid yet, they're saved as a pending application. Someone who
   is already a member (same name and birthday) can't be added twice.
+- **Staff:** **Coaches can pay with**, under Settings → Payment methods: choose
+  which payment methods coaches can use when booking at the Coach rate with
+  their coach code (for example, GCash only, or cash too). It starts with every
+  method ticked, so nothing changes until you edit it. Customers still pay
+  online, and reserved times coaches can book are still paid online.
+- **Database:** Settings: how coaches may pay (`coach_payment_methods`).
 - **Request a coaching session.** When booking, tick **Request a coaching
   session** and choose from the NVBC coaches who are free at that time (with
   their photo and rates; tap a coach to see their credentials, achievements and

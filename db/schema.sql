@@ -641,6 +641,10 @@ CREATE TABLE IF NOT EXISTS coach_push_subscriptions (
 );
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS coach_signup_key TEXT NOT NULL DEFAULT encode(gen_random_bytes(12), 'hex');
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_coach_code_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- How coaches (coach rate with a coach code) may pay, out of the payment methods switched on.
+-- Everyone else pays online. The default (all methods) keeps cash for coaches, as before.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS coach_payment_methods TEXT[] NOT NULL DEFAULT '{cash,gcash,qrph,bpi}';
 -- Bookings: made with a coach's own code (coach_id), or a customer asking for a coaching session.
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_id UUID REFERENCES coaches(id) ON DELETE SET NULL;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coaching_coach_id UUID REFERENCES coaches(id) ON DELETE SET NULL;

@@ -207,9 +207,9 @@ export async function getAvailability(date: string, requestedSport?: string, vie
       // Coaches type their own code (or the old shared one while it's on).
       coachCodeRequired: (settings.shared_coach_code_enabled && settings.coach_code.trim() !== "") || activeCoaches > 0,
     },
-    // GCash / QR Ph / bank transfer for everyone; cash only with the coach rate and coach code.
+    // GCash / QR Ph / bank transfer for everyone; coaches (coach rate + coach code) pay as set in /admin.
     paymentMethods: enabledMethods(settings),
-    cashForCoaches: cashAllowedForCoaches(settings, activeCoaches),
+    coachPaymentMethods: coachMethods(settings, coachCodesExist(settings, activeCoaches)),
     coach: viewer, // { name, code } when a coach is logged in on this device
     courts,
     // Booked times, shown with the booker's first name and last initial only ("Ana C.").
@@ -263,19 +263,27 @@ export function enabledMethods(s: Settings): PaymentMethod[] {
   return list.length ? list : ["cash"];
 }
 
+/** Whether any coach code works: the old shared code (while it's on) or an active coach's own. */
+export const coachCodesExist = (s: Settings, activeCoaches: number) =>
+  (s.shared_coach_code_enabled && s.coach_code.trim() !== "") || activeCoaches > 0;
+
 /**
- * Cash (paid at the desk) is only for coaches: it needs the coach rate AND the coach code, so a
- * coach code must be set in /admin and cash switched on. Everyone else pays online.
+ * How coaches may pay (coach rate with a working coach code): the methods ticked under "Coaches
+ * can pay with" in /admin, out of those switched on. Cash (at the desk) is only ever for coaches,
+ * so it also needs a coach code to exist. Everyone else pays online.
  */
-export function cashAllowedForCoaches(s: Settings, activeCoaches = 0): boolean {
-  return enabledMethods(s).includes("cash") && ((s.shared_coach_code_enabled && s.coach_code.trim() !== "") || activeCoaches > 0);
+export function coachMethods(s: Settings, codesExist: boolean): PaymentMethod[] {
+  return enabledMethods(s).filter((m) => s.coach_payment_methods.includes(m) && (m !== "cash" || codesExist));
 }
+
+const methodList = (ms: PaymentMethod[]) => ms.map(paymentLabel).join(", ").replace(/, ([^,]*)$/, " or $1");
 
 /** Payment instructions players see after booking. */
 export async function getPaymentInfo(): Promise<PaymentInfo> {
   const [s, qrphImage] = await Promise.all([getSettings(), getQrphImage()]);
   return {
     methods: enabledMethods(s),
+    coachMethods: coachMethods(s, true),
     gcashAccounts: gcashAccounts(s),
     bpiAccountName: s.bpi_account_name,
     bpiAccountNumber: s.bpi_account_number,
@@ -421,9 +429,15 @@ export async function createBooking(
     contact = coach.mobile;
     email = email || coach.email;
   }
-  // Cash at the desk is only for coaches with a working code; everyone else pays online.
-  if (!admin && paymentMethod === "cash" && !(rateType === "coach" && (coach || sharedCoachCode) && enabledMethods(settings).includes("cash")))
-    return fail(400, "Cash payment is reserved for coaches (with their coach code). Please pay by GCash, QR Ph or bank transfer.");
+  // Coaches with a working code pay as set in /admin; everyone else pays online (cash at the desk is for coaches).
+  if (!admin) {
+    if (rateType === "coach" && (coach || sharedCoachCode)) {
+      const allowed = coachMethods(settings, true);
+      if (!allowed.includes(paymentMethod))
+        return fail(400, allowed.length ? `Coaches can pay by ${methodList(allowed)}. Please choose one of those.` : "Coaches can't book online right now. Please contact the front desk.");
+    } else if (paymentMethod === "cash")
+      return fail(400, "Cash payment is reserved for coaches (with their coach code). Please pay by GCash, QR Ph or bank transfer.");
+  }
   // A customer asking for a coaching session with a coach who's free then.
   const coachingId = rateType !== "coach" && typeof input.coachingCoachId === "string" && input.coachingCoachId ? input.coachingCoachId : null;
 
@@ -912,6 +926,12 @@ export async function submitPayment(
   const settings = await getSettings();
   if (!enabledMethods(settings).includes(method))
     return fail(400, "That payment method isn't available right now.");
+  // A coach-rate booking is paid the ways coaches may pay (Settings → Payment).
+  const booked = await db().query<{ rate_type: string }>(`SELECT rate_type FROM bookings WHERE cancel_code = $1`, [code]);
+  if (booked.rows[0]?.rate_type === "coach" && !coachMethods(settings, true).includes(method)) {
+    const allowed = coachMethods(settings, true).filter((m) => m !== "cash");
+    return fail(400, allowed.length ? `Coaches can pay by ${methodList(allowed)}.` : "Please pay at the front desk.");
+  }
   await releaseUnpaidBookings();
 
   // Accepted while the booking is active and, for a first payment, within its payment window.
