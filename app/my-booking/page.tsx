@@ -286,6 +286,7 @@ export default function MyBookingPage() {
               payBy={payByLabel(booking.date, booking.startHour)}
               deadline={booking.payBy}
               rejectedNote={booking.rejectedNote}
+              coachRate={booking.rateType === "coach"}
               secondaryAction={
                 cancelInPanel ? (
                   <button

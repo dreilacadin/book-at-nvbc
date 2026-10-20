@@ -414,6 +414,8 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
   };
   const toggleMethod = (m: PaymentMethod, on: boolean) =>
     set("payment_methods", on ? [...new Set([...s.payment_methods, m])] : s.payment_methods.filter((x) => x !== m));
+  const toggleCoachMethod = (m: PaymentMethod, on: boolean) =>
+    set("coach_payment_methods", on ? [...new Set([...s.coach_payment_methods, m])] : s.coach_payment_methods.filter((x) => x !== m));
   const hourOptions = Array.from({ length: 25 }, (_, h) => h);
 
   return (
@@ -571,6 +573,22 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
               {m.label}
             </label>
           ))}
+        </div>
+
+        <div className="field" style={{ marginTop: 14 }}>
+          <label id="coach-pay-label">Coaches can pay with</label>
+          <div role="group" aria-labelledby="coach-pay-label" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {PAYMENT_METHODS.filter((m) => s.payment_methods.includes(m.id)).map((m) => (
+              <label key={m.id} style={{ fontWeight: 400, display: "inline-flex", gap: 6, alignItems: "center", margin: 0 }}>
+                <input type="checkbox" checked={s.coach_payment_methods.includes(m.id)} onChange={(e) => toggleCoachMethod(m.id, e.target.checked)} />
+                {m.label}{m.id === "cash" ? " (at the desk)" : ""}
+              </label>
+            ))}
+          </div>
+          <p className="hint" style={{ margin: "6px 0 0" }}>
+            For bookings at the Coach rate with a coach code. Everyone else pays online — cash is only ever for coaches.
+            Reserved times that coaches can book are always paid online.
+          </p>
         </div>
 
         {s.payment_methods.includes("gcash") && (

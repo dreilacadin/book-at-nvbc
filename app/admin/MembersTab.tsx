@@ -5,6 +5,7 @@ import { ageOn, membershipState, membershipStateLabel, memberTypeLabel } from "@
 import { formatPeso, PAYMENT_STATUSES, paymentLabel, type PaymentStatus } from "@/lib/pricing";
 import { sportLabel } from "@/lib/sports";
 import EmailReminders, { type EmailStatus } from "./EmailReminders";
+import AddMember, { type MemberFees } from "./AddMember";
 import EditMember from "./EditMember";
 import ImportMembers from "./ImportMembers";
 import QrScanner from "./QrScanner";
@@ -33,13 +34,16 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
   const [importing, setImporting] = useState(false);
   const [emailing, setEmailing] = useState(false);
   const [email, setEmail] = useState<EmailStatus | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [fees, setFees] = useState<MemberFees | null>(null);
   const today = todayManila();
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ members: AdminMember[]; email: EmailStatus }>("/api/admin/members");
+      const r = await api<{ members: AdminMember[]; email: EmailStatus; fees: MemberFees }>("/api/admin/members");
       setMembers(r.members);
       setEmail(r.email);
+      setFees(r.fees);
       setError("");
     } catch (e) {
       onAuthError(e);
@@ -98,14 +102,20 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
 
   return (
     <div className="stack">
-      {manage && <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
-        <button className="btn small secondary" onClick={() => { setEmailing((v) => !v); setImporting(false); }}>
-          {emailing ? "Close emails" : `✉ Email expired members${counts.expired ? ` (${counts.expired})` : ""}`}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+        {manage && <>
+          <button className="btn small secondary" onClick={() => { setEmailing((v) => !v); setImporting(false); setAdding(false); }}>
+            {emailing ? "Close emails" : `✉ Email expired members${counts.expired ? ` (${counts.expired})` : ""}`}
+          </button>
+          <button className="btn small secondary" onClick={() => { setImporting((v) => !v); setEmailing(false); setAdding(false); }}>
+            {importing ? "Close import" : "⬆ Import existing members"}
+          </button>
+        </>}
+        <button className="btn small" onClick={() => { setAdding((v) => !v); setImporting(false); setEmailing(false); }}>
+          {adding ? "Close" : "＋ Add member"}
         </button>
-        <button className="btn small secondary" onClick={() => { setImporting((v) => !v); setEmailing(false); }}>
-          {importing ? "Close import" : "⬆ Import existing members"}
-        </button>
-      </div>}
+      </div>
+      {adding && <AddMember fees={fees} onAdded={load} onClose={() => setAdding(false)} onAuthError={onAuthError} />}
       {importing && <ImportMembers onDone={load} onAuthError={onAuthError} />}
       {emailing && (
         <EmailReminders

@@ -10,6 +10,7 @@ import {
   membershipState,
   normalizeMemberCode,
   validateMemberEdit,
+  validateNewMember,
   type MembershipState,
   validateMembershipForm,
   type MembershipStatus,
@@ -397,6 +398,65 @@ export async function updateMembership(id: string, input: Record<string, unknown
       e.emergencyName, e.emergencyMobile, e.staffNotes, approved, e.memberSince, e.startsOn, e.expiresOn]
   );
   return { ok: true, data: rows[0] };
+}
+
+export type AddedMember = {
+  id: string; token: string; fullName: string; status: "active" | "pending"; memberCode: string | null; expiresOn: string | null;
+};
+
+/**
+ * Staff sign someone up at the front desk. Paid (or no charge): approved right away with a new
+ * member code and 365 days from today. Not paid yet: saved as a pending application, approved
+ * from the list once paid. `by` is the staff member's name, kept in the staff notes.
+ */
+export async function addMember(input: Record<string, unknown>, by: string): Promise<Result<AddedMember>> {
+  const today = nowAtFacility().date;
+  const e = validateNewMember(input, today);
+  if (typeof e === "string") return fail(400, e);
+  const paymentStatus = input.paymentStatus;
+  if (paymentStatus !== "paid" && paymentStatus !== "waived" && paymentStatus !== "unpaid") return fail(400, "Choose how the fee was paid.");
+  const method = paymentStatus === "paid" ? input.paymentMethod : "cash";
+  if (!isPaymentMethod(method)) return fail(400, "Choose how the fee was paid.");
+
+  // The same person = same full name and birthdate (like the public form and the import).
+  const existing = await db().query<{ status: MembershipStatus; member_code: string | null; full_name: string }>(
+    `SELECT status, member_code, full_name FROM memberships
+      WHERE status <> 'rejected' AND birthdate = $2
+        AND regexp_replace(lower(trim(full_name)), '\\s+', ' ', 'g') = regexp_replace(lower(trim($1)), '\\s+', ' ', 'g')
+      ORDER BY (status = 'active') DESC, (status = 'forfeited') DESC LIMIT 1`,
+    [e.fullName, e.birthdate]
+  );
+  const prior = existing.rows[0];
+  if (prior?.status === "active")
+    return fail(409, `${prior.full_name} is already a member (${prior.member_code}). Search for them in the list; if it has expired, use Renew.`);
+  if (prior?.status === "forfeited")
+    return fail(409, `${prior.full_name}'s membership was forfeited (${prior.member_code}). Find them in the list and use Reactivate — they keep their code.`);
+  if (prior?.status === "pending")
+    return fail(409, `${prior.full_name} already has a pending application. Find it in the list, mark the fee paid, then Approve.`);
+
+  const settings = await getSettings();
+  const fee = e.memberType === "student" ? settings.membership_fee_student : settings.membership_fee_adult;
+  const approve = paymentStatus !== "unpaid";
+  const token = randomBytes(18).toString("base64url");
+  const memberCode = approve ? await newMemberCode() : null;
+  const expiresOn = approve ? addDays(today, MEMBERSHIP_DAYS) : null;
+  const note = [`Added at the front desk by ${by.slice(0, 80)} on ${today}.`, e.staffNotes].filter(Boolean).join("\n");
+  const { rows } = await db().query<{ id: string }>(
+    `INSERT INTO memberships (token, member_code, status, member_type, full_name, email, mobile, address, birthdate, gender,
+                              school, student_id, emergency_name, emergency_mobile, fee, payment_method, payment_status,
+                              paid_at, member_since, starts_on, expires_on, staff_notes, approved_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+             CASE WHEN $17 = 'paid' THEN now() END, $18::date, $18::date, $19::date, $20,
+             CASE WHEN $3 = 'active' THEN now() END)
+     RETURNING id`,
+    [token, memberCode, approve ? "active" : "pending", e.memberType, e.fullName, e.email, e.mobile, e.address, e.birthdate,
+      e.gender, e.school, e.studentId, e.emergencyName, e.emergencyMobile, fee, method, paymentStatus,
+      approve ? today : null, expiresOn, note]
+  );
+  return {
+    ok: true,
+    data: { id: rows[0].id, token, fullName: e.fullName, status: approve ? "active" : "pending", memberCode, expiresOn },
+  };
 }
 
 export async function membershipProof(id: string): Promise<string | null> {

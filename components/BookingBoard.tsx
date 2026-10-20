@@ -67,7 +67,7 @@ type Availability = {
     coachCodeRequired: boolean;
   };
   paymentMethods: PaymentMethod[];
-  cashForCoaches: boolean; // cash (at the desk) is only for the coach rate + coach code
+  coachPaymentMethods: PaymentMethod[]; // how coaches (coach rate + coach code) may pay, set in /admin
   coach: { name: string; code: string } | null; // a coach logged in on this device
   courts: { id: number; name: string; notes: string; sharedFrom: string | null }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
@@ -627,14 +627,17 @@ function BookingDialog({
   };
   // Unpaid bookings are released RELEASE_MINUTES before the start: too late to book online.
   const startsSoon = minutesUntilStart(data.date, selection.hour, { date: data.today, time: data.currentHour }) <= RELEASE_MINUTES;
-  // Online payment for everyone; cash at the desk only for coaches (coach rate + coach code).
+  // Online payment for everyone; coaches (coach rate + coach code) pay as set in /admin, which can
+  // include cash at the desk — but not for reserved times coaches can book.
   const onlineMethods = data.paymentMethods.filter((m) => m !== "cash");
-  const cashOk = rateType === "coach" && data.cashForCoaches && !coachOnly;
-  const methodChoices = PAYMENT_METHODS.filter((m) => (m.id === "cash" ? cashOk : onlineMethods.includes(m.id)));
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(onlineMethods[0] ?? "cash");
+  const allowedMethods = rateType === "coach" ? data.coachPaymentMethods.filter((m) => !coachOnly || m !== "cash") : onlineMethods;
+  const methodChoices = PAYMENT_METHODS.filter((m) => allowedMethods.includes(m.id));
+  const cashOk = allowedMethods.includes("cash");
+  const firstChoice = methodChoices[0]?.id;
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(firstChoice ?? "cash");
   useEffect(() => {
-    if (paymentMethod === "cash" && !cashOk) setPaymentMethod(onlineMethods[0] ?? "cash");
-  }, [cashOk, paymentMethod, onlineMethods]);
+    if (firstChoice && !methodChoices.some((m) => m.id === paymentMethod)) setPaymentMethod(firstChoice);
+  }, [firstChoice, methodChoices, paymentMethod]);
   const court = data.courts.find((c) => c.id === selection.courtId);
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
@@ -810,6 +813,7 @@ function BookingDialog({
                 hasProof={done.hasProof}
                 payBy={payByLabel(done.date, done.startHour)}
                 deadline={done.payBy}
+                coachRate={rateType === "coach"}
                 onUpdated={(u) => setDone({ ...done, paymentStatus: u.paymentStatus, paymentRef: u.paymentRef, hasProof: u.hasProof, payBy: null })}
               />
             )}
@@ -1010,7 +1014,7 @@ function BookingDialog({
                       : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number.`}
                     {coachOnly
                       ? ` Cash isn't available for ${coachOnly} times.`
-                      : !cashOk && data.cashForCoaches && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}
+                      : !cashOk && data.coachPaymentMethods.includes("cash") && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}
                   </p>
                   {noWayToPay && (
                     <p className="error" style={{ marginTop: 8 }}>

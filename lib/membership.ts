@@ -187,3 +187,20 @@ export function validateMemberEdit(input: Record<string, unknown>, approved: boo
   }
   return e;
 }
+
+/**
+ * Checks a member added by staff at the front desk: the same rules as a staff edit, plus a
+ * birthdate (to spot someone who's already a member) and a way to reach them. Returns the cleaned
+ * details, or an error message. `today` ("YYYY-MM-DD") is used to check the birthdate.
+ */
+export function validateNewMember(input: Record<string, unknown>, today: string): MemberEdit | string {
+  const e = validateMemberEdit(input, false);
+  if (typeof e === "string") return e;
+  if (!e.fullName.includes(" ")) return "Enter the member's full name (first and last name).";
+  if (!e.birthdate) return "Enter the member's birthdate.";
+  const age = ageOn(e.birthdate, today);
+  if (age < 3 || age > 110) return "Please check the birthdate.";
+  if (!e.mobile && !e.email) return "Enter a mobile number or email address, so the club can reach them.";
+  if (e.gender && !(GENDERS as readonly string[]).includes(e.gender)) e.gender = "";
+  return e;
+}

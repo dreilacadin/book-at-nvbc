@@ -87,6 +87,7 @@ export type Settings = {
   weekly_closure_hours: Record<string, ClosureHours>; // weekday → part-day closure (missing = all day)
   coach_signup_key: string; // staff-only: the shared coach sign-up link's key
   shared_coach_code_enabled: boolean; // the old shared coach code still works
+  coach_payment_methods: string[]; // how coaches may pay (of the methods switched on); see coachMethods()
 };
 
 export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, max_hours_per_day,
@@ -94,7 +95,7 @@ export const SETTINGS_COLUMNS = `open_hour, close_hour, max_hours_per_booking, m
   member_code, coach_code, payment_methods, gcash_name, gcash_number, gcash_more, bpi_account_name,
   bpi_account_number, (qrph_image <> '') AS has_qrph_image, payment_note, membership_fee_student, membership_fee_adult,
   activities, activity_courts, reschedule_hours, reschedule_max, closed_weekdays, weekly_closure_hours,
-  coach_signup_key, shared_coach_code_enabled`;
+  coach_signup_key, shared_coach_code_enabled, coach_payment_methods`;
 
 // Settings are read many times per request (a booking-grid load needed three), so each server
 // instance keeps them for a few seconds. Saving settings clears this instance's copy; others

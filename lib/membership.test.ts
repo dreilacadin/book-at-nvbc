@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ageOn, formatMemberCode, membershipState, normalizeMemberCode, validateMemberEdit, validateMembershipForm } from "./membership.ts";
+import { ageOn, formatMemberCode, membershipState, normalizeMemberCode, validateMemberEdit, validateMembershipForm, validateNewMember } from "./membership.ts";
 
 const SPORTS = ["badminton", "pickleball"];
 const good = {
@@ -84,4 +84,22 @@ test("validateMemberEdit: blanks allowed, but what's filled in must be valid", (
   assert.match(String(validateMemberEdit({ ...base, memberSince: "2026-06-01" }, true)), /Member since/);
   const pending = validateMemberEdit({ ...base, startsOn: "", expiresOn: "" }, false);
   assert.equal(typeof pending === "object" && pending.expiresOn, null); // dates ignored until approved
+});
+
+test("validateNewMember: full name, birthdate and a way to reach them", () => {
+  const base = { memberType: "adult", fullName: "Ana Cruz", birthdate: "1995-06-15", mobile: "0917 123 4567" };
+  const ok = validateNewMember(base, "2026-10-20");
+  assert.ok(typeof ok !== "string");
+  assert.equal(ok.memberSince, null); // dates are set when the membership is approved
+  assert.equal(validateNewMember({ ...base, fullName: "Ana" }, "2026-10-20"), "Enter the member's full name (first and last name).");
+  assert.equal(validateNewMember({ ...base, birthdate: "" }, "2026-10-20"), "Enter the member's birthdate.");
+  assert.equal(validateNewMember({ ...base, birthdate: "2026-01-01" }, "2026-10-20"), "Please check the birthdate.");
+  assert.equal(
+    validateNewMember({ ...base, mobile: "" }, "2026-10-20"),
+    "Enter a mobile number or email address, so the club can reach them."
+  );
+  assert.ok(typeof validateNewMember({ ...base, mobile: "", email: "ana@example.com" }, "2026-10-20") !== "string");
+  assert.equal(validateNewMember({ ...base, mobile: "12" }, "2026-10-20"), "That mobile number doesn't look valid.");
+  const odd = validateNewMember({ ...base, gender: "Other" }, "2026-10-20");
+  assert.ok(typeof odd !== "string" && odd.gender === "");
 });

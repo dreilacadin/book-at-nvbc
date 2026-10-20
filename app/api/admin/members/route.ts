@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { readJson, respond, serverError } from "@/lib/http";
 import { emailSender } from "@/lib/mailer";
+import { getSettings } from "@/lib/db";
 import {
+  addMember,
   importMembers,
   approveMembership,
   deleteMembership,
@@ -29,8 +31,13 @@ export async function GET(req: NextRequest) {
     const code = req.nextUrl.searchParams.get("code");
     if (code !== null) return respond(await findByMemberCode(code));
     const sender = emailSender();
+    const [members, settings] = await Promise.all([listMemberships(), getSettings()]);
     return NextResponse.json(
-      { members: await listMemberships(), email: sender ? { ready: true, from: sender.address } : { ready: false } },
+      {
+        members,
+        email: sender ? { ready: true, from: sender.address } : { ready: false },
+        fees: { student: settings.membership_fee_student, adult: settings.membership_fee_adult }, // for the Add member form
+      },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (e) {
@@ -42,6 +49,7 @@ export async function GET(req: NextRequest) {
 // | { action: "reject", id, reason? } | { action: "delete", id }
 // | { action: "update", id, fullName, email, mobile, …, startsOn, expiresOn }
 // | { action: "forfeit", id, reason? } | { action: "remind", id } | { action: "remind", ids: [...] }  (expired)
+// | { action: "add", fullName, …, paymentStatus: "paid" | "waived" | "unpaid", paymentMethod }  (signed up at the desk)
 // | { action: "import", records, dryRun }
 // | { action: "email", ids, subject, body }  (reminders to expired members, up to 10 per call)
 // | { action: "email-test", id, subject, body }  (one filled-in reminder to the club's own address)  (existing members from a spreadsheet)
@@ -56,6 +64,7 @@ export async function POST(req: NextRequest) {
     if (b.action === "email") return respond(await sendReminderEmails(b.ids, b.subject, b.body, req.nextUrl.origin));
     if (b.action === "email-test") return respond(await sendTestReminder(b.id, b.subject, b.body, req.nextUrl.origin));
     if (b.action === "import") return respond(await importMembers(b.records, b.dryRun !== false));
+    if (b.action === "add") return respond(await addMember(b, me.name));
     if (b.action === "payment") return respond(await setMembershipPayment(id, b.status));
     if (b.action === "approve") return respond(await approveMembership(id));
     if (b.action === "forfeit") return respond(await forfeitMembership(id, b.reason));
