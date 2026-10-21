@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, unauthorized } from "@/lib/admin-auth";
-import { coachBookings, listCoaches, makeResetLink, newSignupKey, setCoachNotes, setCoachStatus } from "@/lib/coaches";
+import { coachBookings, listCoaches, makeResetLink, newSignupKey, setCoachNotes, setCoachStatus, setCoachPayLater } from "@/lib/coaches";
 import { siteOrigin } from "@/lib/customer-notify";
 import { db, getSettings, settingsChanged } from "@/lib/db";
 import { readJson, respond, serverError } from "@/lib/http";
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
 }
 
 // { action: "status", id, to: "approve" | "activate" | "deactivate" | "reject" | "new-code" }
-// | { action: "notes", id, notes } | { action: "reset-link", id } | { action: "new-signup-link" } | { action: "shared-code", enabled }
+// | { action: "notes", id, notes } | { action: "pay-later", id, on } | { action: "reset-link", id } | { action: "new-signup-link" } | { action: "shared-code", enabled }
 export async function POST(req: NextRequest) {
   const me = await getAdmin(req);
   if (!me) return unauthorized();
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     const b = await readJson(req);
     if (b.action === "status") return respond(await setCoachStatus(b.id, b.to, me.name));
     if (b.action === "notes") return respond(await setCoachNotes(b.id, b.notes));
+    if (b.action === "pay-later") return respond(await setCoachPayLater(b.id, b.on));
     if (b.action === "reset-link") return respond(await makeResetLink(String(b.id ?? "")));
     if (b.action === "new-signup-link") {
       const key = await newSignupKey();

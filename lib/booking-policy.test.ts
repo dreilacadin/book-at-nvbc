@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { awaitingPayment, bookingPhase, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified } from "./booking-policy.ts";
+import { awaitingPayment, bookingPhase, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified, coachSessionStage } from "./booking-policy.ts";
 import { formatClock } from "./format.ts";
 
 test("minutesUntilStart across days and half hours", () => {
@@ -102,6 +102,18 @@ test("shouldRelease: never for bookings marked in progress/completed or restored
   assert.equal(shouldRelease({ ...b, phase: "in_progress" }, late), false);
   assert.equal(shouldRelease({ ...b, phase: "completed" }, late), false);
   assert.equal(shouldRelease({ ...b, auto_release: false }, late), false);
+  assert.equal(shouldRelease({ ...b, pay_after: true }, late), false); // a coach paying after the session
+});
+
+test("coachSessionStage: confirm before, I'm here from 30 min before, pay after, overdue after the grace", () => {
+  const b = { date: "2026-10-01", start_hour: 16, end_hour: 18 };
+  assert.equal(coachSessionStage(b, { date: "2026-10-01", time: 15 }), "before");
+  assert.equal(coachSessionStage(b, { date: "2026-10-01", time: 15.5 }), "arriving");
+  assert.equal(coachSessionStage(b, { date: "2026-10-01", time: 17.9 }), "arriving");
+  assert.equal(coachSessionStage(b, { date: "2026-10-01", time: 18 }), "over");
+  assert.equal(coachSessionStage(b, { date: "2026-10-01", time: 18 + 10 / 60 }), "overdue");
+  assert.equal(coachSessionStage(b, { date: "2026-10-02", time: 8 }), "overdue");
+  assert.equal(coachSessionStage(b, { date: "2026-09-30", time: 23 }), "before");
 });
 
 test("startedUnverified flags started bookings whose online payment wasn't verified", () => {

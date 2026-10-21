@@ -10,6 +10,8 @@ import { notifyStaff, setupVapid } from "./notify";
 import { hashPassword, verifyPassword } from "./password";
 import { allActivities, sportLabel } from "./sports";
 import { nowAtFacility } from "./time";
+import { NO_SHOW_DAYS, NO_SHOW_LIMIT, PAY_AFTER_GRACE_MINUTES, coachSessionStage } from "./booking-policy";
+import { formatPeso } from "./pricing";
 
 // Coaches: sign-up (shared link, approved by the owner or a manager), login, profile, their own
 // coach code, coaching requests from customers, and reminders. Server only.
@@ -21,6 +23,22 @@ const isId = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f-]{3
 const MAX_PHOTO = 700_000; // characters of a data: URL (~500 KB image; the pages shrink photos well below this)
 const isPhoto = (v: unknown): v is string =>
   typeof v === "string" && v.length <= MAX_PHOTO && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(v);
+
+/**
+ * SQL for a coach's no-shows that count against "pay after the session": the last NO_SHOW_DAYS,
+ * and only since staff last turned it on. `t` is the coaches table alias.
+ */
+const NO_SHOWS = (t: string) =>
+  `(SELECT count(*)::int FROM bookings ns WHERE ns.coach_id = ${t}.id AND ns.no_show
+      AND ns.no_show_at >= GREATEST(${t}.pay_later_since, now() - make_interval(days => ${NO_SHOW_DAYS})))`;
+/** SQL: may this coach pay after their session? On (staff), and fewer than NO_SHOW_LIMIT no-shows. */
+const PAYS_LATER = (t: string) => `(${t}.pay_later AND ${NO_SHOWS(t)} < ${NO_SHOW_LIMIT})`;
+
+/** Whether this coach's own bookings are kept until after the session (paid then). */
+export async function coachPaysLater(coachId: string): Promise<boolean> {
+  const { rows } = await db().query<{ ok: boolean }>(`SELECT ${PAYS_LATER("co")} AS ok FROM coaches co WHERE co.id = $1`, [coachId]);
+  return rows[0]?.ok === true;
+}
 
 /** The name customers and bookings show: the nickname (e.g. "Coach Marvin"), or the legal name. */
 export const COACH_NAME = (t = "") => `COALESCE(NULLIF(${t ? t + "." : ""}nickname, ''), ${t ? t + "." : ""}full_name)`;
@@ -372,6 +390,11 @@ export type CoachBooking = {
   status: string; payment_status: string; amount: number; kind: "own" | "coaching";
   customer_name: string | null; customer_contact: string | null; coaching_status: string | null; coaching_note: string;
   remind: boolean; misuse: boolean; group_courts: number;
+  payment_method: string; phase: string | null; no_show: boolean;
+  pay_after: boolean; // kept until after the session, paid then
+  confirmed_at: string | null; arrived_at: string | null;
+  total: number; // with a group's other courts
+  client_name: string; // their own bookings: who it's with ("" = not set)
 };
 
 /** A coach's bookings: made with their code, and coaching sessions requested with them. */
@@ -384,7 +407,10 @@ export async function coachBookings(coachId: string): Promise<CoachBooking[]> {
             CASE WHEN b.coaching_coach_id = $1 AND b.coaching_status IN ('requested', 'accepted') THEN b.contact END AS customer_contact,
             b.coaching_status, b.coaching_note,
             COALESCE(b.coach_remind, co.remind_bookings) AS remind, b.coach_code_misuse AS misuse,
-            (SELECT count(*)::int FROM bookings g WHERE g.group_id = b.id AND g.status <> 'cancelled') AS group_courts
+            (SELECT count(*)::int FROM bookings g WHERE g.group_id = b.id AND g.status <> 'cancelled') AS group_courts,
+            b.payment_method, b.phase, b.no_show, b.pay_after, b.coach_confirmed_at AS confirmed_at, b.coach_arrived_at AS arrived_at,
+            (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = b.id AND g.status <> 'cancelled') AS total,
+            CASE WHEN b.coach_id = $1 THEN b.client_name ELSE '' END AS client_name
        FROM bookings b JOIN courts c ON c.id = b.court_id JOIN coaches co ON co.id = $1
       WHERE (b.coach_id = $1 AND b.group_id IS NULL) OR b.coaching_coach_id = $1
       ORDER BY b.booking_date DESC, b.start_hour DESC
@@ -424,6 +450,120 @@ export async function respondCoaching(coachId: string, bookingId: unknown, accep
   return { ok: true, data: { id: rows[0].id } };
 }
 
+/** One of the coach's own bookings (the first court of a group), still booked. */
+async function ownBooking(coachId: string, bookingId: unknown) {
+  if (!isId(bookingId)) return null;
+  const { rows } = await db().query<{
+    id: string; code: string; date: string; start_hour: number; end_hour: number; court: string; coach: string;
+    payment_status: string; pay_after: boolean; arrived_at: string | null; phase: string | null; total: number;
+  }>(
+    `SELECT b.id, b.cancel_code AS code, b.booking_date AS date, b.start_hour::float8, b.end_hour::float8, c.name AS court,
+            ${COACH_NAME("co")} AS coach, b.payment_status, b.pay_after, b.coach_arrived_at AS arrived_at, b.phase,
+            (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = b.id AND g.status <> 'cancelled') AS total
+       FROM bookings b JOIN courts c ON c.id = b.court_id JOIN coaches co ON co.id = b.coach_id
+      WHERE b.id = $1 AND b.coach_id = $2 AND b.group_id IS NULL AND b.status <> 'cancelled'`,
+    [bookingId, coachId]
+  );
+  return rows[0] ?? null;
+}
+const coachActor = (name: string): Actor => ({ name: name.slice(0, 60), kind: "customer" });
+
+/** The coach says "Yes, keep it" (from the 1-hour reminder): they're coming. */
+export async function confirmComing(coachId: string, bookingId: unknown): Promise<Ok<{ id: string }> | Fail> {
+  const b = await ownBooking(coachId, bookingId);
+  if (!b) return fail(404, "Booking not found.");
+  if (coachSessionStage(b, nowAtFacility()) === "over" || coachSessionStage(b, nowAtFacility()) === "overdue")
+    return fail(400, "This booking has already ended.");
+  await db().query(`UPDATE bookings SET coach_confirmed_at = COALESCE(coach_confirmed_at, now()) WHERE id = $1`, [b.id]);
+  await logBooking({ id: b.id }, coachActor(b.coach), "Coach confirmed", "Coming");
+  return { ok: true, data: { id: b.id } };
+}
+
+/** "I'm here": from 30 minutes before the start until the end. Marks it in progress and tells the desk. */
+export async function coachArrived(coachId: string, bookingId: unknown): Promise<Ok<{ id: string }> | Fail> {
+  const b = await ownBooking(coachId, bookingId);
+  if (!b) return fail(404, "Booking not found.");
+  const stage = coachSessionStage(b, nowAtFacility());
+  if (stage === "before") return fail(400, "You can check in from 30 minutes before your booking starts.");
+  if (stage !== "arriving") return fail(400, "This booking has already ended.");
+  if (b.arrived_at) return { ok: true, data: { id: b.id } };
+  await db().query(
+    `UPDATE bookings SET coach_arrived_at = now(), coach_confirmed_at = COALESCE(coach_confirmed_at, now()),
+            phase = COALESCE(phase, 'in_progress')
+      WHERE id = $1 OR group_id = $1`,
+    [b.id]
+  );
+  await logBooking({ id: b.id }, coachActor(b.coach), "Coach arrived", "I'm here");
+  await notifyStaff([{
+    kind: "coach_session",
+    title: `${b.coach} is here`,
+    pushTitle: `${b.coach} is here`,
+    body: `${b.court} · ${formatRange(b.start_hour, b.end_hour)}${b.pay_after && b.payment_status !== "paid" ? " · pays after the session" : ""}`,
+    bookingCode: b.code,
+  }]);
+  return { ok: true, data: { id: b.id } };
+}
+
+/**
+ * After the session: the coach says they paid cash at the desk. Staff confirm it (like an online
+ * payment) — it isn't marked paid until they do. Only if coaches may pay cash (Settings).
+ */
+export async function coachPaidAtDesk(coachId: string, bookingId: unknown, cashAllowed: boolean): Promise<Ok<{ id: string }> | Fail> {
+  if (!cashAllowed) return fail(400, "Cash isn't one of the ways coaches can pay right now. Please pay online.");
+  const b = await ownBooking(coachId, bookingId);
+  if (!b) return fail(404, "Booking not found.");
+  const stage = coachSessionStage(b, nowAtFacility());
+  if (stage !== "over" && stage !== "overdue") return fail(400, "You can mark this paid once your session has ended.");
+  const { rowCount } = await db().query(
+    `UPDATE bookings SET payment_method = 'cash', payment_status = 'for_verification', payment_sent_at = now(), coach_paid_desk_at = now()
+      WHERE (id = $1 OR group_id = $1) AND status <> 'cancelled' AND payment_status IN ('unpaid', 'rejected')`,
+    [b.id]
+  );
+  if (!rowCount) return fail(400, "This booking is already paid or waiting for the desk to confirm.");
+  await logBooking({ id: b.id }, coachActor(b.coach), "Payment sent", `Coach says they paid ${formatPeso(b.total)} cash at the desk`);
+  await notifyStaff([{
+    kind: "payment_sent",
+    title: `${b.coach} says they paid cash — please confirm`,
+    pushTitle: `${b.coach} says they paid cash — please confirm`,
+    body: `${formatPeso(b.total)} · ${b.court} · ${formatRange(b.start_hour, b.end_hour)}`,
+    bookingCode: b.code,
+  }]);
+  return { ok: true, data: { id: b.id } };
+}
+
+/**
+ * A coach's clients, for suggestions as they type one: names on their own bookings and customers
+ * who asked them for coaching, with how many sessions each has (spellings that differ only in
+ * capitals or spaces count as one; the capitalised one is shown). Most sessions first.
+ */
+export async function coachClients(coachId: string): Promise<{ name: string; sessions: number }[]> {
+  const { rows } = await db().query<{ name: string; sessions: number }>(
+    `SELECT (array_agg(name ORDER BY name = lower(name), name))[1] AS name, count(*)::int AS sessions FROM (
+       SELECT client_name AS name FROM bookings
+        WHERE coach_id = $1 AND group_id IS NULL AND client_name <> '' AND status <> 'cancelled'
+       UNION ALL
+       SELECT player_name FROM bookings
+        WHERE coaching_coach_id = $1 AND coaching_status IN ('requested', 'accepted') AND status <> 'cancelled'
+     ) t
+     GROUP BY lower(regexp_replace(btrim(name), '\\s+', ' ', 'g'))
+     ORDER BY count(*) DESC, 1
+     LIMIT 300`,
+    [coachId]
+  );
+  return rows;
+}
+
+/** The coach sets (or clears) who one of their own bookings is with. */
+export async function setBookingClient(coachId: string, bookingId: unknown, client: unknown): Promise<Ok<{ id: string }> | Fail> {
+  if (!isId(bookingId)) return fail(400, "Invalid booking.");
+  const name = typeof client === "string" ? client.trim().replace(/\s+/g, " ").slice(0, 60) : "";
+  const { rowCount } = await db().query(
+    `UPDATE bookings SET client_name = $3 WHERE (id = $1 OR group_id = $1) AND coach_id = $2`,
+    [bookingId, coachId, name]
+  );
+  return rowCount ? { ok: true, data: { id: bookingId } } : fail(404, "Booking not found.");
+}
+
 /** Per booking: remind the coach 1 hour before (or not). */
 export async function setCoachRemind(coachId: string, bookingId: unknown, on: unknown): Promise<Ok<{ id: string }> | Fail> {
   if (!isId(bookingId)) return fail(400, "Invalid booking.");
@@ -453,13 +593,74 @@ export async function sendCoachReminders(): Promise<number> {
   );
   for (const r of rows) {
     const what = r.kind === "own" ? r.court : `Coaching ${r.player} · ${r.court}`;
+    // Their own bookings: still coming? (Can't make it → cancel, so the court opens up for others.)
+    const ask = r.kind === "own";
     await tellCoach(
       r.coach,
-      { title: "Coming up in 1 hour", body: `${what} · ${formatRange(r.start_hour, r.end_hour)}`, url: "/coach" },
-      { subject: `Reminder: ${what} at ${formatRange(r.start_hour, r.end_hour).split(" – ")[0]} today`, text: `Hi!\n\nJust a reminder: ${what}, ${formatDateLong(r.date)}, ${formatRange(r.start_hour, r.end_hour)} (booking ${r.code}).\n\nNV Badminton Center` }
+      {
+        title: ask ? "Coming up in 1 hour — still coming?" : "Coming up in 1 hour",
+        body: `${what} · ${formatRange(r.start_hour, r.end_hour)}${ask ? " · Tap to confirm, or cancel if you can't make it" : ""}`,
+        url: "/coach",
+      },
+      {
+        subject: `Reminder: ${what} at ${formatRange(r.start_hour, r.end_hour).split(" – ")[0]} today`,
+        text:
+          `Hi!\n\nJust a reminder: ${what}, ${formatDateLong(r.date)}, ${formatRange(r.start_hour, r.end_hour)} (booking ${r.code}).\n\n` +
+          (ask ? `Still coming? Confirm on your Coaches Dashboard — or cancel there if you can't make it, so others can use the court:\n${siteOrigin()}/coach\n\n` : "") +
+          `NV Badminton Center`,
+      }
     );
   }
-  return rows.length;
+  return rows.length + (await sendPayAfterReminders());
+}
+
+/**
+ * Coaches paying after their session: "please pay" when it ends (to the coach), and if it's still
+ * unpaid PAY_AFTER_GRACE_MINUTES later, a note to staff. Each is claimed with an UPDATE, so it's
+ * sent once. Not for no-shows, or once a payment was sent.
+ */
+async function sendPayAfterReminders(): Promise<number> {
+  const end = `((b.booking_date + make_interval(mins => (b.end_hour * 60)::int)) AT TIME ZONE 'Asia/Manila')`;
+  const due = `b.pay_after AND b.group_id IS NULL AND b.status <> 'cancelled' AND NOT b.no_show
+               AND b.payment_status IN ('unpaid', 'rejected') AND b.coach_id IS NOT NULL
+               AND b.booking_date BETWEEN (now() AT TIME ZONE 'Asia/Manila')::date - 1 AND (now() AT TIME ZONE 'Asia/Manila')::date`;
+  type Row = { id: string; coach: string; name: string; code: string; court: string; start_hour: number; end_hour: number; total: number };
+  const cols = `b.id, b.coach_id AS coach, ${COACH_NAME("co")} AS name, b.cancel_code AS code, c.name AS court,
+                b.start_hour::float8 AS start_hour, b.end_hour::float8 AS end_hour,
+                (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = b.id AND g.status <> 'cancelled') AS total`;
+  const ended = await db().query<Row>(
+    `UPDATE bookings b SET pay_reminded_at = now() FROM coaches co, courts c
+      WHERE co.id = b.coach_id AND c.id = b.court_id AND ${due} AND b.pay_reminded_at IS NULL
+        AND ${end} <= now() AND ${end} > now() - interval '6 hours'
+      RETURNING ${cols}`
+  );
+  for (const r of ended.rows)
+    await tellCoach(
+      r.coach,
+      { title: `Please pay ${formatPeso(r.total)} for your session`, body: `${r.court} · ${formatRange(r.start_hour, r.end_hour)} · Pay at the desk or online, then tap "I paid"`, url: "/coach" },
+      {
+        subject: `Please pay ${formatPeso(r.total)} for your session (${r.code})`,
+        text:
+          `Hi!\n\nThanks for playing at NVBC. Your session (${r.court}, ${formatRange(r.start_hour, r.end_hour)}, booking ${r.code}) ` +
+          `has ended — please pay ${formatPeso(r.total)} at the front desk or online.\n\nOnce you've paid, tap "I paid" on your Coaches Dashboard:\n` +
+          `${siteOrigin()}/coach\n\nNV Badminton Center`,
+      }
+    );
+  const overdue = await db().query<Row>(
+    `UPDATE bookings b SET pay_overdue_at = now() FROM coaches co, courts c
+      WHERE co.id = b.coach_id AND c.id = b.court_id AND ${due} AND b.pay_overdue_at IS NULL
+        AND ${end} <= now() - make_interval(mins => ${PAY_AFTER_GRACE_MINUTES}) AND ${end} > now() - interval '6 hours'
+      RETURNING ${cols}`
+  );
+  if (overdue.rows.length)
+    await notifyStaff(overdue.rows.map((r) => ({
+      kind: "coach_session" as const,
+      title: `Not paid yet — ${r.name} (${formatPeso(r.total)})`,
+      pushTitle: `Not paid yet — ${r.name} (${formatPeso(r.total)})`,
+      body: `${r.court} · ${formatRange(r.start_hour, r.end_hour)} · ended ${PAY_AFTER_GRACE_MINUTES}+ min ago`,
+      bookingCode: r.code,
+    })));
+  return ended.rows.length + overdue.rows.length;
 }
 
 // ---- Coaches' devices (push) ----------------------------------------------------------------
@@ -490,7 +691,12 @@ export async function coachPushOn(coachId: string, endpoint: unknown): Promise<b
 
 // ---- Staff (owner / managers) ------------------------------------------------------------------
 
-export type AdminCoach = CoachRow & { upcoming: number; past: number; sessions: number; misuse: number; requests: number };
+export type AdminCoach = CoachRow & {
+  upcoming: number; past: number; sessions: number; misuse: number; requests: number;
+  pay_later: boolean; // staff's switch: pay after the session
+  pays_later: boolean; // in effect: switched on, and fewer than NO_SHOW_LIMIT recent no-shows
+  no_shows: number; // that count against it (since it was last turned on, last NO_SHOW_DAYS)
+};
 
 export async function listCoaches(): Promise<AdminCoach[]> {
   const today = nowAtFacility().date;
@@ -500,7 +706,8 @@ export async function listCoaches(): Promise<AdminCoach[]> {
             (SELECT count(*)::int FROM bookings b WHERE b.coach_id = co.id AND b.group_id IS NULL AND b.status <> 'cancelled' AND b.booking_date < $1) AS past,
             (SELECT count(*)::int FROM bookings b WHERE b.coaching_coach_id = co.id AND b.coaching_status = 'accepted') AS sessions,
             (SELECT count(*)::int FROM bookings b WHERE b.coaching_coach_id = co.id AND b.coaching_status = 'requested') AS requests,
-            (SELECT count(*)::int FROM bookings b WHERE b.coach_id = co.id AND b.coach_code_misuse) AS misuse
+            (SELECT count(*)::int FROM bookings b WHERE b.coach_id = co.id AND b.coach_code_misuse) AS misuse,
+            co.pay_later, ${PAYS_LATER("co")} AS pays_later, ${NO_SHOWS("co")} AS no_shows
        FROM coaches co
       ORDER BY CASE co.status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 WHEN 'inactive' THEN 2 ELSE 3 END, co.full_name`,
     [today]
@@ -561,6 +768,19 @@ export async function setCoachStatus(id: unknown, action: unknown, by: string): 
       })
     );
   return { ok: true, data: updated };
+}
+
+/**
+ * Owner/managers: whether a coach may pay after their session. Turning it on again also clears the
+ * no-shows counted so far (only later ones count). Bookings already made keep how they were made.
+ */
+export async function setCoachPayLater(id: unknown, on: unknown): Promise<Ok<{ id: string }> | Fail> {
+  if (!isId(id)) return fail(400, "Invalid coach.");
+  const { rowCount } = await db().query(
+    `UPDATE coaches SET pay_later = $2, pay_later_since = CASE WHEN $2 THEN now() ELSE pay_later_since END WHERE id = $1`,
+    [id, on === true]
+  );
+  return rowCount ? { ok: true, data: { id } } : fail(404, "Coach not found.");
 }
 
 export async function setCoachNotes(id: unknown, notes: unknown): Promise<Ok<{ id: string }> | Fail> {

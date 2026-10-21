@@ -684,3 +684,46 @@ ALTER TABLE coaches ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
 -- A reserved time (Open Play, Training, …) that coaches may still book, at the Coach rate with
 -- their own coach code and an online payment (no cash).
 ALTER TABLE court_blocks ADD COLUMN IF NOT EXISTS coach_bookable BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- v31: coaches pay after their session --------------------------------------------------------
+-- Coaches usually pay at the end of their session. A coach's own-code booking made while the
+-- coach may pay later (pay_later on, fewer than 3 no-shows in 60 days since pay_later_since) is
+-- never released for non-payment (bookings.pay_after). The coach is reminded to pay when it ends,
+-- and staff are told if it's still unpaid 10 minutes later.
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS pay_later BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE coaches ADD COLUMN IF NOT EXISTS pay_later_since TIMESTAMPTZ NOT NULL DEFAULT now(); -- no-shows count from here
+-- Added once, together with a one-time backfill: coaches' own-code bookings already made (unpaid,
+-- from today on, not on a reserved time coaches can book — those are paid first) get the new rule
+-- too, and lose their online payment window.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = current_schema() AND table_name = 'bookings' AND column_name = 'pay_after') THEN
+    ALTER TABLE bookings ADD COLUMN pay_after BOOLEAN NOT NULL DEFAULT FALSE;
+    UPDATE bookings b SET pay_after = TRUE, pay_by = NULL
+      FROM coaches co
+     WHERE co.id = b.coach_id AND co.pay_later AND NOT b.coach_code_shared
+       AND b.status IN ('pending', 'reserved') AND b.payment_status IN ('unpaid', 'rejected') AND b.amount > 0
+       AND b.booking_date >= (now() AT TIME ZONE 'Asia/Manila')::date
+       AND NOT EXISTS (
+         SELECT 1 FROM court_blocks cb
+          WHERE cb.coach_bookable AND b.court_id = ANY(cb.court_ids)
+            AND b.booking_date >= cb.start_date AND (cb.end_date IS NULL OR b.booking_date <= cb.end_date)
+            AND (cardinality(cb.weekdays) = 0 OR EXTRACT(DOW FROM b.booking_date)::int = ANY(cb.weekdays))
+            AND cb.start_hour < b.end_hour AND b.start_hour < cb.end_hour);
+  END IF;
+END $$;
+-- Coaches' own bookings: who the session is with (optional; their Clients tab groups by it).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_confirmed_at TIMESTAMPTZ; -- "Yes, keep it" (the 1-hour reminder)
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_arrived_at TIMESTAMPTZ;   -- "I'm here"
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_reminded_at TIMESTAMPTZ;    -- "please pay" at the end of the session
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_overdue_at TIMESTAMPTZ;     -- staff told it's still unpaid
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coach_paid_desk_at TIMESTAMPTZ; -- the coach says they paid cash at the desk (staff confirm)
+-- New staff notification kind "coach_session": on for everyone once.
+UPDATE admin_notify_state SET kinds = array_append(kinds, 'coach_session')
+ WHERE kinds_version < 5 AND NOT ('coach_session' = ANY(kinds));
+UPDATE admin_notify_state SET kinds_version = 5 WHERE kinds_version < 5;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 5;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds
+  SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message', 'booking_moved', 'coach_applied', 'coach_session'];

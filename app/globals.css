@@ -1050,6 +1050,44 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .coach-avatar { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent); }
 .coach-push { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 14px; }
 .coach-bk { display: grid; gap: 8px; padding: 14px; }
+/* A setting staff should notice (e.g. a coach's "Pays after the session"): a subtle inset card. */
+.setting-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin: 6px 0; line-height: 1.5; }
+.setting-box .check-row input { margin-top: 3px; }
+.setting-warn { color: var(--danger); font-size: 13px; }
+/* Admin booking card: a coach says they paid cash at the desk (staff confirm it). */
+.notice.coach-paid { border-left: 4px solid var(--accent); }
+/* Coaches Dashboard: who a booking is with, and the Clients tab. */
+/* Coaches Dashboard: a booking's pay-after note and its actions (coming / I'm here / pay), set apart. */
+.coach-status { display: grid; gap: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin: 4px 0; }
+.coach-status-note { margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted); }
+.coach-status-note strong { color: var(--text); }
+.coach-status .card-actions { margin: 0; gap: 8px; }
+.coach-status:empty { display: none; }
+.coach-client { font-size: 14px; }
+.coach-client .link-btn { font-size: 13px; padding: 0 0 0 4px; }
+.coach-client-edit { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.coach-client-edit .client-input { flex: 1 1 100%; min-width: 0; } /* buttons go under it */
+/* A coach's Client box: suggestions from their own clients, listed under the box. */
+.client-input input { width: 100%; }
+.client-suggest { margin-top: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.client-suggest .hint { padding: 6px 12px 2px; font-size: 12px; }
+.client-suggest ul { list-style: none; margin: 0; padding: 0; }
+.client-suggest li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 12px;
+  cursor: pointer; font-size: 14px; border-top: 1px solid var(--border); }
+.client-suggest li:first-child { border-top: 0; }
+.client-suggest li small { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.client-suggest li:hover, .client-suggest li[aria-selected="true"] { background: var(--brand-soft); }
+.coach-client-edit .error { flex-basis: 100%; }
+.client-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.client-toolbar input { flex: 1 1 180px; min-width: 0; }
+.client-toolbar select { flex: 0 1 auto; width: auto; }
+.client-card { padding: 0; overflow: hidden; }
+.client-card.no-client { opacity: .85; }
+.client-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 14px 16px;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.client-head small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+.client-sessions { list-style: none; margin: 0; padding: 0 16px 8px; }
+.client-sessions li { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
 .coach-bk.gone { opacity: .7; }
 .coach-bk.request { border-color: #e0a800; }
 .coach-bk-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }

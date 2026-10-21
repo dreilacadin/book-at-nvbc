@@ -27,6 +27,11 @@ export type AdminBooking = {
   pay_by: string | null; // online booking: pay by this time or it is released
   phase: "in_progress" | "completed" | null; // set by staff by hand (null = automatic)
   auto_release: boolean; // false once restored by staff: never released for non-payment
+  pay_after: boolean; // a coach paying after the session: never released for non-payment
+  coach_confirmed_at: string | null; // the coach said they're coming (1-hour reminder)
+  coach_arrived_at: string | null; // the coach tapped "I'm here"
+  client_name: string; // a coach's own booking: who it's with ("" = not set)
+  coach_paid_desk_at: string | null; // the coach said (on their dashboard) they paid cash at the desk
   restored_by: string | null;
   court_order: number;
   has_proof: boolean;

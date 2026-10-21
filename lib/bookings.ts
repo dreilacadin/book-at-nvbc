@@ -36,7 +36,7 @@ import { isEmail } from "./customer-messages";
 import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-history";
 import { describeChanges, type BookingFields } from "./booking-changes";
 import { scheduleWaitlistCheck } from "./waitlist";
-import { activeCoachCount, availableCoaches, coachForCode, coachingCancelled, notifyCoachCodeUsed, notifyCoachingRequest, restoreCoaching, type CodeCoach } from "./coaches";
+import { activeCoachCount, availableCoaches, coachClients, coachForCode, coachingCancelled, coachPaysLater, notifyCoachCodeUsed, notifyCoachingRequest, restoreCoaching, type CodeCoach } from "./coaches";
 import { allActivities, BOOKING_DEFAULT_SPORT, courtAllowed, isActivity, isSport, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { holidayOn, holidaysBetween } from "./holidays";
 import { closedAllDay, closedRanges, closureTimeText, overlapsClosure } from "./closures";
@@ -104,6 +104,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
         WHERE c.id = b.court_id
           AND b.status IN ('pending', 'reserved') AND b.payment_status IN ('unpaid', 'rejected') AND b.amount > 0
           AND b.phase IS NULL AND b.auto_release -- marked in progress/completed or restored by staff: keep
+          AND NOT b.pay_after -- a coach paying after the session
           AND ((b.booking_date - $1::date) * 1440 + (b.start_hour - $2::numeric) * 60 <= $3
                OR b.pay_by <= now())
         RETURNING b.id, b.cancel_code, b.player_name, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, b.booking_date, b.start_hour, b.end_hour, b.group_id
@@ -140,11 +141,15 @@ export async function getAvailability(date: string, requestedSport?: string, vie
     // A coach logged in on this device (active, with their own code): they may book reserved times
     // marked for coaches, and their code is filled in for them.
     viewerCoachId
-      ? db().query<{ name: string; code: string }>(
-          `SELECT COALESCE(NULLIF(nickname, ''), full_name) AS name, coach_code AS code FROM coaches
-            WHERE id = $1 AND status = 'active' AND coach_code IS NOT NULL`,
-          [viewerCoachId]
-        ).then((r) => r.rows[0] ?? null)
+      ? Promise.all([
+          db().query<{ name: string; code: string }>(
+            `SELECT COALESCE(NULLIF(nickname, ''), full_name) AS name, coach_code AS code FROM coaches
+              WHERE id = $1 AND status = 'active' AND coach_code IS NOT NULL`,
+            [viewerCoachId]
+          ),
+          coachPaysLater(viewerCoachId), // pays after the session: the form says so
+          coachClients(viewerCoachId), // suggestions for the Client box
+        ]).then(([r, payLater, clients]) => (r.rows[0] ? { ...r.rows[0], payLater, clients } : null))
       : null,
     getSettings(),
     holidayOn(date),
@@ -210,7 +215,7 @@ export async function getAvailability(date: string, requestedSport?: string, vie
     // GCash / QR Ph / bank transfer for everyone; coaches (coach rate + coach code) pay as set in /admin.
     paymentMethods: enabledMethods(settings),
     coachPaymentMethods: coachMethods(settings, coachCodesExist(settings, activeCoaches)),
-    coach: viewer, // { name, code } when a coach is logged in on this device
+    coach: viewer, // { name, code, payLater, clients } when a coach is logged in on this device
     courts,
     // Booked times, shown with the booker's first name and last initial only ("Ana C.").
     bookings: taken.rows
@@ -340,6 +345,7 @@ export type NewBookingInput = {
   sport?: unknown; // what it's for: a sport or activity the court can be used for (default: the court's sport)
   extraCourtIds?: unknown; // group booking: more courts at the same time, under one code and one payment
   coachingCoachId?: unknown; // the customer asks this coach for a coaching session
+  clientName?: unknown; // a coach's own booking: who it's with (optional, for their Clients tab)
   website?: unknown; // honeypot — real people never fill this in
 };
 
@@ -368,6 +374,7 @@ export async function createBooking(
     hasProof: boolean;
     status: ActiveStatus;
     payBy: string | null; // online bookings: pay (send reference/screenshot) by this time, or the slot is released
+    payAfter: boolean; // a coach paying after the session: kept until then, never released
   }>
 > {
   const admin = !!opts.admin;
@@ -526,6 +533,7 @@ export async function createBooking(
     }
     const court = { rows: [courtsById.get(courtId)!] };
     const sport = activity;
+    let onReservedTime = false; // a coach booking a reserved time coaches can book: paid online, first
     if (!admin) {
       // Staff may book over reserved times (e.g. to sell a slot); players may not. Some reserved
       // times let coaches book: with their own coach code (not the shared one), paying online.
@@ -545,6 +553,7 @@ export async function createBooking(
               : `${name} is reserved for ${block.label} at that time — only NVBC coaches can book it, at the Coach rate with their own coach code.`
           );
         }
+        if (findBlockConflict(dayBlocks, id, date, startHour, endHour)) onReservedTime = true;
       }
     }
     const plan = settings.rate_plans[sport];
@@ -569,10 +578,15 @@ export async function createBooking(
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
     const status = activeBookingStatus(paymentMethod, paymentStatus, price.total);
+    // Coaches (their own code) usually pay at the end of the session: kept until then, never
+    // released for non-payment — unless staff turned that off for them, or after too many no-shows.
+    // Not for reserved times coaches can book: those are paid online first, like any customer booking.
+    const payAfter =
+      !admin && !!coach && !onReservedTime && paymentStatus === "unpaid" && price.total > 0 && (await coachPaysLater(coach.id));
     // Online bookings get PAY_WINDOW_MINUTES (at most until 10 minutes before the start) to pay,
     // like an airline booking; after that the slot is released.
     const payBy =
-      !admin && paymentMethod !== "cash" && paymentStatus === "unpaid" && price.total > 0
+      !admin && !payAfter && paymentMethod !== "cash" && paymentStatus === "unpaid" && price.total > 0
         ? new Date(paymentDeadline(Date.now(), date, startHour, nowAtFacility())).toISOString()
         : null;
 
@@ -607,12 +621,13 @@ export async function createBooking(
             `INSERT INTO bookings (court_id, booking_date, start_hour, end_hour, player_name, contact, notes, cancel_code,
                                    rate_type, hourly_rate, discount_pct, amount, payment_method, payment_status,
                                    payment_ref, paid_at, status, payment_proof, membership_id, pay_by, payment_sent_at, customer_email,
-                                   payment_proof_hash, activity, group_id, coach_id, coach_code_shared, coaching_coach_id, coaching_status)
+                                   payment_proof_hash, activity, group_id, coach_id, coach_code_shared, coaching_coach_id, coaching_status,
+                                   pay_after, client_name)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
                      CASE WHEN $14 = 'paid' THEN now() END, $16, $17, $18, $19,
                      CASE WHEN $15 <> '' OR $17 <> '' THEN now() END, $20,
                      CASE WHEN $17 <> '' THEN md5($17) ELSE '' END, $21, $22, $23, $24, $25,
-                     CASE WHEN $25::uuid IS NOT NULL THEN 'requested' END) RETURNING id`,
+                     CASE WHEN $25::uuid IS NOT NULL THEN 'requested' END, $26, $27) RETURNING id`,
             [
               cId, date, startHour, endHour, name, contact || "(admin)", notes, c,
               rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
@@ -625,6 +640,8 @@ export async function createBooking(
               coach?.id ?? null,
               sharedCoachCode,
               groupId === null ? coachingId : null, // the coaching request goes on the first court
+              payAfter,
+              coach ? str(input.clientName).replace(/\s+/g, " ").slice(0, 60) : "", // their own code only
             ]
           );
           // Claim every half-hour slot. The primary key on booking_slots rejects any overlap.
@@ -673,6 +690,7 @@ export async function createBooking(
     if (!admin) {
       const paying =
         paymentStatus === "for_verification" ? `${paymentLabel(paymentMethod)} payment sent — please verify`
+        : payAfter ? `Coach · pays after the session (${paymentLabel(paymentMethod)})`
         : paymentMethod === "cash" ? "Coach · cash at the desk"
         : price.total > 0 ? `${paymentLabel(paymentMethod)} · paying within ${PAY_WINDOW_MINUTES} min` : "No charge";
       const extra = extraIds.length ? ` (+${extraIds.length} more court${extraIds.length > 1 ? "s" : ""})` : "";
@@ -690,6 +708,7 @@ export async function createBooking(
         code, courtName: courtNames.join(", "), courts: courtNames, sport, date, startHour, endHour,
         rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: groupTotal,
         paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status, payBy,
+        payAfter,
       },
     };
   } catch (e: unknown) {
@@ -732,6 +751,7 @@ export type BookingView = {
   canCancel: boolean;
   cancelledBy: string | null; // "system" = released automatically (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
+  payAfter: boolean; // a coach paying after the session: kept until then
   courtNotes: string;
   phase: Phase | null; // in progress / completed (by the clock for paid bookings, or set by staff)
   rejectedNote: string; // payment rejected by staff: why (empty otherwise)
@@ -752,7 +772,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
             (SELECT json_agg(json_build_object('name', c2.name, 'status', g.status) ORDER BY c2.sort_order, c2.id)
                FROM bookings g JOIN courts c2 ON c2.id = g.court_id WHERE g.group_id = b.id) AS group_courts,
             b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
-            b.pay_by, c.notes AS court_notes, b.phase, b.rejected_note,
+            b.pay_by, b.pay_after, c.notes AS court_notes, b.phase, b.rejected_note,
             (SELECT count(*)::int FROM booking_messages m
               WHERE m.booking_id = b.id AND m.sender_kind = 'staff' AND m.read_at IS NULL) AS unread_messages
        FROM bookings b JOIN courts c ON c.id = b.court_id
@@ -796,6 +816,7 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       cancelledBy: r.cancelled_by,
       payBy: r.pay_by && (r.payment_status === "unpaid" || r.payment_status === "rejected") && r.status === "pending"
         ? new Date(r.pay_by).toISOString() : null,
+      payAfter: r.pay_after === true,
       rejectedNote: r.payment_status === "rejected" ? r.rejected_note : "",
       unreadMessages: r.unread_messages,
       courtNotes: r.court_notes,
@@ -879,6 +900,37 @@ export async function cancelByCode(rawCode: unknown): Promise<Result<{ id: strin
         kind: "booking_gone",
         title: `Cancelled by player — ${b.player_name}`,
         pushTitle: `Cancelled by player — ${publicName(b.player_name)}`,
+        body: bookingLine(b),
+        bookingCode: b.cancel_code,
+      }]);
+  }
+  return r;
+}
+
+/**
+ * A coach can't make it to their own booking (from their dashboard): cancelled like a customer
+ * cancelling online (same refund rules), so the court opens up — and anyone waiting is told.
+ */
+export async function cancelByCoach(coachId: string, bookingId: unknown): Promise<Result<{ id: string }>> {
+  if (typeof bookingId !== "string" || !/^[0-9a-f-]{36}$/i.test(bookingId)) return fail(400, "Invalid booking.");
+  const { rows } = await db().query<{ code: string; coach: string }>(
+    `SELECT b.cancel_code AS code, COALESCE(NULLIF(co.nickname, ''), co.full_name) AS coach
+       FROM bookings b JOIN coaches co ON co.id = b.coach_id
+      WHERE b.id = $1 AND b.coach_id = $2 AND b.group_id IS NULL AND b.status <> 'cancelled'`,
+    [bookingId, coachId]
+  );
+  if (!rows[0]) return fail(404, "Booking not found.");
+  const { code, coach } = rows[0];
+  const r = await cancelWhere("cancel_code = $1", code, "player", false, true);
+  if (r.ok) {
+    scheduleWaitlistCheck(r.data.date);
+    await logBooking({ id: r.data.id }, { name: coach.slice(0, 60), kind: "customer" }, "Cancelled", "Coach can't make it (Coaches Dashboard)");
+    const b = await bookingDetails("cancel_code", code);
+    if (b)
+      await notifyStaff([{
+        kind: "booking_gone",
+        title: `Cancelled by coach — ${b.player_name} can't make it`,
+        pushTitle: `Cancelled by coach — ${b.player_name} can't make it`,
         body: bookingLine(b),
         bookingCode: b.cancel_code,
       }]);
@@ -1186,7 +1238,13 @@ export async function updateBooking(id: string, input: BookingEdit, by = "Staff"
               -- A booking moved to another date or time starts over: its manual in progress/completed mark is cleared.
               phase = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 OR end_hour <> $5 THEN NULL ELSE phase END,
               -- ... and gets its "coming up" reminder again at the new time.
-              reminder_sent_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 THEN NULL ELSE reminder_sent_at END
+              reminder_sent_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 THEN NULL ELSE reminder_sent_at END,
+              -- ... and so do the coach's reminders and check-ins (a coach paying after the session).
+              coach_reminded_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 THEN NULL ELSE coach_reminded_at END,
+              coach_confirmed_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 THEN NULL ELSE coach_confirmed_at END,
+              coach_arrived_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR start_hour <> $4 THEN NULL ELSE coach_arrived_at END,
+              pay_reminded_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR end_hour <> $5 THEN NULL ELSE pay_reminded_at END,
+              pay_overdue_at = CASE WHEN booking_date IS DISTINCT FROM $3::date OR end_hour <> $5 THEN NULL ELSE pay_overdue_at END
         WHERE id = $1`,
       [id, courtId, date, startHour, endHour, name, contact || "(admin)", notes, rateType, price.hourlyRate,
         price.total, paymentMethod, paymentMethod === "cash" ? "" : paymentRef, status]

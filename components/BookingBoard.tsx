@@ -40,7 +40,8 @@ import PaymentPanel from "./PaymentPanel";
 import { AdminBookingCard } from "@/app/admin/BookingLookup";
 import { AuthError, type AdminBooking } from "@/app/admin/shared";
 import { ACTIVITY_ID, setCustomActivities, sportLabel, type ActivityDef } from "@/lib/sports";
-import { normalizeCoachCode } from "@/lib/coach";
+import { normalizeCoachCode, type KnownClient } from "@/lib/coach";
+import ClientInput from "./ClientInput";
 import { CoachChoice, type CoachOption } from "./BookingCoaching";
 import FullScreenLoader from "./FullScreenLoader";
 
@@ -68,7 +69,9 @@ type Availability = {
   };
   paymentMethods: PaymentMethod[];
   coachPaymentMethods: PaymentMethod[]; // how coaches (coach rate + coach code) may pay, set in /admin
-  coach: { name: string; code: string } | null; // a coach logged in on this device
+  // A coach logged in on this device: their name and code, whether they pay after the session, and
+  // their clients (suggestions for the Client box).
+  coach: { name: string; code: string; payLater: boolean; clients: KnownClient[] } | null;
   courts: { id: number; name: string; notes: string; sharedFrom: string | null }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
@@ -112,6 +115,7 @@ type Confirmed = {
   hasProof: boolean;
   status: ActiveStatus;
   payBy: string | null; // online: pay within the window or the slot is released
+  payAfter: boolean; // a coach paying after the session: kept until then
 };
 
 // The sport is already shown in the tab, so "Badminton Court 1" → "Court 1" in the grid header.
@@ -655,11 +659,14 @@ function BookingDialog({
   const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
   const standardOnly = p.rateTypes.length === 1;
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
+  // A logged-in coach booking with their own code pays after the session (unless staff turned that off).
+  const coachPaysAfter = rateType === "coach" && !coachOnly && !!data.coach?.payLater && normalizeCoachCode(rateCode) === data.coach.code;
   const noWayToPay = hasPrices && price.total > 0 && methodChoices.length === 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired || !!coachOnly : false;
 
   // A coach's own code: check it and book under the coach's details (filled in and locked).
   const [coachInfo, setCoachInfo] = useState<{ name: string; mobile: string; email: string } | null>(null);
+  const [clientName, setClientName] = useState(""); // a coach's own booking: who it's with (optional)
   const [coachError, setCoachError] = useState("");
   useEffect(() => {
     setCoachError("");
@@ -727,6 +734,7 @@ function BookingDialog({
           rateType,
           rateCode: codeRequired ? rateCode : "",
           coachingCoachId: rateType !== "coach" && wantCoach ? coachingId : "",
+          clientName: rateType === "coach" && coachInfo ? clientName : "",
           paymentMethod,
         }),
       });
@@ -776,7 +784,8 @@ function BookingDialog({
         {done ? (
           <div>
             <h2 id="dlg-title">
-              {done.status === "reserved" ? "Slot reserved 🏸"
+              {done.payAfter ? "You're booked — pay after your session 🏸"
+                : done.status === "reserved" ? "Slot reserved 🏸"
                 : done.status === "pending" && done.paymentStatus === "unpaid" ? "Complete your payment"
                 : done.status === "pending" ? "Booking received"
                 : "You're booked! 🎉"}
@@ -814,6 +823,7 @@ function BookingDialog({
                 payBy={payByLabel(done.date, done.startHour)}
                 deadline={done.payBy}
                 coachRate={rateType === "coach"}
+                payAfter={done.payAfter}
                 onUpdated={(u) => setDone({ ...done, paymentStatus: u.paymentStatus, paymentRef: u.paymentRef, hasProof: u.hasProof, payBy: null })}
               />
             )}
@@ -841,7 +851,7 @@ function BookingDialog({
             {coachOnly && (
               <div className="notice info">
                 🎓 This time is reserved for <strong>{coachOnly}</strong>. Only NVBC coaches can book it — at the Coach rate with
-                their own coach code, paying online (no cash).
+                their own coach code, paying online right after booking (no cash, and not after the session).
               </div>
             )}
             {court?.notes && (
@@ -916,7 +926,14 @@ function BookingDialog({
                   />
                 )}
                 {rateType === "coach" && coachInfo && (
-                  <p className="success" style={{ margin: "8px 0 0" }}>✓ Booking as coach <strong>{coachInfo.name}</strong> — your details are filled in below.</p>
+                  <>
+                    <p className="success" style={{ margin: "8px 0 0" }}>✓ Booking as coach <strong>{coachInfo.name}</strong> — your details are filled in below.</p>
+                    <label htmlFor="client" style={{ marginTop: 10 }}>
+                      Client <span className="hint">— optional: who this session is with (for your Clients tab; NVBC staff see it too)</span>
+                    </label>
+                    <ClientInput id="client" value={clientName} onChange={setClientName}
+                      clients={data.coach && normalizeCoachCode(rateCode) === data.coach.code ? data.coach.clients : []} />
+                  </>
                 )}
                 {rateType === "coach" && coachError && <div className="error" style={{ marginTop: 8 }}>{coachError}</div>}
                 {rateType === "coach" && !coachInfo && (
@@ -1009,7 +1026,9 @@ function BookingDialog({
                     ))}
                   </div>
                   <p className="hint" style={{ margin: "6px 0 0" }}>
-                    {paymentMethod === "cash"
+                    {coachPaysAfter
+                      ? "You pay after your session — your booking is kept for you (it won't be released). You'll get a reminder when it ends."
+                      : paymentMethod === "cash"
                       ? `Your slot will be Reserved — please pay at the front desk at least ${RELEASE_MINUTES} minutes before your start time.`
                       : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number.`}
                     {coachOnly

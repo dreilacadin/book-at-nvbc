@@ -317,6 +317,7 @@ export default function PaymentPanel({
   deadline = null,
   rejectedNote = "",
   coachRate = false,
+  payAfter = false,
   secondaryAction,
   onUpdated,
 }: {
@@ -330,6 +331,7 @@ export default function PaymentPanel({
   deadline?: string | null; // online booking: send the payment by this time (ISO) or the slot is released
   rejectedNote?: string; // staff rejected the payment sent: why
   coachRate?: boolean; // booked at the coach rate: paid the ways coaches may pay (Settings → Payment)
+  payAfter?: boolean; // a coach paying after the session: kept until then, no time limit
   secondaryAction?: React.ReactNode; // e.g. "Cancel this booking", shown beside the main button
   onUpdated?: (p: {
     paymentMethod: PaymentMethod;
@@ -419,6 +421,12 @@ export default function PaymentPanel({
 
   return (
     <div className="pay-box">
+      {payAfter && status !== "for_verification" && (
+        <div className="notice info" style={{ marginBottom: 10 }}>
+          💳 <strong>Pay after your session.</strong> This booking is kept for you — it won&apos;t be released. You&apos;ll
+          get a reminder when it ends.
+        </div>
+      )}
       {status === "for_verification" && (
         <div className="notice" style={{ marginTop: 10, marginBottom: 10 }}>
           Payment details received. Staff will confirm your payment shortly. You
@@ -462,7 +470,9 @@ export default function PaymentPanel({
       {method === "cash" && (
         <p style={{ margin: "10px 0 0" }}>
           Pay <strong>{formatPeso(amount)}</strong> in cash at the front desk
-          {payBy ? (
+          {payAfter ? (
+            " after your session"
+          ) : payBy ? (
             <>
               {" "}
               by <strong>{payBy}</strong>

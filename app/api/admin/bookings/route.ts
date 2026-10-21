@@ -62,6 +62,7 @@ export async function GET(req: NextRequest) {
               (SELECT string_agg(gc.name, ', ' ORDER BY gc.sort_order, gc.id) FROM bookings g JOIN courts gc ON gc.id = g.court_id
                 WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_courts,
               b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
+              r.pay_after, r.coach_confirmed_at, r.coach_arrived_at, r.client_name, r.coach_paid_desk_at,
               b.rejected_note, b.rejected_by, b.rejected_at, r.customer_email,
               (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = r.id) AS alert_devices,
               (SELECT count(*)::int FROM booking_messages m WHERE m.booking_id = r.id) AS message_count,

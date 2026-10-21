@@ -6,6 +6,11 @@ export const RELEASE_MINUTES = 10;
 export const REFUND_HOURS = 12;
 /** After booking online, players have this long to pay and send their receipt or reference number. */
 export const PAY_WINDOW_MINUTES = 15;
+/** Coaches who pay after their session: staff are told if it's still unpaid this long after the end. */
+export const PAY_AFTER_GRACE_MINUTES = 10;
+/** A coach loses "pay after the session" after this many no-shows in NO_SHOW_DAYS (staff can turn it back on). */
+export const NO_SHOW_LIMIT = 3;
+export const NO_SHOW_DAYS = 60;
 
 /** Nothing (accepted) paid yet: unpaid, or the payment sent was rejected by staff. */
 export const awaitingPayment = (paymentStatus: string) => paymentStatus === "unpaid" || paymentStatus === "rejected";
@@ -47,13 +52,31 @@ export function shouldRelease(
     status: string; payment_status: string; amount: number; date: string; start_hour: number; pay_by?: string | null;
     phase?: string | null; // marked in progress / completed by staff: never released
     auto_release?: boolean; // false once staff restored it: never released again
+    pay_after?: boolean; // a coach paying after the session: never released
   },
   now: Now,
   nowMs: number = Date.now()
 ): boolean {
   if ((b.status !== "pending" && b.status !== "reserved") || !awaitingPayment(b.payment_status) || b.amount <= 0) return false;
-  if (b.phase || b.auto_release === false) return false;
+  if (b.phase || b.auto_release === false || b.pay_after) return false;
   return minutesUntilStart(b.date, b.start_hour, now) <= RELEASE_MINUTES || (!!b.pay_by && Date.parse(b.pay_by) <= nowMs);
+}
+
+/** "I'm here" shows from this long before a coach's booking starts until it ends. */
+export const ARRIVE_WINDOW_MINUTES = 30;
+
+/**
+ * Where a coach's own booking is, for their dashboard: before it (confirm / can't make it), close
+ * to or during it ("I'm here"), or over (pay; overdue after the grace period).
+ */
+export function coachSessionStage(
+  b: { date: string; start_hour: number; end_hour: number },
+  now: Now
+): "before" | "arriving" | "over" | "overdue" {
+  const toEnd = minutesUntilStart(b.date, b.end_hour, now);
+  if (toEnd <= -PAY_AFTER_GRACE_MINUTES) return "overdue";
+  if (toEnd <= 0) return "over";
+  return minutesUntilStart(b.date, b.start_hour, now) <= ARRIVE_WINDOW_MINUTES ? "arriving" : "before";
 }
 
 /**
