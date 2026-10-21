@@ -42,6 +42,7 @@ type Booking = {
   hasProof: boolean;
   cancelledBy: string | null; // "system" = released (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
+  payAfter: boolean; // a coach paying after the session: kept until then
   courtNotes: string;
   phase: "in_progress" | "completed" | null;
   rejectedNote: string; // payment rejected by staff: why
@@ -287,6 +288,7 @@ export default function MyBookingPage() {
               deadline={booking.payBy}
               rejectedNote={booking.rejectedNote}
               coachRate={booking.rateType === "coach"}
+              payAfter={booking.payAfter}
               secondaryAction={
                 cancelInPanel ? (
                   <button

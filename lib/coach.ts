@@ -123,3 +123,101 @@ export function validateCoachForm(input: Record<string, unknown>, knownSports: s
 /** Up to two initials for a placeholder avatar ("Coach Marvin" → "CM"). */
 export const initials = (name: string) =>
   name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "?";
+
+// ---- A coach's clients (the Coaches Dashboard's Clients tab) ------------------------------------
+
+/** What the Clients tab needs from each of the coach's bookings. */
+export type ClientBooking = {
+  id: string; code: string; date: string; start_hour: number; end_hour: number; court_name: string;
+  status: string; payment_status: string; kind: "own" | "coaching";
+  client_name: string; // their own bookings: typed by the coach ("" = not set)
+  customer_name: string | null; customer_contact: string | null; coaching_status: string | null;
+  total: number;
+};
+
+export type Client = {
+  key: string; // "" = their own bookings with no client set
+  name: string;
+  contact: string; // from a coaching request, when there is one
+  bookings: ClientBooking[]; // newest first
+  upcoming: number;
+  next: string | null; // "YYYY-MM-DD" of the next session
+  last: string | null; // of the latest past session
+  unpaid: number; // their own bookings, played and not paid
+};
+
+export type ClientSort = "recent" | "name" | "sessions";
+
+const clientKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+/**
+ * Groups a coach's bookings by client: their own bookings by the client name they typed, and
+ * coaching sessions customers requested (accepted or waiting) by the customer's name. Cancelled
+ * and declined ones are left out. Own bookings with no client go last, under key "".
+ */
+export function groupClients(bookings: ClientBooking[], today: string, sort: ClientSort = "recent"): Client[] {
+  const groups = new Map<string, Client>();
+  for (const b of bookings) {
+    if (b.status === "cancelled") continue;
+    if (b.kind === "coaching" && b.coaching_status !== "accepted" && b.coaching_status !== "requested") continue;
+    const name = (b.kind === "own" ? b.client_name : b.customer_name ?? "").trim().replace(/\s+/g, " ");
+    const key = clientKey(name);
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { key, name: key ? name : "No client set", contact: "", bookings: [], upcoming: 0, next: null, last: null, unpaid: 0 }));
+    g.bookings.push(b);
+    // Typed differently on other bookings ("mark tan", "Mark Tan"): show the capitalised one.
+    if (key && g.name === g.name.toLowerCase() && name !== name.toLowerCase()) g.name = name;
+    if (!g.contact && b.customer_contact) g.contact = b.customer_contact;
+    if (b.date >= today) {
+      g.upcoming++;
+      if (!g.next || b.date < g.next) g.next = b.date;
+    } else if (!g.last || b.date > g.last) g.last = b.date;
+    if (b.kind === "own" && b.date < today && b.total > 0 && (b.payment_status === "unpaid" || b.payment_status === "rejected")) g.unpaid++;
+  }
+  const list = [...groups.values()];
+  for (const g of list) g.bookings.sort((a, b) => b.date.localeCompare(a.date) || b.start_hour - a.start_hour);
+  const activity = (g: Client) => g.next ?? g.last ?? "";
+  list.sort((a, b) => {
+    if (!a.key !== !b.key) return a.key ? -1 : 1; // "No client set" last
+    if (sort === "name") return a.name.localeCompare(b.name);
+    if (sort === "sessions") return b.bookings.length - a.bookings.length || a.name.localeCompare(b.name);
+    // Most recent: upcoming clients first (soonest first), then by their latest session.
+    if (!!a.next !== !!b.next) return a.next ? -1 : 1;
+    return a.next && b.next ? a.next.localeCompare(b.next) : activity(b).localeCompare(activity(a));
+  });
+  return list;
+}
+
+/** A client name the coach has used before, and how many sessions it has (for suggestions). */
+export type KnownClient = { name: string; sessions: number };
+
+/**
+ * Suggestions while a coach types a client's name, so the same person isn't entered twice under
+ * different spellings ("Mike Santos" → "Michael Santos"). A name matches when a word of it starts
+ * with a typed word (or the other way round), so a shared surname is enough. Best matches first,
+ * then the clients with the most sessions. Nothing typed: the coach's most frequent clients.
+ * A name that's exactly what was typed isn't suggested.
+ */
+export function suggestClients(query: string, clients: KnownClient[], limit = 5): KnownClient[] {
+  const words = (s: string) => clientKey(s).split(" ").filter((w) => w.length >= 2);
+  const typed = clientKey(query);
+  if (!typed) return [...clients].sort((a, b) => b.sessions - a.sessions).slice(0, limit);
+  const q = words(query);
+  return clients
+    .filter((c) => clientKey(c.name) !== typed)
+    .map((c) => {
+      const name = clientKey(c.name);
+      const ws = words(c.name);
+      let score = name.startsWith(typed) ? 10 : 0; // what's typed so far is the start of the name
+      for (const w of q) if (ws.some((n) => n.startsWith(w) || w.startsWith(n))) score += 2;
+      return { c, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || b.c.sessions - a.c.sessions || a.c.name.localeCompare(b.c.name))
+    .slice(0, limit)
+    .map((x) => x.c);
+}
+
+/** The coach's clients for suggestions, from their bookings (see groupClients). */
+export const knownClients = (bookings: ClientBooking[], today: string): KnownClient[] =>
+  groupClients(bookings, today).filter((c) => c.key).map((c) => ({ name: c.name, sessions: c.bookings.length }));

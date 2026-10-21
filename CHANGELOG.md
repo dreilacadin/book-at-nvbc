@@ -24,6 +24,38 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Coaches pay after their session.** Bookings coaches make with their own
+  coach code are no longer released for not paying first. On the Coaches
+  Dashboard they can tap **Yes, I'm coming** or **Can't make it** (which frees the
+  court), **I'm here** from 30 minutes before, and once the session ends, **I paid
+  at the desk** or **Pay online**. The 1-hour reminder now asks if they're still
+  coming, and a "please pay" reminder goes out when the session ends. Coaches'
+  bookings made before this change get the new rule too. Reserved times that
+  coaches can book are still paid online, right after booking.
+- **Clients tab for coaches.** When booking with their coach code, coaches can
+  add who the session is with (or add it later on their dashboard). The new
+  Clients tab groups their bookings and coaching requests by client, with
+  search, sorting, upcoming and past sessions, and unpaid ones. While typing a
+  client, their existing clients are suggested (e.g. "Mike Santos" suggests
+  "Michael Santos"), so the same person isn't entered twice.
+- **Staff:** **Pays after the session** switch per coach in the Coaches tab (on
+  by default). It turns off by itself after 3 no-shows in 60 days; turning it
+  back on starts the count again. The front desk is told when a coach checks in,
+  says they paid cash (to confirm), or still hasn't paid 10 minutes after their
+  session (new notification type, on for everyone).
+- **Staff:** When a coach taps **I paid at the desk**, their booking says so: the
+  day list shows "💵 Coach says paid cash at the desk — confirm", and the booking
+  shows who paid how much and when, right above **Payment received — confirm**.
+- **Staff:** On a coach's pay-after booking, the "unpaid bookings in the last 90
+  days" warning is no longer shown — paying after the session is the rule there.
+- **Database:** coaches' pay-after switch; bookings: pay after the session, the
+  coach's confirm and check-in times, the pay reminders, when the coach said they
+  paid at the desk, and the coach's client.
+  When it's added, coaches' unpaid upcoming bookings (made with their own code,
+  not on a reserved time) are switched to pay after the session, once.
+- **Internal:** reminders are sent every 5 minutes by a scheduled GitHub Actions
+  job (`.github/workflows/reminders.yml`) calling `/api/cron/reminders` with
+  `CRON_SECRET` (set in Vercel and as a GitHub repository secret).
 - **Staff:** **＋ Add member** in the Members tab, to sign someone up at the
   front desk. If the fee is paid (or no charge), they're approved right away
   with a member code, and you get the link to their member page to send them.

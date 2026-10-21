@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import FullScreenLoader from "@/components/FullScreenLoader";
 import { availabilityText, genderText, initials, type AvailabilitySlot, type Gender } from "@/lib/coach";
+import { NO_SHOW_DAYS, NO_SHOW_LIMIT } from "@/lib/booking-policy";
 import { formatDateLong, formatRange } from "@/lib/format";
 import { sportEmoji, sportLabel } from "@/lib/sports";
 import ProofViewer from "./ProofViewer";
@@ -14,6 +15,7 @@ type AdminCoach = {
   sports: string[]; rates: string; availability: AvailabilitySlot[]; status: "pending" | "active" | "inactive" | "rejected";
   coach_code: string | null; staff_notes: string; created_at: string; approved_at: string | null; approved_by: string | null;
   status_by: string | null; last_login_at: string | null; upcoming: number; past: number; sessions: number; misuse: number; requests: number;
+  pay_later: boolean; pays_later: boolean; no_shows: number; // pay after the session (switch, in effect, no-shows counting)
 };
 type CoachBooking = {
   id: string; code: string; date: string; start_hour: number; end_hour: number; court_name: string; sport: string; status: string;
@@ -117,6 +119,8 @@ export default function CoachesTab({ onAuthError }: { onAuthError: (e: unknown) 
                   {c.upcoming} upcoming · {c.past} past · {c.sessions} sessions
                   {c.requests ? ` · ${c.requests} request${c.requests > 1 ? "s" : ""} waiting` : ""}
                   {c.misuse ? ` · ⚠ code misused ${c.misuse}×` : ""}
+                  {c.no_shows ? ` · ${c.no_shows} no-show${c.no_shows > 1 ? "s" : ""}` : ""}
+                  {c.status === "active" && !c.pays_later ? " · pays before playing" : ""}
                 </small>
               </span>
               <span className={`badge ${c.status === "active" ? "" : c.status === "pending" ? "pending" : "grey"}`}>{STATUS_LABEL[c.status]}</span>
@@ -166,6 +170,7 @@ function CoachDetail({ c, act, onAuthError }: {
           if (r?.url) setResetUrl(String(r.url));
         }}>Password reset link</button>
       </div>
+      <PayLater c={c} act={act} />
       {resetUrl && (
         <div className="notice info">Send this one-time link to {c.full_name} (valid for 3 days): <span className="mono" style={{ wordBreak: "break-all" }}>{resetUrl}</span></div>
       )}
@@ -200,6 +205,31 @@ function CoachDetail({ c, act, onAuthError }: {
           <CoachBookingList list={past} />
         </details>
       )}
+    </div>
+  );
+}
+
+/** Owner/managers: may this coach pay after their session (their bookings aren't released)? */
+function PayLater({ c, act }: { c: AdminCoach; act: (b: Record<string, unknown>, done?: string) => Promise<Record<string, unknown> | null> }) {
+  const name = c.nickname || c.full_name;
+  const autoOff = c.pay_later && !c.pays_later; // too many no-shows
+  const set = (on: boolean) =>
+    act({ action: "pay-later", id: c.id, on }, on ? `${name} can pay after their sessions again.` : `${name} now pays before playing, like customers.`);
+  return (
+    <div className="setting-box">
+      <label className="check-row">
+        <input type="checkbox" checked={c.pays_later} onChange={(e) => set(e.target.checked)} />
+        <span>
+          <strong>Pays after the session</strong> — their bookings (made with their own code) aren&apos;t released for not
+          paying first. They&apos;re reminded to pay when the session ends, and you&apos;re told if it&apos;s still unpaid{" "}
+          10 minutes later.
+        </span>
+      </label>
+      <p className={autoOff ? "setting-warn" : "hint"} style={{ margin: "8px 0 0 26px" }}>
+        {autoOff
+          ? `⚠ Turned off automatically: ${c.no_shows} no-shows in the last ${NO_SHOW_DAYS} days. Tick it to turn it back on (no-shows count again from today).`
+          : `${c.no_shows} of ${NO_SHOW_LIMIT} no-shows in the last ${NO_SHOW_DAYS} days — at ${NO_SHOW_LIMIT} it turns off by itself. Bookings already made stay as they were.`}
+      </p>
     </div>
   );
 }

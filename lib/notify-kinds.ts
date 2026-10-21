@@ -8,6 +8,7 @@ export const NOTIFY_KINDS = [
   { id: "message", label: "Messages from customers", icon: "💬" },
   { id: "booking_moved", label: "Bookings rescheduled by customers", icon: "🔁" },
   { id: "coach_applied", label: "New coach applications", icon: "🧑‍🏫" },
+  { id: "coach_session", label: "Coaches: arrived, or not paid after their session", icon: "🎓" },
 ] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]["id"];
 export const ALL_KINDS: NotifyKind[] = NOTIFY_KINDS.map((k) => k.id);

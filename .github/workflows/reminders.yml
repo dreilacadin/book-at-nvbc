@@ -1,0 +1,34 @@
+# Sends due reminders every 5 minutes, so they go out on time even when nobody is using the site:
+# customers' "coming up" reminders, coaches' 1-hour reminders, coaches' "please pay" after their
+# session, and the front desk's "not paid yet" alert. Free on public repositories.
+#
+# Needs the repository secret CRON_SECRET (Settings → Secrets and variables → Actions), the same
+# value as CRON_SECRET in Vercel (production). The site can be changed with the repository variable
+# SITE_URL. GitHub may start scheduled runs a few minutes late, and pauses them after 60 days with
+# no activity in the repository (re-enable under Actions → Reminders).
+name: Reminders
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: # "Run workflow" by hand, to test
+
+permissions: {}
+
+concurrency:
+  group: reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Send due reminders
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL || 'https://book-at-nvbc.vercel.app' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "::error::The CRON_SECRET repository secret isn't set."; exit 1; fi
+          curl -fsS --max-time 60 --retry 2 --retry-delay 10 \
+            -H "Authorization: Bearer $CRON_SECRET" "$SITE_URL/api/cron/reminders"

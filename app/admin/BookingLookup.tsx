@@ -67,6 +67,7 @@ export const displayLabel = (d: DisplayStatus) =>
 /** When an unpaid active booking is released, in words. */
 export function releaseNote(b: AdminBooking): string | null {
   if ((b.status !== "pending" && b.status !== "reserved") || !awaitingPayment(b.payment_status) || b.amount <= 0) return null;
+  if (b.pay_after) return "Kept — the coach pays after the session";
   if (b.phase || !b.auto_release) return null; // marked in progress/completed, or restored: kept
   if (b.pay_by) return `Released at ${clockFromIso(b.pay_by)} if not paid online`;
   return `Released at ${payByLabel(b.date, b.start_hour)} if unpaid`;
@@ -533,6 +534,13 @@ export function AdminBookingCard({
         </div>
       )}
       {verifying && <PaymentCheck b={b} ticked={ticked} onTick={tick} />}
+      {b.status !== "cancelled" && b.payment_status === "for_verification" && b.coach_paid_desk_at && (
+        <div className="notice coach-paid" style={{ marginTop: 10 }}>
+          💵 <strong>{b.coach_name ?? b.name} says they paid {formatPeso(b.group_size > 1 ? b.group_total : b.amount)} in cash at the front desk</strong>{" "}
+          ({dayFromIso(b.coach_paid_desk_at)}, {clockFromIso(b.coach_paid_desk_at)}, on their Coaches Dashboard). Check that the cash came in, then tap{" "}
+          <strong>Payment received — confirm</strong> below. If it didn&apos;t, set Payment back to Unpaid.
+        </div>
+      )}
       <ReuseWarning b={b} />
       {b.expired_member_id && (
         <div className="expired-flag" style={{ marginTop: 10 }}>
@@ -568,7 +576,8 @@ export function AdminBookingCard({
           )}
         </div>
       )}
-      {b.player_flags.length > 0 && (
+      {/* Not on a coach's pay-after booking: paying after the session is the agreed rule there. */}
+      {b.player_flags.length > 0 && !b.pay_after && (
         <div className="notice player-flags" style={{ marginTop: 10 }}>
           ⚠ <strong>{flagSummary(b.player_flags)}</strong> in the last 90 days (same phone/email):{" "}
           {b.player_flags.slice(0, 5).map((f) => `${shortDay(f.date)} (${f.kind === "no_show" ? "no-show" : "not paid in time"})`).join(", ")}

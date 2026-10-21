@@ -174,7 +174,9 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
     );
     await client.query(
       `UPDATE bookings SET court_id = $2, booking_date = $3, start_hour = $4, end_hour = $5,
-              reschedule_count = reschedule_count + 1, reminder_sent_at = NULL
+              reschedule_count = reschedule_count + 1, reminder_sent_at = NULL,
+              -- The coach's reminders and check-ins start over at the new time.
+              coach_reminded_at = NULL, coach_confirmed_at = NULL, coach_arrived_at = NULL, pay_reminded_at = NULL, pay_overdue_at = NULL
         WHERE id = $1`,
       [b.id, courtId, date, start, start + hours]
     );

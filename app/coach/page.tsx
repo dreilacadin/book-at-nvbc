@@ -5,17 +5,24 @@ import AddToCalendar from "@/components/AddToCalendar";
 import CoachProfileForm, {
   type CoachFormValues,
 } from "@/components/CoachProfileForm";
+import ClientInput from "@/components/ClientInput";
 import FullScreenLoader from "@/components/FullScreenLoader";
 import {
   availabilityText,
   genderText,
+  groupClients,
   initials,
+  knownClients,
   isBirthday,
   type AvailabilitySlot,
+  type ClientSort,
+  type KnownClient,
   type Gender,
 } from "@/lib/coach";
+import { coachSessionStage, minutesUntilStart } from "@/lib/booking-policy";
 import { formatDateLong, formatRange } from "@/lib/format";
-import { formatPeso } from "@/lib/pricing";
+import { formatPeso, paymentLabel, type PaymentMethod } from "@/lib/pricing";
+import { nowAtFacility } from "@/lib/time";
 import {
   currentSubscription,
   isIos,
@@ -73,6 +80,14 @@ type Booking = {
   remind: boolean;
   misuse: boolean;
   group_courts: number;
+  payment_method: string;
+  phase: string | null;
+  no_show: boolean;
+  pay_after: boolean; // kept until after the session, paid then
+  confirmed_at: string | null;
+  arrived_at: string | null;
+  total: number; // with a group's other courts
+  client_name: string; // their own bookings: who it's with ("" = not set)
 };
 type Me = {
   coach: Coach;
@@ -81,7 +96,16 @@ type Me = {
   push: { publicKey: string } | null;
   pushOn: boolean;
   activities: ActivityDef[];
+  payment: CoachPayment;
 };
+// How a coach can pay for a session afterwards (Settings → Payment methods).
+type CoachPayment = { desk: boolean; online: PaymentMethod[] };
+
+/** Their own booking, played (or partly), still to pay. */
+const toPay = (b: Booking) =>
+  b.kind === "own" && b.status !== "cancelled" && !b.no_show && b.total > 0 &&
+  (b.payment_status === "unpaid" || b.payment_status === "rejected") &&
+  ["over", "overdue"].includes(coachSessionStage(b, nowAtFacility()));
 
 async function call(body: Record<string, unknown>) {
   const res = await fetch("/api/coaches/me", {
@@ -98,7 +122,7 @@ async function call(body: Record<string, unknown>) {
 export default function CoachDashboard() {
   const [me, setMe] = useState<Me | null>(null);
   const [out, setOut] = useState(false);
-  const [tab, setTab] = useState<"bookings" | "profile">("bookings");
+  const [tab, setTab] = useState<"bookings" | "clients" | "profile">("bookings");
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -224,6 +248,13 @@ export default function CoachDashboard() {
         </button>
         <button
           role="tab"
+          aria-selected={tab === "clients"}
+          onClick={() => setTab("clients")}
+        >
+          Clients
+        </button>
+        <button
+          role="tab"
           aria-selected={tab === "profile"}
           onClick={() => setTab("profile")}
         >
@@ -232,6 +263,8 @@ export default function CoachDashboard() {
       </div>
       {tab === "bookings" ? (
         <Bookings me={me} requests={requests} reload={load} />
+      ) : tab === "clients" ? (
+        <Clients me={me} reload={load} />
       ) : (
         <Profile me={me} reload={load} />
       )}
@@ -249,6 +282,7 @@ function Bookings({
   reload: () => void;
 }) {
   const today = todayManila();
+  const clients = knownClients(me.bookings, today);
   const live = me.bookings.filter(
     (b) =>
       !(
@@ -257,9 +291,11 @@ function Bookings({
         b.status !== "cancelled"
       ),
   );
+  const unpaid = live.filter(toPay).sort((a, b) => a.date.localeCompare(b.date) || a.start_hour - b.start_hour);
   const upcoming = live
     .filter(
       (b) =>
+        !toPay(b) &&
         b.date >= today &&
         b.status !== "cancelled" &&
         b.coaching_status !== "declined" &&
@@ -280,6 +316,14 @@ function Bookings({
           ))}
         </section>
       )}
+      {unpaid.length > 0 && (
+        <section className="stack">
+          <h2 style={{ margin: 0 }}>💳 To pay</h2>
+          {unpaid.map((b) => (
+            <BookingCard key={b.id} b={b} reload={reload} payment={me.payment} clients={clients} upcoming />
+          ))}
+        </section>
+      )}
       <section className="stack">
         <h2 style={{ margin: 0 }}>Upcoming</h2>
         {upcoming.length === 0 && (
@@ -289,7 +333,7 @@ function Bookings({
           </p>
         )}
         {upcoming.map((b) => (
-          <BookingCard key={b.id} b={b} reload={reload} upcoming />
+          <BookingCard key={b.id} b={b} reload={reload} payment={me.payment} clients={clients} upcoming />
         ))}
       </section>
       {past.length > 0 && (
@@ -297,7 +341,7 @@ function Bookings({
           <summary>Past and cancelled ({past.length})</summary>
           <div className="stack" style={{ marginTop: 8 }}>
             {past.map((b) => (
-              <BookingCard key={b.id} b={b} reload={reload} />
+              <BookingCard key={b.id} b={b} reload={reload} clients={clients} />
             ))}
           </div>
         </details>
@@ -318,18 +362,26 @@ const statusText = (b: Booking) =>
         }[b.coaching_status ?? ""] ?? "")
       : b.status === "confirmed"
         ? "Confirmed"
-        : b.status === "reserved"
-          ? "Reserved — pay cash at the desk"
-          : "Pending payment";
+        : b.payment_status === "for_verification"
+          ? "Payment sent"
+          : b.pay_after
+            ? "Pay after your session"
+            : b.status === "reserved"
+              ? "Reserved — pay cash at the desk"
+              : "Pending payment";
 
 function BookingCard({
   b,
   reload,
   upcoming,
+  payment,
+  clients,
 }: {
   b: Booking;
   reload: () => void;
   upcoming?: boolean;
+  payment?: CoachPayment;
+  clients: KnownClient[];
 }) {
   const [busy, setBusy] = useState(false);
   return (
@@ -356,12 +408,16 @@ function BookingCard({
         {b.customer_contact && ` · ${b.customer_contact}`} ·{" "}
         <span className="mono">{b.code}</span>
       </div>
+      {b.kind === "own" && b.status !== "cancelled" && <ClientEdit b={b} reload={reload} clients={clients} />}
       {b.misuse && (
         <div className="rejected-note">
           ⚠ NVBC flagged this booking: your coach code was used by someone else.
         </div>
       )}
-      {upcoming && (
+      {upcoming && b.kind === "own" && b.status !== "cancelled" && payment && (
+        <OwnBookingActions b={b} payment={payment} reload={reload} />
+      )}
+      {upcoming && !["over", "overdue"].includes(coachSessionStage(b, nowAtFacility())) && (
         <>
           <label className="check-row">
             <input
@@ -396,6 +452,203 @@ function BookingCard({
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * The coach's own booking: still coming? (keep it / can't make it), "I'm here" from 30 minutes
+ * before, and once it's over, paying for it (cash at the desk, confirmed by staff, or online).
+ */
+function OwnBookingActions({ b, payment, reload }: { b: Booking; payment: CoachPayment; reload: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const stage = coachSessionStage(b, nowAtFacility());
+  const unpaid = b.total > 0 && (b.payment_status === "unpaid" || b.payment_status === "rejected");
+  const run = async (action: string, confirmText?: string) => {
+    if (confirmText && !window.confirm(confirmText)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await call({ action, bookingId: b.id });
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancel = () =>
+    run("cancel", `Cancel your booking (${formatRange(b.start_hour, b.end_hour)}, ${b.court_name})? The court opens up for others.`);
+
+  if (b.no_show) return null;
+  if (stage === "over" || stage === "overdue") {
+    if (!unpaid)
+      return b.payment_status === "for_verification" ? (
+        <p className="hint" style={{ margin: 0 }}>Payment sent — the front desk will confirm it. Thanks!</p>
+      ) : null;
+    return (
+      <div className="coach-status coach-pay">
+        <div>
+          <strong>Please pay {formatPeso(b.total)}</strong> for this session
+          {payment.desk && payment.online.length
+            ? ` — at the front desk, or online (${payment.online.map(paymentLabel).join(", ")}).`
+            : payment.desk ? " at the front desk." : ` online (${payment.online.map(paymentLabel).join(", ")}).`}
+        </div>
+        <div className="card-actions" style={{ marginTop: 0 }}>
+          {payment.desk && (
+            <button type="button" className="btn small" disabled={busy}
+              onClick={() => run("paid-desk", `Did you pay ${formatPeso(b.total)} in cash at the front desk? The desk will confirm it.`)}>
+              ✓ I paid at the desk
+            </button>
+          )}
+          {payment.online.length > 0 && (
+            <a className={`btn small${payment.desk ? " secondary" : ""}`} href={`/my-booking#${encodeURIComponent(b.code)}`}>
+              Pay online
+            </a>
+          )}
+        </div>
+        {error && <div className="error">{error}</div>}
+      </div>
+    );
+  }
+  return (
+    <div className="coach-status">
+      {b.pay_after && unpaid && (
+        <p className="coach-status-note">
+          💳 <strong>Pay after your session.</strong> This booking is kept for you (it won&apos;t be released). You&apos;ll be
+          reminded when it ends.
+        </p>
+      )}
+      <div className="card-actions" style={{ marginTop: 0, alignItems: "center" }}>
+        {stage === "arriving" && !b.arrived_at && (
+          <button type="button" className="btn small" disabled={busy} onClick={() => run("arrived")}>📍 I&apos;m here</button>
+        )}
+        {b.arrived_at ? (
+          <span className="badge">📍 Checked in</span>
+        ) : b.confirmed_at ? (
+          <span className="badge">✓ You&apos;re coming</span>
+        ) : stage === "before" ? (
+          <button type="button" className="btn small" disabled={busy} onClick={() => run("confirm")}>✓ Yes, I&apos;m coming</button>
+        ) : null}
+        {!b.arrived_at && b.phase === null && minutesUntilStart(b.date, b.start_hour, nowAtFacility()) > 0 && (
+          <button type="button" className="btn small secondary danger-text" disabled={busy} onClick={cancel}>Can&apos;t make it</button>
+        )}
+      </div>
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+/** Who one of the coach's own bookings is with: shown, and set or changed in place. */
+function ClientEdit({ b, reload, clients }: { b: Booking; reload: () => void; clients: KnownClient[] }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(b.client_name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!editing)
+    return (
+      <div className="coach-client">
+        👤 {b.client_name ? <strong>{b.client_name}</strong> : <span className="muted">No client set</span>}{" "}
+        <button type="button" className="link-btn" onClick={() => { setValue(b.client_name); setEditing(true); }}>
+          {b.client_name ? "Change" : "Add client"}
+        </button>
+      </div>
+    );
+  return (
+    <form
+      className="coach-client-edit"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError("");
+        try {
+          await call({ action: "client", bookingId: b.id, client: value });
+          setEditing(false);
+          reload();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Couldn't save.");
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <ClientInput value={value} onChange={setValue} clients={clients} autoFocus placeholder="Client's name" label="Client's name" />
+      <button className="btn small" disabled={busy}>Save</button>
+      <button type="button" className="btn small secondary" onClick={() => setEditing(false)}>Cancel</button>
+      {error && <div className="error">{error}</div>}
+    </form>
+  );
+}
+
+/** The Clients tab: the coach's bookings grouped by client, sortable and searchable. */
+function Clients({ me, reload }: { me: Me; reload: () => void }) {
+  const [sort, setSort] = useState<ClientSort>("recent");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<string | null>(null);
+  const today = todayManila();
+  const all = groupClients(me.bookings, today, sort);
+  const clients = knownClients(me.bookings, today);
+  const query = q.trim().toLowerCase();
+  const list = query ? all.filter((c) => c.name.toLowerCase().includes(query) || c.contact.includes(query)) : all;
+  const named = all.filter((c) => c.key).length;
+  return (
+    <div className="stack">
+      <p className="muted" style={{ margin: 0 }}>
+        Your bookings grouped by client: the client you add to your own bookings, and customers who requested coaching with you.
+      </p>
+      <div className="client-toolbar">
+        <input type="search" placeholder="Search clients" aria-label="Search clients" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select aria-label="Sort clients" value={sort} onChange={(e) => setSort(e.target.value as ClientSort)}>
+          <option value="recent">Next / most recent</option>
+          <option value="name">Name (A–Z)</option>
+          <option value="sessions">Most sessions</option>
+        </select>
+      </div>
+      {named === 0 && (
+        <div className="notice info">
+          No clients yet. Add a client to a booking with <strong>Add client</strong> on the Bookings tab, or type it in the
+          Client box when you book with your coach code.
+        </div>
+      )}
+      {list.length === 0 && named > 0 && <p className="muted">No clients match “{q}”.</p>}
+      {list.map((c) => {
+        const isOpen = open === c.key;
+        return (
+          <div key={c.key || "-"} className={`card client-card${c.key ? "" : " no-client"}`}>
+            <button type="button" className="client-head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : c.key)}>
+              <span>
+                <strong>{c.name}</strong>
+                {c.contact && <span className="muted"> · {c.contact}</span>}
+                <small>
+                  {c.bookings.length} session{c.bookings.length === 1 ? "" : "s"}
+                  {c.next ? ` · next ${formatDateLong(c.next)}` : c.last ? ` · last ${formatDateLong(c.last)}` : ""}
+                  {c.unpaid ? ` · ⚠ ${c.unpaid} not paid` : ""}
+                </small>
+              </span>
+              <span aria-hidden="true">{isOpen ? "▴" : "▾"}</span>
+            </button>
+            {isOpen && (
+              <ul className="client-sessions">
+                {c.bookings.map((b) => {
+                  const full = me.bookings.find((x) => x.id === b.id)!;
+                  return (
+                    <li key={b.id}>
+                      <div>
+                        <strong>{formatDateLong(b.date)}</strong> · {formatRange(b.start_hour, b.end_hour)}
+                        <div className="muted">
+                          {sportEmoji(full.sport)} {b.court_name} · {b.kind === "own" ? `${formatPeso(b.total)} · ${statusText(full)}` : `Coaching · ${statusText(full)}`}
+                        </div>
+                      </div>
+                      {b.kind === "own" && <ClientEdit b={full} reload={reload} clients={clients} />}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
