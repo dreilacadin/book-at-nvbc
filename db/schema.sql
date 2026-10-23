@@ -727,3 +727,9 @@ UPDATE admin_notify_state SET kinds_version = 5 WHERE kinds_version < 5;
 ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 5;
 ALTER TABLE admin_notify_state ALTER COLUMN kinds
   SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message', 'booking_moved', 'coach_applied', 'coach_session'];
+
+-- v32: prices per shared court ---------------------------------------------------------------
+-- A court shared with a sport or activity (Settings → Activities and shared courts) can have its
+-- own prices for it: {"pickleball": {"7": {"weekendRates": true, "weekday": {...}, "weekend": {...}}}}.
+-- Courts not listed use the activity's prices in rate_plans; its Member/Coach switches apply to both.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS court_rates JSONB NOT NULL DEFAULT '{}'::jsonb;

@@ -5,6 +5,7 @@ import { formatDuration, formatHour, halfHours } from "@/lib/format";
 import {
   formatPeso,
   PAYMENT_METHODS,
+  planForCourt,
   RATE_TYPES,
   rateFor,
   ratesForDate,
@@ -39,19 +40,19 @@ export default function EditBooking({
   const [hourlyRate, setHourlyRate] = useState<number | "">(booking.hourly_rate);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(booking.payment_method);
   const [paymentRef, setPaymentRef] = useState(booking.payment_ref);
-  const [plans, setPlans] = useState<Settings["rate_plans"] | null>(null);
+  const [prices, setPrices] = useState<Pick<Settings, "rate_plans" | "court_rates"> | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api<Settings>("/api/admin/settings")
-      .then((s) => setPlans(s.rate_plans))
+      .then((s) => setPrices(s))
       .catch(onAuthError); // prices are only a suggestion; the form works without them
   }, [onAuthError]);
 
   const hours = end - start;
-  const sport = courts.find((c) => c.id === courtId)?.sport;
-  const plan = sport && plans?.[sport];
+  // The booking's sport or activity on the chosen court (a shared court may have its own prices).
+  const plan = prices && planForCourt(prices, booking.sport, courtId);
   const currentRate = plan ? rateFor(ratesForDate(plan, date), rateType) : null; // switched-off rates fall back to regular
   const amount = hours > 0 && hourlyRate !== "" ? Math.round(hourlyRate * hours * 100) / 100 : 0;
   const hourOptions = halfHours(0, 24);

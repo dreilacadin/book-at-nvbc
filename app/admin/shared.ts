@@ -1,5 +1,5 @@
 // Types and helpers shared by the admin page and its parts.
-import type { BookingStatus, GcashAccount, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
+import type { BookingStatus, CourtRates, GcashAccount, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
 import type { Sport } from "@/lib/sports";
 
 export type AdminBooking = {
@@ -121,6 +121,7 @@ export type Settings = {
   membership_fee_adult: number;
   activities: { id: string; label: string; emoji: string }[]; // besides the sports (e.g. Zumba)
   activity_courts: Record<string, number[]>; // sport/activity → extra courts it can be booked on
+  court_rates: CourtRates; // sport/activity → shared court id → its own prices there
   reschedule_hours: number;
   reschedule_max: number; // 0 = customers can't reschedule
   closed_weekdays: number[]; // closed every week (0 = Sunday … 6 = Saturday)

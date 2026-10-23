@@ -137,7 +137,7 @@ Each booking has its own conversation. Customers write from **My booking**; staf
 
 ### Activities, groups, rescheduling and the waitlist
 
-- **Activities** (Settings → Activities and shared courts): let a sport use other courts (e.g. pickleball on badminton courts) and add activities like Zumba with their own courts and prices. Each appears as a tab on Book a court; one court can only hold one booking at a time, whatever it's for.
+- **Activities** (Settings → Activities and shared courts): let a sport use other courts (e.g. pickleball on badminton courts) and add activities like Zumba with their own courts and prices. Each appears as a tab on Book a court; one court can only hold one booking at a time, whatever it's for. A ticked court can have **Own prices** for that sport or activity (otherwise it uses the sport's prices).
 - **Group bookings:** in the booking form, players can add more courts free at the same time. They share one code, QR and payment; the extra courts point to the first booking (`group_id`).
 - **Rescheduling** (Settings → Rescheduling): customers can move a booking on My booking to a free court/time of the same sport, length and price, up to N hours before the start, M times (0 = off). Group bookings go through staff.
 - **Waitlist:** tapping a taken slot lets players ask to be notified (push and/or email). When a booking is cancelled, released or moved, everyone waiting for a now-free time hears at once.

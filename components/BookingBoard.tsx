@@ -72,7 +72,9 @@ type Availability = {
   // A coach logged in on this device: their name and code, whether they pay after the session, and
   // their clients (suggestions for the Client box).
   coach: { name: string; code: string; payLater: boolean; clients: KnownClient[] } | null;
-  courts: { id: number; name: string; notes: string; sharedFrom: string | null }[];
+  // `rates`: a shared court's own prices on this date (null: the sport's prices, under pricing);
+  // `weekend`: they're its weekend prices.
+  courts: { id: number; name: string; notes: string; sharedFrom: string | null; rates: SportRates | null; weekend: boolean }[];
   // Booked times with the booker's first name and last initial ("Ana C.").
   bookings: { courtId: number; start: number; end: number; name: string; status: ActiveStatus }[];
   // Reserved times (Open Play, …); `coaches`: coaches can still book them (coach code, online payment).
@@ -654,14 +656,26 @@ function BookingDialog({
   const [copied, setCopied] = useState(false);
 
   const p = data.pricing;
-  const price = computePrice(rateFor(p.rates, rateType), hours, p.rates.regular);
-  const total = Math.round(price.total * courtCount * 100) / 100; // a group pays for every court
-  const hasPrices = p.rates.regular > 0 || p.rates.member > 0 || p.rates.coach > 0;
+  // A shared court may have its own prices; a group pays for every court at its own price.
+  const ratesOf = (id: number) => data.courts.find((c) => c.id === id)?.rates ?? p.rates;
+  const rates = ratesOf(selection.courtId);
+  const weekend = court?.rates ? court.weekend : p.weekend; // the chosen court's weekend prices apply
+  const courtPrices = [selection.courtId, ...extraIds].map((id) => ({
+    id, price: computePrice(rateFor(ratesOf(id), rateType), hours, ratesOf(id).regular),
+  }));
+  const price = courtPrices[0].price;
+  const total = Math.round(courtPrices.reduce((sum, c) => sum + c.price.total, 0) * 100) / 100;
+  const savings = Math.round(courtPrices.reduce((sum, c) => sum + c.price.savings, 0) * 100) / 100;
+  const sameRate = courtPrices.every((c) => c.price.hourlyRate === price.hourlyRate && c.price.regularRate === price.regularRate);
+  const hasPrices = [selection.courtId, ...extraIds].some((id) => {
+    const r = ratesOf(id);
+    return r.regular > 0 || r.member > 0 || r.coach > 0;
+  });
   const standardOnly = p.rateTypes.length === 1;
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
   // A logged-in coach booking with their own code pays after the session (unless staff turned that off).
   const coachPaysAfter = rateType === "coach" && !coachOnly && !!data.coach?.payLater && normalizeCoachCode(rateCode) === data.coach.code;
-  const noWayToPay = hasPrices && price.total > 0 && methodChoices.length === 0;
+  const noWayToPay = hasPrices && total > 0 && methodChoices.length === 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired || !!coachOnly : false;
 
   // A coach's own code: check it and book under the coach's details (filled in and locked).
@@ -769,7 +783,7 @@ function BookingDialog({
   }
 
   const rateOptions = RATE_TYPES.filter((r) => p.rateTypes.includes(r.id) && (!coachOnly || r.id === "coach")).map((r) => ({
-    ...r, rate: rateFor(p.rates, r.id),
+    ...r, rate: rateFor(rates, r.id),
   }));
 
   return (
@@ -886,6 +900,9 @@ function BookingDialog({
                       <input type="checkbox" checked={extraIds.includes(c.id)}
                         onChange={(e) => setExtra(e.target.checked ? [...extraIds, c.id] : extraIds.filter((x) => x !== c.id))} />
                       {c.name}
+                      {hasPrices && rateFor(ratesOf(c.id), rateType) !== price.hourlyRate && (
+                        <span className="hint"> ({formatPeso(rateFor(ratesOf(c.id), rateType))}/hr)</span>
+                      )}
                     </label>
                   ))}
                 </div>
@@ -896,7 +913,7 @@ function BookingDialog({
             {!standardOnly && (
               <div className="field">
                 <label id="rate-label">
-                  Booking as{p.weekend && hasPrices && <span className="hint"> — weekend prices</span>}
+                  Booking as{weekend && hasPrices && <span className="hint"> — weekend prices</span>}
                 </label>
                 <div className="segmented" role="radiogroup" aria-labelledby="rate-label">
                   {rateOptions.map((r) => (
@@ -1043,17 +1060,28 @@ function BookingDialog({
                 </div>
 
                 <div className="price-box" aria-live="polite">
-                  <div className="pay-row">
-                    <span>
-                      {p.weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)}/hr × {formatDuration(hours)}
-                      {courtCount > 1 && ` × ${courtCount} courts`}
-                    </span>
-                    <span>{formatPeso(total)}</span>
-                  </div>
-                  {price.savings > 0 && (
+                  {sameRate ? (
+                    <div className="pay-row">
+                      <span>
+                        {weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)}/hr × {formatDuration(hours)}
+                        {courtCount > 1 && ` × ${courtCount} courts`}
+                      </span>
+                      <span>{formatPeso(total)}</span>
+                    </div>
+                  ) : (
+                    courtPrices.map((c) => (
+                      <div key={c.id} className="pay-row">
+                        <span>
+                          {data.courts.find((x) => x.id === c.id)?.name} · {formatPeso(c.price.hourlyRate)}/hr × {formatDuration(hours)}
+                        </span>
+                        <span>{formatPeso(c.price.total)}</span>
+                      </div>
+                    ))
+                  )}
+                  {savings > 0 && (
                     <div className="pay-row" style={{ color: "var(--brand)", fontSize: 14 }}>
-                      <span>You save vs. regular ({formatPeso(price.regularRate)}/hr)</span>
-                      <span>{formatPeso(price.savings)}</span>
+                      <span>You save vs. regular{sameRate && ` (${formatPeso(price.regularRate)}/hr)`}</span>
+                      <span>{formatPeso(savings)}</span>
                     </div>
                   )}
                   <div className="pay-row total">
@@ -1065,7 +1093,7 @@ function BookingDialog({
               </>
             )}
 
-            {hasPrices && price.total > 0 && <BookingPolicy />}
+            {hasPrices && total > 0 && <BookingPolicy />}
 
             {/* Honeypot: hidden from people, often filled in by spam bots. */}
             <div className="hp" aria-hidden="true">
@@ -1080,7 +1108,7 @@ function BookingDialog({
               <button type="button" className="btn secondary" onClick={onClose}>Cancel</button>
               <button type="submit" className="btn" disabled={busy || startsSoon || noWayToPay}>
                 {busy ? "Booking…"
-                  : !hasPrices || price.total <= 0 ? "Confirm booking"
+                  : !hasPrices || total <= 0 ? "Confirm booking"
                   : paymentMethod === "cash" ? `Reserve · ${formatPeso(total)}`
                   : `Book & pay · ${formatPeso(total)}`}
               </button>
