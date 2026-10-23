@@ -12,6 +12,7 @@ import {
   RATE_TYPES,
   rateTypeLabel,
   type BookingStatus,
+  type CourtPrices,
   type PaymentMethod,
   type PaymentStatus,
   type RateType,
@@ -446,12 +447,6 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
           const plan = s.rate_plans[sp.id];
           if (!plan) return null;
           const setPlan = (next: Partial<SportPricing>) => set("rate_plans", { ...s.rate_plans, [sp.id]: { ...plan, ...next } });
-          // Only the rates switched on get a price column; with neither, it's one "Standard" price.
-          const types = RATE_TYPES.filter((t) => t.id === "regular" || (t.id === "member" ? plan.memberRates : plan.coachRates));
-          const regularLabel = types.length === 1 ? "Standard" : plan.memberRates ? "Non-member" : "Regular";
-          const days = plan.weekendRates
-            ? ([["weekday", "Weekdays"], ["weekend", "Weekends"]] as const)
-            : ([["weekday", "Every day"]] as const);
           return (
             <div key={sp.id} className="price-plan">
               <div className="price-plan-head">
@@ -469,40 +464,7 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
                   Separate weekend prices
                 </label>
               </div>
-              <div className="table-wrap">
-                <table className="list price-grid">
-                  <thead>
-                    <tr>
-                      <th></th>
-                      {types.map((t) => <th key={t.id}>{t.id === "regular" ? regularLabel : t.label}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {days.map(([day, dayLabel]) => (
-                      <tr key={day}>
-                        <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{dayLabel}</td>
-                        {types.map((t) => (
-                          <td key={t.id}>
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              required
-                              aria-label={`${sp.label} ${dayLabel} ${t.label} price per hour`}
-                              value={plan[day][t.id] ?? ""}
-                              onChange={(e) =>
-                                setPlan({
-                                  [day]: { ...plan[day], [t.id]: e.target.value === "" ? ("" as unknown as number) : Number(e.target.value) },
-                                })
-                              }
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <PriceTable label={sp.label} plan={plan} prices={plan} onChange={setPlan} />
             </div>
           );
         })}
@@ -737,12 +699,72 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
   );
 }
 
+/**
+ * Prices per hour for one sport or activity (or one of its shared courts): a column per rate
+ * switched on (with neither, one "Standard" price), a row for weekdays and weekends if separate.
+ */
+function PriceTable({
+  label,
+  plan,
+  prices,
+  onChange,
+}: {
+  label: string;
+  plan: SportPricing; // its switches decide the columns and rows
+  prices: Pick<SportPricing, "weekday" | "weekend">;
+  onChange: (next: Pick<SportPricing, "weekday" | "weekend">) => void;
+}) {
+  const types = RATE_TYPES.filter((t) => t.id === "regular" || (t.id === "member" ? plan.memberRates : plan.coachRates));
+  const regularLabel = types.length === 1 ? "Standard" : plan.memberRates ? "Non-member" : "Regular";
+  const days = plan.weekendRates
+    ? ([["weekday", "Weekdays"], ["weekend", "Weekends"]] as const)
+    : ([["weekday", "Every day"]] as const);
+  return (
+    <div className="table-wrap">
+      <table className="list price-grid">
+        <thead>
+          <tr>
+            <th></th>
+            {types.map((t) => <th key={t.id}>{t.id === "regular" ? regularLabel : t.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {days.map(([day, dayLabel]) => (
+            <tr key={day}>
+              <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{dayLabel}</td>
+              {types.map((t) => (
+                <td key={t.id}>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    required
+                    aria-label={`${label} ${dayLabel} ${t.label} price per hour`}
+                    value={prices[day][t.id] ?? ""}
+                    onChange={(e) =>
+                      onChange({
+                        ...prices,
+                        [day]: { ...prices[day], [t.id]: e.target.value === "" ? ("" as unknown as number) : Number(e.target.value) },
+                      })
+                    }
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const slug = (label: string) =>
   label.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28);
 
 /**
  * Settings → Activities: which other courts each sport can use (e.g. pickleball on badminton
  * courts), and extra activities like Zumba with their own courts (prices are under Prices).
+ * A ticked court can have its own prices for the activity instead.
  */
 function ActivitiesSettings({
   s,
@@ -762,17 +784,61 @@ function ActivitiesSettings({
       ...s.activity_courts,
       [id]: on ? [...new Set([...shared(id), courtId])] : shared(id).filter((x) => x !== courtId),
     });
-  const courtBoxes = (id: string, list: Court[]) => (
-    <div className="court-checks">
-      {list.length === 0 && <span className="hint">No other courts.</span>}
-      {list.map((c) => (
-        <label key={c.id}>
-          <input type="checkbox" checked={shared(id).includes(c.id)} onChange={(e) => toggleCourt(id, c.id, e.target.checked)} />
-          {sportEmoji(c.sport)} {c.name}
-        </label>
-      ))}
-    </div>
-  );
+  // A court's own prices for the activity; off = the activity's prices (from Prices above).
+  const setOwnPrices = (id: string, courtId: number, prices: CourtPrices | null) => {
+    const courts = { ...s.court_rates[id] };
+    if (prices) courts[String(courtId)] = prices;
+    else delete courts[String(courtId)];
+    set("court_rates", { ...s.court_rates, [id]: courts });
+  };
+  const courtBoxes = (id: string, label: string, list: Court[]) => {
+    const plan = s.rate_plans[id];
+    const ticked = list.filter((c) => shared(id).includes(c.id));
+    return (
+      <>
+        <div className="court-checks">
+          {list.length === 0 && <span className="hint">No other courts.</span>}
+          {list.map((c) => (
+            <label key={c.id}>
+              <input type="checkbox" checked={shared(id).includes(c.id)} onChange={(e) => toggleCourt(id, c.id, e.target.checked)} />
+              {sportEmoji(c.sport)} {c.name}
+            </label>
+          ))}
+        </div>
+        {plan && ticked.length > 0 && (
+          <div className="court-prices">
+            {ticked.map((c) => {
+              const own = s.court_rates[id]?.[String(c.id)];
+              return (
+                <div key={c.id} className="court-price">
+                  <label>
+                    <input type="checkbox" checked={!!own}
+                      onChange={(e) =>
+                        setOwnPrices(id, c.id, e.target.checked
+                          ? { weekendRates: plan.weekendRates, weekday: { ...plan.weekday }, weekend: { ...plan.weekend } }
+                          : null)
+                      } />
+                    Own prices on {c.name}
+                    {!own && <span className="hint"> — uses {label || "the activity"}&apos;s prices</span>}
+                  </label>
+                  {own && (
+                    <>
+                      <label className="court-weekend">
+                        <input type="checkbox" checked={own.weekendRates} onChange={(e) => setOwnPrices(id, c.id, { ...own, weekendRates: e.target.checked })} />
+                        Separate weekend prices
+                      </label>
+                      <PriceTable label={`${label} on ${c.name}`} plan={{ ...plan, weekendRates: own.weekendRates }} prices={own}
+                        onChange={(next) => setOwnPrices(id, c.id, { ...own, ...next })} />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>
+    );
+  };
   const update = (i: number, patch: Partial<Settings["activities"][number]>) => {
     const list = s.activities.map((a, j) => (j === i ? { ...a, ...patch } : a));
     const a = list[i];
@@ -787,9 +853,12 @@ function ActivitiesSettings({
       if (oldId !== id) delete plans[oldId];
       const sharedCourts = { ...s.activity_courts, [id]: s.activity_courts[oldId] ?? [] };
       if (oldId !== id) delete sharedCourts[oldId];
+      const courtRates = { ...s.court_rates, [id]: s.court_rates[oldId] ?? {} };
+      if (oldId !== id) delete courtRates[oldId];
       set("activities", list);
       set("rate_plans", plans);
       set("activity_courts", sharedCourts);
+      set("court_rates", courtRates);
       return;
     }
     set("activities", list);
@@ -813,12 +882,12 @@ function ActivitiesSettings({
       <p className="hint" style={{ margin: "0 0 10px" }}>
         Let a sport use other courts too, or add activities like Zumba. Each shows as a tab on <strong>Book a court</strong>{" "}
         with the courts ticked here. A court booked for one activity is taken for everything else at that time. Each
-        activity&apos;s prices are under Prices above.
+        activity&apos;s prices are under Prices above; tick <strong>Own prices</strong> to charge differently on a court.
       </p>
       {SPORTS.map((sp) => (
         <div key={sp.id} className="activity-row">
           <div><strong>{sp.emoji} {sp.label}</strong> <span className="hint">— its own courts, plus:</span></div>
-          {courtBoxes(sp.id, active.filter((c) => c.sport !== sp.id))}
+          {courtBoxes(sp.id, sp.label, active.filter((c) => c.sport !== sp.id))}
         </div>
       ))}
       {s.activities.map((a, i) => (
@@ -830,7 +899,7 @@ function ActivitiesSettings({
             <button type="button" className="btn small secondary danger-text" onClick={() => remove(i)}>Remove</button>
           </div>
           <span className="hint">Courts it can be booked on:</span>
-          {courtBoxes(a.id, active)}
+          {courtBoxes(a.id, a.label, active)}
         </div>
       ))}
       <button type="button" className="btn small secondary" onClick={add}>+ Add an activity</button>

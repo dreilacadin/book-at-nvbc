@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { db, getQrphImage, getSettings, settingsChanged } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
-import { isPaymentMethod, MAX_EXTRA_GCASH, rateTypeLabel, type RateType, type SportPricing, type SportRates } from "@/lib/pricing";
+import {
+  isPaymentMethod,
+  MAX_EXTRA_GCASH,
+  rateTypeLabel,
+  type CourtRates,
+  type RateType,
+  type SportPricing,
+  type SportRates,
+} from "@/lib/pricing";
 import { ACTIVITY_ID, isSport, SPORTS, type ActivityDef } from "@/lib/sports";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +35,42 @@ export async function GET(req: NextRequest) {
 
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+/**
+ * Weekday and weekend prices from the form, or an error message. Prices that are switched off are
+ * still kept (or copied from the ones in use), so switching back on restores them.
+ */
+function readPrices(
+  src: Record<string, unknown>,
+  { memberRates, coachRates, weekendRates }: { memberRates: boolean; coachRates: boolean; weekendRates: boolean },
+  label: string
+): Pick<SportPricing, "weekday" | "weekend"> | string {
+  // A valid price, the fallback (for a price that is switched off), or an error message.
+  const price = (day: "weekday" | "weekend", type: RateType, fallback?: number): number | string => {
+    const raw = ((src[day] ?? {}) as Record<string, unknown>)[type];
+    const r = Number(raw);
+    if (raw === "" || raw === null || raw === undefined || !Number.isFinite(r) || r < 0 || r > 100_000) {
+      if (fallback !== undefined) return fallback;
+      const who = memberRates || coachRates ? `${rateTypeLabel(type).toLowerCase()} ` : "";
+      return `Enter a valid ${day} ${who}price for ${label}.`;
+    }
+    return Math.round(r * 100) / 100;
+  };
+  const readDay = (day: "weekday" | "weekend", off?: SportRates): SportRates | string => {
+    const regular = price(day, "regular", off?.regular);
+    if (typeof regular === "string") return regular;
+    const member = price(day, "member", memberRates && !off ? undefined : off?.member ?? regular);
+    if (typeof member === "string") return member;
+    const coach = price(day, "coach", coachRates && !off ? undefined : off?.coach ?? regular);
+    if (typeof coach === "string") return coach;
+    return { regular, member, coach };
+  };
+  const weekday = readDay("weekday");
+  if (typeof weekday === "string") return weekday;
+  const weekend = readDay("weekend", weekendRates ? undefined : weekday);
+  if (typeof weekend === "string") return weekend;
+  return { weekday, weekend };
+}
 
 export async function POST(req: NextRequest) {
   const me = await getAdmin(req);
@@ -133,34 +177,29 @@ export async function POST(req: NextRequest) {
     const rate_plans: Record<string, SportPricing> = {};
     for (const sp of [...SPORTS, ...activities]) {
       const src = plansIn[sp.id] ?? {};
-      const memberRates = src.memberRates === true;
-      const coachRates = src.coachRates === true;
-      const weekendRates = src.weekendRates === true;
-      // A valid price, the fallback (for a price that is switched off), or an error message.
-      const price = (day: "weekday" | "weekend", type: RateType, fallback?: number): number | string => {
-        const raw = ((src[day] ?? {}) as Record<string, unknown>)[type];
-        const r = Number(raw);
-        if (raw === "" || raw === null || raw === undefined || !Number.isFinite(r) || r < 0 || r > 100_000) {
-          if (fallback !== undefined) return fallback;
-          const who = memberRates || coachRates ? `${rateTypeLabel(type).toLowerCase()} ` : "";
-          return `Enter a valid ${day} ${who}price for ${sp.label}.`;
-        }
-        return Math.round(r * 100) / 100;
-      };
-      const readDay = (day: "weekday" | "weekend", off?: SportRates): SportRates | string => {
-        const regular = price(day, "regular", off?.regular);
-        if (typeof regular === "string") return regular;
-        const member = price(day, "member", memberRates && !off ? undefined : off?.member ?? regular);
-        if (typeof member === "string") return member;
-        const coach = price(day, "coach", coachRates && !off ? undefined : off?.coach ?? regular);
-        if (typeof coach === "string") return coach;
-        return { regular, member, coach };
-      };
-      const weekday = readDay("weekday");
-      if (typeof weekday === "string") return bad(weekday);
-      const weekend = readDay("weekend", weekendRates ? undefined : weekday);
-      if (typeof weekend === "string") return bad(weekend);
-      rate_plans[sp.id] = { memberRates, coachRates, weekendRates, weekday, weekend };
+      const switches = { memberRates: src.memberRates === true, coachRates: src.coachRates === true, weekendRates: src.weekendRates === true };
+      const prices = readPrices(src, switches, sp.label);
+      if (typeof prices === "string") return bad(prices);
+      rate_plans[sp.id] = { ...switches, ...prices };
+    }
+
+    // Shared courts with their own prices, for the courts still ticked. Older admin pages don't
+    // send them: keep what's saved.
+    const ratesIn = (b.court_rates === undefined ? existing.court_rates : b.court_rates ?? {}) as Record<string, Record<string, Record<string, unknown>>>;
+    const courtNames = new Map(
+      (await db().query<{ id: number; name: string }>(`SELECT id, name FROM courts`)).rows.map((c) => [c.id, c.name])
+    );
+    const court_rates: CourtRates = {};
+    for (const sp of [...SPORTS, ...activities]) {
+      for (const courtId of activity_courts[sp.id] ?? []) {
+        const src = ratesIn[sp.id]?.[String(courtId)];
+        if (!src || typeof src !== "object" || !courtNames.has(courtId)) continue;
+        // Its own weekend switch; Member and Coach follow the sport's.
+        const weekendRates = src.weekendRates === true;
+        const prices = readPrices(src, { ...rate_plans[sp.id], weekendRates }, `${sp.label} on ${courtNames.get(courtId)}`);
+        if (typeof prices === "string") return bad(prices);
+        (court_rates[sp.id] ??= {})[String(courtId)] = { weekendRates, ...prices };
+      }
     }
 
     // Payment methods
@@ -212,7 +251,7 @@ export async function POST(req: NextRequest) {
          qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18,
          gcash_more = $19::jsonb, activities = $20::jsonb, activity_courts = $21::jsonb,
          reschedule_hours = $22, reschedule_max = $23, closed_weekdays = $24::int[],
-         weekly_closure_hours = $25::jsonb, coach_payment_methods = $26::text[]
+         weekly_closure_hours = $25::jsonb, coach_payment_methods = $26::text[], court_rates = $27::jsonb
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -223,6 +262,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify(gcashMore),
         JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax, closedWeekdays, JSON.stringify(weeklyHours),
         `{${coach_payment_methods.join(",")}}`,
+        JSON.stringify(court_rates),
       ]
     );
     settingsChanged();

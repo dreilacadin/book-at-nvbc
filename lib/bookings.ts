@@ -10,6 +10,7 @@ import {
   type ActiveStatus,
   type BookingStatus,
   isWeekend,
+  planForCourt,
   rateFor,
   ratesForDate,
   rateTypesFor,
@@ -178,12 +179,18 @@ export async function getAvailability(date: string, requestedSport?: string, vie
   const sport: string =
     (requestedSport && sports.some((s) => s.id === requestedSport) ? requestedSport : undefined) ??
     sports.find((s) => s.courtCount > 0)?.id ?? BOOKING_DEFAULT_SPORT;
+  const isHoliday = holiday?.kind === "holiday";
   const courts = allCourts.rows
     .filter((c) => courtAllowed(sport, c, shared))
     .map(({ id, name, notes, sport: courtSport }) => ({
       id, name, notes,
       // A court shared from another sport (e.g. a badminton court for Zumba) says so.
       sharedFrom: courtSport !== sport ? courtSport : null,
+      // A shared court with its own prices for this sport (else null: the sport's prices), and
+      // whether they're its weekend prices on this date.
+      ...(settings.court_rates[sport]?.[String(id)]
+        ? { rates: ratesForDate(planForCourt(settings, sport, id)!, date, isHoliday), weekend: planForCourt(settings, sport, id)!.weekendRates && (isHoliday || isWeekend(date)) }
+        : { rates: null, weekend: false }),
     }));
   const courtIds = new Set(courts.map((c) => c.id));
   const closedTimes = closedRanges(holiday, settings.open_hour, settings.close_hour);
@@ -203,9 +210,9 @@ export async function getAvailability(date: string, requestedSport?: string, vie
     announcement: settings.announcement,
     // Public pricing info. The member/coach codes themselves are never sent.
     pricing: {
-      rates: ratesForDate(settings.rate_plans[sport], date, holiday?.kind === "holiday"),
+      rates: ratesForDate(settings.rate_plans[sport], date, isHoliday), // courts with their own prices have `rates`
       rateTypes: rateTypesFor(settings.rate_plans[sport]),
-      weekend: settings.rate_plans[sport].weekendRates && (holiday?.kind === "holiday" || isWeekend(date)),
+      weekend: settings.rate_plans[sport].weekendRates && (isHoliday || isWeekend(date)),
       // A holiday (open, or only partly closed) is priced like a weekend.
       holiday: holiday?.kind === "holiday" && !closedAllDay(holiday, settings.open_hour, settings.close_hour) ? holiday.name : null,
       memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
@@ -569,24 +576,31 @@ export async function createBooking(
       }
       rateType = "regular"; // staff picked member/coach for a sport without them: charge the standard rate
     }
-    const rates = ratesForDate(plan, date, holiday?.kind === "holiday");
-    const price = noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
+    // Each court's price: a shared court may have its own prices for this activity.
+    const priceOn = (id: number) => {
+      const rates = ratesForDate(planForCourt(settings, sport, id)!, date, holiday?.kind === "holiday");
+      return noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
+    };
+    const prices = new Map(allIds.map((id) => [id, priceOn(id)]));
+    const price = prices.get(courtId)!;
+    const groupTotal = Math.round(allIds.reduce((sum, id) => sum + prices.get(id)!.total, 0) * 100) / 100;
+    const groupSavings = Math.round(allIds.reduce((sum, id) => sum + prices.get(id)!.savings, 0) * 100) / 100;
     // Payment proof (reference number and/or screenshot) may come with the booking, or within the
     // payment window afterwards.
     const proven = paymentMethod !== "cash" && hasPaymentProof(paymentRef, paymentProof);
     let paymentStatus: PaymentStatus = proven ? "for_verification" : "unpaid";
     if (noCharge) paymentStatus = "waived";
     else if (admin && isPaymentStatus(input.paymentStatus)) paymentStatus = input.paymentStatus;
-    const status = activeBookingStatus(paymentMethod, paymentStatus, price.total);
+    const status = activeBookingStatus(paymentMethod, paymentStatus, groupTotal);
     // Coaches (their own code) usually pay at the end of the session: kept until then, never
     // released for non-payment — unless staff turned that off for them, or after too many no-shows.
     // Not for reserved times coaches can book: those are paid online first, like any customer booking.
     const payAfter =
-      !admin && !!coach && !onReservedTime && paymentStatus === "unpaid" && price.total > 0 && (await coachPaysLater(coach.id));
+      !admin && !!coach && !onReservedTime && paymentStatus === "unpaid" && groupTotal > 0 && (await coachPaysLater(coach.id));
     // Online bookings get PAY_WINDOW_MINUTES (at most until 10 minutes before the start) to pay,
     // like an airline booking; after that the slot is released.
     const payBy =
-      !admin && !payAfter && paymentMethod !== "cash" && paymentStatus === "unpaid" && price.total > 0
+      !admin && !payAfter && paymentMethod !== "cash" && paymentStatus === "unpaid" && groupTotal > 0
         ? new Date(paymentDeadline(Date.now(), date, startHour, nowAtFacility())).toISOString()
         : null;
 
@@ -630,7 +644,7 @@ export async function createBooking(
                      CASE WHEN $25::uuid IS NOT NULL THEN 'requested' END, $26, $27) RETURNING id`,
             [
               cId, date, startHour, endHour, name, contact || "(admin)", notes, c,
-              rateType, price.hourlyRate, 0, price.total, paymentMethod, paymentStatus, paymentRef, status,
+              rateType, prices.get(cId)!.hourlyRate, 0, prices.get(cId)!.total, paymentMethod, paymentStatus, paymentRef, status,
               proof,
               rateType === "member" ? membershipId : null,
               payBy,
@@ -673,7 +687,6 @@ export async function createBooking(
     const code = first.code;
     for (const id of extraIds) await insertOne(id, bookingId);
     const courtNames = allIds.map((id) => courtsById.get(id)!.name);
-    const groupTotal = Math.round(price.total * allIds.length * 100) / 100;
 
     await client.query("COMMIT");
     const info = { code, name, contact, court: courtNames.join(" + "), sport: activity, date, start: startHour, end: endHour };
@@ -692,7 +705,7 @@ export async function createBooking(
         paymentStatus === "for_verification" ? `${paymentLabel(paymentMethod)} payment sent — please verify`
         : payAfter ? `Coach · pays after the session (${paymentLabel(paymentMethod)})`
         : paymentMethod === "cash" ? "Coach · cash at the desk"
-        : price.total > 0 ? `${paymentLabel(paymentMethod)} · paying within ${PAY_WINDOW_MINUTES} min` : "No charge";
+        : groupTotal > 0 ? `${paymentLabel(paymentMethod)} · paying within ${PAY_WINDOW_MINUTES} min` : "No charge";
       const extra = extraIds.length ? ` (+${extraIds.length} more court${extraIds.length > 1 ? "s" : ""})` : "";
       await notifyStaff([{
         kind: "booking_new",
@@ -706,7 +719,7 @@ export async function createBooking(
       ok: true,
       data: {
         code, courtName: courtNames.join(", "), courts: courtNames, sport, date, startHour, endHour,
-        rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: price.savings, amount: groupTotal,
+        rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: groupSavings, amount: groupTotal,
         paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status, payBy,
         payAfter,
       },

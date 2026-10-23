@@ -928,6 +928,10 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .activity-emoji { width: 56px; text-align: center; }
 .court-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .court-checks label { display: inline-flex; gap: 6px; align-items: center; margin: 0; font-weight: 400; font-size: 14px; }
+.court-prices { display: grid; gap: 8px; margin-top: 2px; padding-left: 12px; border-left: 2px solid var(--border); }
+.court-price { display: grid; gap: 6px; }
+.court-price > label.court-weekend { padding-left: 26px; }
+.court-price > label { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; font-weight: 400; font-size: 14px; }
 .cal-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
 /* My booking → Change time */
 .resched { display: grid; gap: 10px; }

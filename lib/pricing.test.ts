@@ -14,10 +14,12 @@ import {
   isRateType,
   isWeekend,
   paymentLabel,
+  planForCourt,
   rateFor,
   ratesForDate,
   rateTypeLabel,
   rateTypesFor,
+  toCourtRates,
   toSportPricing,
 } from "./pricing.ts";
 
@@ -216,4 +218,34 @@ test("ratesForDate: holidays use weekend prices", () => {
   assert.equal(ratesForDate(plan, "2026-12-25").regular, 400); // a Friday
   assert.equal(ratesForDate(plan, "2026-12-25", true).regular, 450); // Christmas
   assert.equal(ratesForDate({ ...plan, weekendRates: false }, "2026-12-25", true).regular, 400);
+});
+
+test("planForCourt: a shared court's own prices, with its own weekend switch", () => {
+  const plan = toSportPricing(
+    { memberRates: true, coachRates: false, weekendRates: false, weekday: { regular: 400, member: 300 } },
+    { regular: 0, member: 0, coach: 0 }
+  );
+  const own = { weekendRates: true, weekday: { regular: 500, member: 380, coach: 500 }, weekend: { regular: 550, member: 420, coach: 550 } };
+  const s = { rate_plans: { pickleball: plan }, court_rates: { pickleball: { "4": own } } };
+  assert.deepEqual(planForCourt(s, "pickleball", 4), { ...plan, ...own });
+  assert.equal(planForCourt(s, "pickleball", 1), plan); // no own prices: the activity's
+  assert.equal(planForCourt(s, "zumba", 4), undefined);
+  // Weekend prices on the court even though the sport has none.
+  assert.deepEqual(ratesForDate(planForCourt(s, "pickleball", 4)!, "2026-09-26"), { regular: 550, member: 420, coach: 550 });
+  assert.deepEqual(ratesForDate(planForCourt(s, "pickleball", 4)!, "2026-09-28"), { regular: 500, member: 380, coach: 500 });
+  assert.equal(ratesForDate(plan, "2026-09-26").regular, 400);
+  // Its weekend switch off: weekday prices every day, even if the sport has weekend prices.
+  const off = { rate_plans: { pickleball: { ...plan, weekendRates: true } }, court_rates: { pickleball: { "4": { ...own, weekendRates: false } } } };
+  assert.equal(ratesForDate(planForCourt(off, "pickleball", 4)!, "2026-09-26").regular, 500);
+  // The sport's Member switch still applies.
+  assert.deepEqual(ratesForDate({ ...planForCourt(s, "pickleball", 4)!, memberRates: false }, "2026-09-28"), { regular: 500, member: 500, coach: 500 });
+});
+
+test("toCourtRates: keeps activities and court ids, fills missing prices", () => {
+  const isActivity = (id: string) => id === "pickleball";
+  assert.deepEqual(
+    toCourtRates({ pickleball: { "4": { weekday: { regular: 500 } }, x: {} }, tennis: { "1": {} } }, isActivity),
+    { pickleball: { "4": { weekendRates: false, weekday: { regular: 500, member: 500, coach: 500 }, weekend: { regular: 500, member: 500, coach: 500 } } } }
+  );
+  assert.deepEqual(toCourtRates(null, isActivity), {});
 });

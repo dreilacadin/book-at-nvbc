@@ -24,6 +24,17 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Courts shared with another sport can have their own prices.** When you
+  book a court shared from another sport (e.g. pickleball on a badminton court),
+  the price shown is that court's. A group booking across courts with different
+  prices lists each court and its price.
+- **Staff:** **Own prices** under Settings → Activities and shared courts: tick
+  it under a shared court (or an activity's court) to give it its own prices for
+  that sport or activity. Each court can have **Separate weekend prices** of
+  its own, even if the sport doesn't; the Member and Coach prices follow that
+  sport's settings under Prices. Untick it to use the sport's prices again.
+  Customers can only move a booking online to a court with the same price.
+- **Database:** Settings: prices per shared court (`court_rates`).
 - **Coaches pay after their session.** Bookings coaches make with their own
   coach code are no longer released for not paying first. On the Coaches
   Dashboard they can tap **Yes, I'm coming** or **Can't make it** (which frees the

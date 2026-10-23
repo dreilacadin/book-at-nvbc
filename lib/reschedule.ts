@@ -5,7 +5,7 @@ import { CUSTOMER, logBooking } from "./booking-history";
 import { minutesUntilStart, RELEASE_MINUTES } from "./booking-policy";
 import { formatDateLong, formatRange, halfHours, publicName, SLOT_HOURS } from "./format";
 import { notifyStaff } from "./notify";
-import { computePrice, rateFor, ratesForDate, type RateType } from "./pricing";
+import { computePrice, planForCourt, rateFor, ratesForDate, type RateType } from "./pricing";
 import { courtAllowed, sportEmoji, sportLabel } from "./sports";
 import { addDays, daysBetween, isValidDate, nowAtFacility } from "./time";
 import { holidayOn } from "./holidays";
@@ -82,9 +82,6 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
   const closedTimes = closedRanges(holiday, 0, 24);
   if (closedAllDay(holiday, settings.open_hour, settings.close_hour))
     return { ok: true as const, data: { ...base, options: [], note: `NVBC is closed that day (${holiday!.name}).` } };
-  if (!samePrice(b, settings, date, holiday?.kind === "holiday"))
-    return { ok: true as const, data: { ...base, options: [], note: "Prices are different on this day, so your booking can't be moved to it online." } };
-
   const [courts, taken, blocks] = await Promise.all([
     db().query<{ id: number; name: string; sport: string }>(`SELECT id, name, sport FROM courts WHERE is_active ORDER BY sort_order, id`),
     db().query<{ court_id: number; slot_hour: number }>(
@@ -93,9 +90,15 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
     ),
     blocksOn(date),
   ]);
+  // Only courts where it costs the same that day (a shared court may have its own prices).
+  const samePriced = courts.rows.filter(
+    (c) => courtAllowed(b.activity, c, settings.activity_courts) && samePrice(b, settings, date, holiday?.kind === "holiday", c.id)
+  );
+  if (!samePriced.length)
+    return { ok: true as const, data: { ...base, options: [], note: "Prices are different on this day, so your booking can't be moved to it online." } };
   const busy = new Set(taken.rows.map((t) => `${t.court_id}:${t.slot_hour}`));
   const options: MoveOption[] = [];
-  for (const c of courts.rows.filter((c) => courtAllowed(b.activity, c, settings.activity_courts))) {
+  for (const c of samePriced) {
     for (const start of halfHours(settings.open_hour, settings.close_hour - hours)) {
       if (date === b.date && start === b.start_hour && c.id === b.court_id) continue; // where it is now
       if (minutesUntilStart(date, start, today) <= RELEASE_MINUTES) continue;
@@ -109,8 +112,8 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
   return { ok: true as const, data: { ...base, options } };
 }
 
-function samePrice(b: Current, settings: Awaited<ReturnType<typeof getSettings>>, date: string, holiday: boolean): boolean {
-  const plan = settings.rate_plans[b.activity];
+function samePrice(b: Current, settings: Awaited<ReturnType<typeof getSettings>>, date: string, holiday: boolean, courtId: number): boolean {
+  const plan = planForCourt(settings, b.activity, courtId);
   if (!plan) return false;
   const rates = ratesForDate(plan, date, holiday);
   const total = computePrice(rateFor(rates, b.rate_type), b.end_hour - b.start_hour, rates.regular).total;
@@ -137,7 +140,6 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
   const holiday = await holidayOn(date);
   if (overlapsClosure(closedRanges(holiday, 0, 24), start, start + hours))
     return fail(400, `NVBC is closed then (${holiday!.name}: ${closureTimeText(holiday!)}).`);
-  if (!samePrice(b, settings, date, holiday?.kind === "holiday")) return fail(400, "That day has different prices, so the booking can't be moved there online.");
   if (b.rate_type === "member" && b.membership_expires && b.membership_expires < date)
     return fail(400, "Your membership ends before that date, so the member rate can't be used then.");
 
@@ -152,6 +154,10 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
     if (!court || !courtAllowed(b.activity, court, settings.activity_courts)) {
       await client.query("ROLLBACK");
       return fail(400, `That court can't be booked for ${sportLabel(b.activity)}.`);
+    }
+    if (!samePrice(b, settings, date, holiday?.kind === "holiday", courtId)) {
+      await client.query("ROLLBACK");
+      return fail(400, "That court or day has different prices, so the booking can't be moved there online.");
     }
     if (findBlockConflict(await blocksOn(date), courtId, date, start, start + hours)) {
       await client.query("ROLLBACK");

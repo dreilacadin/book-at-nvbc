@@ -86,6 +86,25 @@ export function ratesForDate(p: SportPricing, date: string, holiday = false): Sp
   return { regular: r.regular, member: p.memberRates ? r.member : r.regular, coach: p.coachRates ? r.coach : r.regular };
 }
 
+/**
+ * A court's own prices for an activity, with its own weekend switch (weekendRates off: weekdays'
+ * prices every day). The activity's Member and Coach switches still apply.
+ */
+export type CourtPrices = { weekendRates: boolean; weekday: SportRates; weekend: SportRates };
+/** Courts with their own prices (Settings → Activities and shared courts): activity → court id → prices. */
+export type CourtRates = Record<string, Record<string, CourtPrices>>;
+
+/** An activity's price plan on one court: the court's own prices if it has them, else the activity's. */
+export function planForCourt(
+  s: { rate_plans: Record<string, SportPricing>; court_rates: CourtRates },
+  activity: string,
+  courtId: number
+): SportPricing | undefined {
+  const plan = s.rate_plans[activity];
+  const own = s.court_rates[activity]?.[String(courtId)];
+  return plan && own ? { ...plan, weekendRates: own.weekendRates, weekday: own.weekday, weekend: own.weekend } : plan;
+}
+
 /** Rate types players can choose for a sport. */
 export function rateTypesFor(p: { memberRates: boolean; coachRates: boolean }): RateType[] {
   return RATE_TYPES.map((r) => r.id).filter((id) => id === "regular" || (id === "member" ? p.memberRates : p.coachRates));
@@ -116,6 +135,27 @@ export function toSportPricing(raw: unknown, fallback: SportRates): SportPricing
     weekday,
     weekend: toRates(src.weekend, weekday),
   };
+}
+
+/** Reads stored court prices, dropping anything that isn't an activity and a court id. */
+export function toCourtRates(raw: unknown, isActivity: (id: string) => boolean): CourtRates {
+  const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const zero = { regular: 0, member: 0, coach: 0 };
+  return Object.fromEntries(
+    Object.entries(src)
+      .filter(([activity, courts]) => isActivity(activity) && courts && typeof courts === "object")
+      .map(([activity, courts]) => [
+        activity,
+        Object.fromEntries(
+          Object.entries(courts as Record<string, unknown>)
+            .filter(([id]) => Number.isInteger(Number(id)))
+            .map(([id, p]) => {
+              const { weekendRates, weekday, weekend } = toSportPricing(p, zero);
+              return [id, { weekendRates, weekday, weekend }];
+            })
+        ),
+      ])
+  );
 }
 
 export type Price = {
