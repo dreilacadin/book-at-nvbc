@@ -65,3 +65,12 @@ test("coaching accepted / declined", () => {
   assert.match(d.body, /Your court booking is still on/);
   assert.doesNotMatch(d.text, /says:/);
 });
+
+test("pay_reminder: the amount and how to pay (cash at the desk, otherwise online with a receipt)", () => {
+  const online = customerNotice("pay_reminder", { ...b, paymentStatus: "unpaid", status: "pending" }, { link });
+  assert.equal(online.title, "Reminder: please pay for your booking");
+  assert.match(online.body, /^Please pay ₱600 and send your receipt — Badminton Court 1, 6:00 PM – 7:30 PM/);
+  assert.ok(online.text.includes(link));
+  const cash = customerNotice("pay_reminder", { ...b, paymentMethod: "cash", paymentStatus: "unpaid", status: "reserved" }, { link });
+  assert.match(cash.body, /^Please pay ₱600 at the front desk/);
+});

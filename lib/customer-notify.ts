@@ -59,7 +59,7 @@ function calendarFor(r: Row): { ics: CalendarBooking; google: CalendarBooking } 
   };
 }
 
-async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; email?: boolean } = {}): Promise<void> {
+function noticeFor(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string } = {}) {
   const b: NoticeBooking = {
     code: r.code, name: r.name, courtName: r.court_name, date: r.date, startHour: r.start_hour, endHour: r.end_hour,
     amount: Number(r.amount), paymentStatus: r.payment_status, paymentMethod: r.payment_method, status: r.status,
@@ -69,30 +69,40 @@ async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: stri
     coachName: r.coach_name ?? undefined,
     coachNote: r.coaching_note,
   };
-  const n = customerNotice(kind, b, {
+  return customerNotice(kind, b, {
     link: siteOrigin() + bookingPath(r.code), payByClock: r.pay_by ? manilaClock(r.pay_by) : undefined, message: extra.message, from: extra.from,
   });
+}
 
+/** Push to the devices that turned on updates for this booking. Returns how many got it. */
+async function pushTo(r: Row, n: { title: string; body: string }): Promise<number> {
   const { rows: subs } = await db().query<{ endpoint: string; p256dh: string; auth: string }>(
     `SELECT endpoint, p256dh, auth FROM customer_push_subscriptions WHERE booking_id = $1`,
     [r.id]
   );
-  if (subs.length && setupVapid()) {
-    const payload = JSON.stringify({ title: n.title, body: n.body, url: bookingPath(r.code), tag: `nvbc-${r.code}` });
-    await Promise.all(
-      subs.map(async (s) => {
-        try {
-          await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 6 * 3600 });
-        } catch (e) {
-          const code = (e as { statusCode?: number }).statusCode;
-          // 404/410: the browser dropped the subscription — forget it.
-          if (code === 404 || code === 410)
-            await db().query(`DELETE FROM customer_push_subscriptions WHERE endpoint = $1`, [s.endpoint]);
-          else console.error("customer push failed", code ?? e);
-        }
-      })
-    );
-  }
+  if (!subs.length || !setupVapid()) return 0;
+  const payload = JSON.stringify({ title: n.title, body: n.body, url: bookingPath(r.code), tag: `nvbc-${r.code}` });
+  const sent = await Promise.all(
+    subs.map(async (s) => {
+      try {
+        await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 6 * 3600 });
+        return 1;
+      } catch (e) {
+        const code = (e as { statusCode?: number }).statusCode;
+        // 404/410: the browser dropped the subscription — forget it.
+        if (code === 404 || code === 410)
+          await db().query(`DELETE FROM customer_push_subscriptions WHERE endpoint = $1`, [s.endpoint]);
+        else console.error("customer push failed", code ?? e);
+        return 0;
+      }
+    })
+  );
+  return sent.reduce<number>((a, x) => a + x, 0);
+}
+
+async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; email?: boolean } = {}): Promise<void> {
+  const n = noticeFor(kind, r, extra);
+  await pushTo(r, n);
   if (r.customer_email && extra.email !== false && emailSender()) {
     try {
       // Confirmed and "coming up" emails come with the booking for their calendar.
@@ -114,6 +124,33 @@ export function later(job: () => Promise<unknown>) {
     after(run);
   } catch {
     void run(); // outside a request (shouldn't happen): best effort
+  }
+}
+
+/**
+ * Staff's "please pay" reminder, by push only and right away (staff are told how many devices got
+ * it). `bookingId`: the booking the customer uses (a group's first court).
+ */
+export async function pushPayReminder(bookingId: string): Promise<number> {
+  const { rows } = await db().query<Row>(`SELECT ${ROW_SQL} FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`, [bookingId]);
+  return rows[0] ? pushTo(rows[0], noticeFor("pay_reminder", rows[0])) : 0;
+}
+
+/**
+ * Staff's "please pay" reminder by email, for when no device got the push. Returns the address it
+ * went to, or null (no email on the booking, email isn't set up, or sending failed).
+ */
+export async function emailPayReminder(bookingId: string): Promise<string | null> {
+  const { rows } = await db().query<Row>(`SELECT ${ROW_SQL} FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`, [bookingId]);
+  const r = rows[0];
+  if (!r?.customer_email || !emailSender()) return null;
+  const n = noticeFor("pay_reminder", r);
+  try {
+    await sendEmail(r.customer_email, n.subject, n.text);
+    return r.customer_email;
+  } catch (e) {
+    console.error("customer email failed", e instanceof Error ? e.message : e);
+    return null;
   }
 }
 

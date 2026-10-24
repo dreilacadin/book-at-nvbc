@@ -621,6 +621,9 @@ export function AdminBookingCard({
             <RejectPayment b={b} busy={busy} onCancel={() => setRejecting(false)}
               onReject={(note) => run({ action: "payment", id: b.id, status: "rejected", note })} />
           )}
+          {(b.payment_status === "unpaid" || b.payment_status === "rejected") && (b.group_size > 1 ? b.group_total : b.amount) > 0 && (
+            <PayReminder b={b} onSent={onChanged} onAuthError={onAuthError} />
+          )}
           <div className="card-actions">
             <div className="segmented phase-switch" role="radiogroup" aria-label="Progress">
               <button type="button" role="radio" aria-checked={!b.phase} disabled={busy} onClick={() => setPhase(null)}
@@ -675,6 +678,56 @@ export function AdminBookingCard({
       <BookingMessages b={b} onAuthError={onAuthError} />
       <BookingHistory bookingId={b.id} onAuthError={onAuthError}
         version={[b.status, b.payment_status, b.phase, b.date, b.start_hour, b.end_hour, b.court_id, b.name, b.amount, b.payment_ref, b.rejected_at].join("|")} />
+    </div>
+  );
+}
+
+/**
+ * Staff: push a "please pay" reminder now — to the customer's devices with updates on for this
+ * booking, and for a coach's own booking, to the coach's devices (also when they pay after the
+ * session). With no device to push to, it's emailed (the booking's email, or the coach's).
+ */
+function PayReminder({ b, onSent, onAuthError }: { b: AdminBooking; onSent: () => void; onAuthError: (e: unknown) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const devices = b.alert_devices + (b.coach_id ? b.coach_devices : 0);
+  const who = b.coach_id ? `${b.coach_name ?? "The coach"}` : "The customer";
+  const email = b.coach_id ? "their coach account email" : b.customer_email; // used when no device gets the push
+  async function send() {
+    const due = formatPeso(b.group_size > 1 ? b.group_total : b.amount);
+    if (!window.confirm(`Send ${b.coach_id ? b.coach_name ?? "the coach" : b.name} ${devices ? "a push notification" : "an email"} to pay ${due} for ${b.group_code}?`)) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await api<{ devices: number; emailed: string | null }>("/api/admin/bookings", { action: "pay-reminder", id: b.id });
+      setNote({
+        ok: true,
+        text: r.emailed
+          ? `${devices ? "No device could be reached, so the reminder was emailed" : "Reminder emailed"} to ${r.emailed}.`
+          : `Reminder sent to ${r.devices} device${r.devices === 1 ? "" : "s"}.`,
+      });
+      onSent();
+    } catch (e) {
+      onAuthError(e);
+      setNote({ ok: false, text: e instanceof Error ? e.message : "Couldn't send the reminder." });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="pay-reminder">
+      <button type="button" className="btn small secondary" disabled={busy || (devices === 0 && !email)} onClick={send}>
+        {busy ? "Sending…" : "🔔 Send payment reminder"}
+      </button>
+      <span className="hint">
+        {devices > 0
+          ? `Push to ${devices} device${devices === 1 ? "" : "s"}${email ? " (email if none can be reached)" : ""}.`
+          : email
+          ? `${who} hasn't turned on notifications${b.coach_id ? "" : " for this booking"} — it will be emailed to ${email}.`
+          : `${who} hasn't turned on notifications or given an email — call or message them instead.`}
+        {b.pay_nudged_at && ` Last sent ${dayFromIso(b.pay_nudged_at)}, ${clockFromIso(b.pay_nudged_at)}${b.pay_nudged_by ? ` by ${b.pay_nudged_by}` : ""}.`}
+      </span>
+      {note && <div className={note.ok ? "success" : "error"}>{note.text}</div>}
     </div>
   );
 }

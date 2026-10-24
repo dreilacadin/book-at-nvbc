@@ -32,6 +32,9 @@ export type AdminBooking = {
   coach_arrived_at: string | null; // the coach tapped "I'm here"
   client_name: string; // a coach's own booking: who it's with ("" = not set)
   coach_paid_desk_at: string | null; // the coach said (on their dashboard) they paid cash at the desk
+  pay_nudged_at: string | null; // staff last sent a "please pay" reminder (push)
+  pay_nudged_by: string | null;
+  coach_devices: number; // the booking's coach: their devices with notifications on
   restored_by: string | null;
   court_order: number;
   has_proof: boolean;

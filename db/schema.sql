@@ -733,3 +733,9 @@ ALTER TABLE admin_notify_state ALTER COLUMN kinds
 -- own prices for it: {"pickleball": {"7": {"weekendRates": true, "weekday": {...}, "weekend": {...}}}}.
 -- Courts not listed use the activity's prices in rate_plans; its Member/Coach switches apply to both.
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS court_rates JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- v33: staff payment reminders -----------------------------------------------------------------
+-- Staff can push a "please pay" reminder for an unpaid booking (also coaches' own bookings): when
+-- the last one was sent and by whom (on the group's first booking).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_nudged_at TIMESTAMPTZ;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_nudged_by TEXT;

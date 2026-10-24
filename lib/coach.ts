@@ -148,7 +148,8 @@ export type Client = {
 
 export type ClientSort = "recent" | "name" | "sessions";
 
-const clientKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+/** Which client a name belongs to: the same name typed differently ("mark  tan", "Mark Tan") is one client. */
+export const clientKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
 
 /**
  * Groups a coach's bookings by client: their own bookings by the client name they typed, and
