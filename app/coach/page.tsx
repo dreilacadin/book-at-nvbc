@@ -9,6 +9,7 @@ import ClientInput from "@/components/ClientInput";
 import FullScreenLoader from "@/components/FullScreenLoader";
 import {
   availabilityText,
+  clientKey,
   genderText,
   groupClients,
   initials,
@@ -21,7 +22,7 @@ import {
 } from "@/lib/coach";
 import { coachSessionStage, minutesUntilStart } from "@/lib/booking-policy";
 import { formatDateLong, formatRange } from "@/lib/format";
-import { formatPeso, paymentLabel, type PaymentMethod } from "@/lib/pricing";
+import { formatPeso, paymentLabel, paymentStatusLabel, type PaymentMethod } from "@/lib/pricing";
 import { nowAtFacility } from "@/lib/time";
 import {
   currentSubscription,
@@ -37,7 +38,7 @@ import {
   type ActivityDef,
 } from "@/lib/sports";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Coach = {
   id: string;
@@ -107,6 +108,11 @@ const toPay = (b: Booking) =>
   (b.payment_status === "unpaid" || b.payment_status === "rejected") &&
   ["over", "overdue"].includes(coachSessionStage(b, nowAtFacility()));
 
+/** Still to come (or played and still to pay): shown with its actions, under Upcoming / To pay. */
+const isCurrent = (b: Booking, today: string) =>
+  toPay(b) ||
+  (b.date >= today && b.status !== "cancelled" && b.coaching_status !== "declined" && b.coaching_status !== "cancelled");
+
 async function call(body: Record<string, unknown>) {
   const res = await fetch("/api/coaches/me", {
     method: "POST",
@@ -123,6 +129,7 @@ export default function CoachDashboard() {
   const [me, setMe] = useState<Me | null>(null);
   const [out, setOut] = useState(false);
   const [tab, setTab] = useState<"bookings" | "clients" | "profile">("bookings");
+  const [focusClient, setFocusClient] = useState<string | null>(null); // a client tapped on the Bookings tab
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -249,7 +256,10 @@ export default function CoachDashboard() {
         <button
           role="tab"
           aria-selected={tab === "clients"}
-          onClick={() => setTab("clients")}
+          onClick={() => {
+            setFocusClient(null);
+            setTab("clients");
+          }}
         >
           Clients
         </button>
@@ -262,9 +272,17 @@ export default function CoachDashboard() {
         </button>
       </div>
       {tab === "bookings" ? (
-        <Bookings me={me} requests={requests} reload={load} />
+        <Bookings
+          me={me}
+          requests={requests}
+          reload={load}
+          onClient={(name) => {
+            setFocusClient(clientKey(name));
+            setTab("clients");
+          }}
+        />
       ) : tab === "clients" ? (
-        <Clients me={me} reload={load} />
+        <Clients me={me} reload={load} focus={focusClient} />
       ) : (
         <Profile me={me} reload={load} />
       )}
@@ -276,10 +294,12 @@ function Bookings({
   me,
   requests,
   reload,
+  onClient,
 }: {
   me: Me;
   requests: Booking[];
   reload: () => void;
+  onClient: (name: string) => void; // show that client's bookings (Clients tab)
 }) {
   const today = todayManila();
   const clients = knownClients(me.bookings, today);
@@ -293,14 +313,7 @@ function Bookings({
   );
   const unpaid = live.filter(toPay).sort((a, b) => a.date.localeCompare(b.date) || a.start_hour - b.start_hour);
   const upcoming = live
-    .filter(
-      (b) =>
-        !toPay(b) &&
-        b.date >= today &&
-        b.status !== "cancelled" &&
-        b.coaching_status !== "declined" &&
-        b.coaching_status !== "cancelled",
-    )
+    .filter((b) => !toPay(b) && isCurrent(b, today))
     .sort(
       (a, b) => a.date.localeCompare(b.date) || a.start_hour - b.start_hour,
     );
@@ -320,7 +333,7 @@ function Bookings({
         <section className="stack">
           <h2 style={{ margin: 0 }}>💳 To pay</h2>
           {unpaid.map((b) => (
-            <BookingCard key={b.id} b={b} reload={reload} payment={me.payment} clients={clients} upcoming />
+            <BookingCard key={b.id} b={b} reload={reload} payment={me.payment} clients={clients} onClient={onClient} upcoming />
           ))}
         </section>
       )}
@@ -333,7 +346,7 @@ function Bookings({
           </p>
         )}
         {upcoming.map((b) => (
-          <BookingCard key={b.id} b={b} reload={reload} payment={me.payment} clients={clients} upcoming />
+          <BookingCard key={b.id} b={b} reload={reload} payment={me.payment} clients={clients} onClient={onClient} upcoming />
         ))}
       </section>
       {past.length > 0 && (
@@ -341,7 +354,7 @@ function Bookings({
           <summary>Past and cancelled ({past.length})</summary>
           <div className="stack" style={{ marginTop: 8 }}>
             {past.map((b) => (
-              <BookingCard key={b.id} b={b} reload={reload} clients={clients} />
+              <BookingCard key={b.id} b={b} reload={reload} clients={clients} onClient={onClient} />
             ))}
           </div>
         </details>
@@ -376,16 +389,23 @@ function BookingCard({
   upcoming,
   payment,
   clients,
+  onClient,
+  detailed,
+  plain,
 }: {
   b: Booking;
   reload: () => void;
   upcoming?: boolean;
   payment?: CoachPayment;
   clients: KnownClient[];
+  onClient?: (name: string) => void; // the client's name opens their bookings
+  detailed?: boolean; // also the payment and coaching details (Clients tab)
+  plain?: boolean; // inside another card: no card border
 }) {
   const [busy, setBusy] = useState(false);
+  const client = b.kind === "own" ? b.client_name : (b.customer_name ?? "");
   return (
-    <div className={`card coach-bk${b.status === "cancelled" ? " gone" : ""}`}>
+    <div className={`${plain ? "" : "card "}coach-bk${b.status === "cancelled" ? " gone" : ""}`}>
       <div className="coach-bk-top">
         <strong>
           {formatDateLong(b.date)} · {formatRange(b.start_hour, b.end_hour)}
@@ -402,13 +422,49 @@ function BookingCard({
           ? ` + ${b.group_courts} more court${b.group_courts > 1 ? "s" : ""}`
           : ""}{" "}
         ·{" "}
-        {b.kind === "own"
-          ? `Your booking · ${formatPeso(b.amount)}`
-          : `Coaching ${b.customer_name ?? "a customer"}`}
+        {b.kind === "own" ? (
+          `Your booking · ${formatPeso(b.amount)}`
+        ) : (
+          <>
+            Coaching{" "}
+            {onClient && client ? (
+              <button type="button" className="link-btn client-link" onClick={() => onClient(client)}>{client}</button>
+            ) : (b.customer_name ?? "a customer")}
+          </>
+        )}
         {b.customer_contact && ` · ${b.customer_contact}`} ·{" "}
         <span className="mono">{b.code}</span>
       </div>
-      {b.kind === "own" && b.status !== "cancelled" && <ClientEdit b={b} reload={reload} clients={clients} />}
+      {detailed && (
+        <dl className="coach-bk-details">
+          <div><dt>Sport</dt><dd>{sportEmoji(b.sport)} {sportLabel(b.sport)}</dd></div>
+          {b.kind === "own" ? (
+            <>
+              <div>
+                <dt>Amount</dt>
+                <dd>{formatPeso(b.total)}{b.group_courts ? ` for ${b.group_courts + 1} courts` : ""}</dd>
+              </div>
+              <div>
+                <dt>Payment</dt>
+                <dd>
+                  {paymentLabel(b.payment_method)} · {paymentStatusLabel(b.payment_status)}
+                  {b.pay_after && b.status !== "cancelled" ? " · pay after the session" : ""}
+                </dd>
+              </div>
+              {b.no_show && <div><dt>Attendance</dt><dd>Marked as a no-show</dd></div>}
+              {!b.no_show && (b.arrived_at || b.confirmed_at) && (
+                <div><dt>Attendance</dt><dd>{b.arrived_at ? "📍 Checked in" : "✓ You said you're coming"}</dd></div>
+              )}
+            </>
+          ) : (
+            <>
+              <div><dt>Session</dt><dd>{statusText(b)}</dd></div>
+              {b.coaching_note && <div><dt>Your message</dt><dd>“{b.coaching_note}”</dd></div>}
+            </>
+          )}
+        </dl>
+      )}
+      {b.kind === "own" && b.status !== "cancelled" && <ClientEdit b={b} reload={reload} clients={clients} onClient={onClient} />}
       {b.misuse && (
         <div className="rejected-note">
           ⚠ NVBC flagged this booking: your coach code was used by someone else.
@@ -541,7 +597,17 @@ function OwnBookingActions({ b, payment, reload }: { b: Booking; payment: CoachP
 }
 
 /** Who one of the coach's own bookings is with: shown, and set or changed in place. */
-function ClientEdit({ b, reload, clients }: { b: Booking; reload: () => void; clients: KnownClient[] }) {
+function ClientEdit({
+  b,
+  reload,
+  clients,
+  onClient,
+}: {
+  b: Booking;
+  reload: () => void;
+  clients: KnownClient[];
+  onClient?: (name: string) => void; // tapping the name opens the client's bookings
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(b.client_name);
   const [busy, setBusy] = useState(false);
@@ -549,7 +615,14 @@ function ClientEdit({ b, reload, clients }: { b: Booking; reload: () => void; cl
   if (!editing)
     return (
       <div className="coach-client">
-        👤 {b.client_name ? <strong>{b.client_name}</strong> : <span className="muted">No client set</span>}{" "}
+        👤{" "}
+        {b.client_name ? (
+          onClient ? (
+            <button type="button" className="link-btn client-link" title="See all bookings with this client" onClick={() => onClient(b.client_name)}>
+              {b.client_name}
+            </button>
+          ) : <strong>{b.client_name}</strong>
+        ) : <span className="muted">No client set</span>}{" "}
         <button type="button" className="link-btn" onClick={() => { setValue(b.client_name); setEditing(true); }}>
           {b.client_name ? "Change" : "Add client"}
         </button>
@@ -581,11 +654,22 @@ function ClientEdit({ b, reload, clients }: { b: Booking; reload: () => void; cl
   );
 }
 
-/** The Clients tab: the coach's bookings grouped by client, sortable and searchable. */
-function Clients({ me, reload }: { me: Me; reload: () => void }) {
+/**
+ * The Clients tab: the coach's bookings grouped by client, sortable and searchable. A session
+ * opens to its full booking card. `focus`: a client tapped on the Bookings tab, opened and shown.
+ */
+function Clients({ me, reload, focus }: { me: Me; reload: () => void; focus: string | null }) {
   const [sort, setSort] = useState<ClientSort>("recent");
   const [q, setQ] = useState("");
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(focus);
+  const [openBooking, setOpenBooking] = useState<string | null>(null);
+  const focused = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus === null) return;
+    setOpen(focus);
+    setQ("");
+    focused.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focus]);
   const today = todayManila();
   const all = groupClients(me.bookings, today, sort);
   const clients = knownClients(me.bookings, today);
@@ -596,6 +680,7 @@ function Clients({ me, reload }: { me: Me; reload: () => void }) {
     <div className="stack">
       <p className="muted" style={{ margin: 0 }}>
         Your bookings grouped by client: the client you add to your own bookings, and customers who requested coaching with you.
+        Tap a session for its details.
       </p>
       <div className="client-toolbar">
         <input type="search" placeholder="Search clients" aria-label="Search clients" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -615,7 +700,8 @@ function Clients({ me, reload }: { me: Me; reload: () => void }) {
       {list.map((c) => {
         const isOpen = open === c.key;
         return (
-          <div key={c.key || "-"} className={`card client-card${c.key ? "" : " no-client"}`}>
+          <div key={c.key || "-"} ref={c.key === focus ? focused : undefined}
+            className={`card client-card${c.key ? "" : " no-client"}${c.key === focus ? " focused" : ""}`}>
             <button type="button" className="client-head" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : c.key)}>
               <span>
                 <strong>{c.name}</strong>
@@ -632,15 +718,25 @@ function Clients({ me, reload }: { me: Me; reload: () => void }) {
               <ul className="client-sessions">
                 {c.bookings.map((b) => {
                   const full = me.bookings.find((x) => x.id === b.id)!;
+                  const shown = openBooking === b.id;
                   return (
-                    <li key={b.id}>
-                      <div>
-                        <strong>{formatDateLong(b.date)}</strong> · {formatRange(b.start_hour, b.end_hour)}
-                        <div className="muted">
-                          {sportEmoji(full.sport)} {b.court_name} · {b.kind === "own" ? `${formatPeso(b.total)} · ${statusText(full)}` : `Coaching · ${statusText(full)}`}
-                        </div>
-                      </div>
-                      {b.kind === "own" && <ClientEdit b={full} reload={reload} clients={clients} />}
+                    <li key={b.id} className={shown ? "open" : undefined}>
+                      <button type="button" className="client-session" aria-expanded={shown} onClick={() => setOpenBooking(shown ? null : b.id)}>
+                        <span>
+                          <strong>{formatDateLong(b.date)}</strong> · {formatRange(b.start_hour, b.end_hour)}
+                          <span className="muted">
+                            {sportEmoji(full.sport)} {b.court_name} · {b.kind === "own" ? `${formatPeso(b.total)} · ${statusText(full)}` : `Coaching · ${statusText(full)}`}
+                          </span>
+                        </span>
+                        <span aria-hidden="true">{shown ? "▴" : "▾"}</span>
+                      </button>
+                      {shown &&
+                        (full.kind === "coaching" && full.coaching_status === "requested" ? (
+                          <RequestCard b={full} reload={reload} />
+                        ) : (
+                          <BookingCard b={full} reload={reload} clients={clients} payment={me.payment}
+                            upcoming={isCurrent(full, today)} detailed plain />
+                        ))}
                     </li>
                   );
                 })}

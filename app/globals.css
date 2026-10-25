@@ -955,6 +955,10 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .refund-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .refund-row input { flex: 1 1 180px; min-width: 0; }
 
+/* Staff: "please pay" push reminder on a booking */
+.pay-reminder { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 14px; }
+.pay-reminder .success, .pay-reminder .error { flex-basis: 100%; margin: 0; }
+
 /* Settings: holidays and closures */
 .holiday-list { display: grid; gap: 6px; margin-bottom: 10px; }
 .holiday-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--border); }
@@ -1092,6 +1096,16 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .client-head small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
 .client-sessions { list-style: none; margin: 0; padding: 0 16px 8px; }
 .client-sessions li { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.client-session { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 0;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.client-session > span:first-child { display: grid; gap: 2px; }
+.client-sessions li.open .coach-bk { padding: 10px 12px; border-radius: 10px; background: var(--bg); }
+.client-card.focused { border-color: var(--brand); }
+.client-link, .coach-client .client-link { font: inherit; font-weight: 700; padding: 0; }
+.coach-bk-details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 14px; }
+.coach-bk-details > div { display: contents; }
+.coach-bk-details dt { color: var(--muted); }
+.coach-bk-details dd { margin: 0; }
 .coach-bk.gone { opacity: .7; }
 .coach-bk.request { border-color: #e0a800; }
 .coach-bk-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }

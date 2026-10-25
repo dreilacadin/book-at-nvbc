@@ -24,6 +24,20 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Coaches: session details on the Clients tab.** Tap a session under a client
+  to see its full booking: code, court, amount, payment, attendance and your
+  message to the customer, with the same actions as on the Bookings tab.
+- **Coaches: jump to a client.** On the Bookings tab, tap a client's name (or the
+  customer's name on a coaching session) to open the Clients tab with all of
+  that client's bookings.
+- **Staff:** **🔔 Send payment reminder** on unpaid bookings, also coaches' own
+  bookings (including ones paid after the session). It sends a push
+  notification right away to the customer's devices that turned on updates for
+  the booking, or the coach's devices, and says how many got it. If no device
+  gets it, it's emailed instead (to the email on the booking, or the coach's
+  account email). With neither, it says so, so you can call or message them.
+  It can be sent once a minute, and each one is noted in the booking's history.
+- **Database:** bookings: when staff last sent a payment reminder, and who.
 - **Courts shared with another sport can have their own prices.** When you
   book a court shared from another sport (e.g. pickleball on a badminton court),
   the price shown is that court's. A group booking across courts with different

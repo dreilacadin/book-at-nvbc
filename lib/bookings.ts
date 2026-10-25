@@ -32,12 +32,12 @@ import { formatDateLong, formatRange, halfHours, isHalfHour, publicName, SLOT_HO
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { notifyStaff, pushConfig } from "./notify";
-import { notifyCustomer, scheduleReminders } from "./customer-notify";
+import { emailPayReminder, notifyCustomer, pushPayReminder, scheduleReminders } from "./customer-notify";
 import { isEmail } from "./customer-messages";
 import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-history";
 import { describeChanges, type BookingFields } from "./booking-changes";
 import { scheduleWaitlistCheck } from "./waitlist";
-import { activeCoachCount, availableCoaches, coachClients, coachForCode, coachingCancelled, coachPaysLater, notifyCoachCodeUsed, notifyCoachingRequest, restoreCoaching, type CodeCoach } from "./coaches";
+import { activeCoachCount, availableCoaches, coachClients, coachForCode, coachingCancelled, coachPaysLater, notifyCoachCodeUsed, notifyCoachingRequest, emailCoachPayReminder, pushCoachPayReminder, restoreCoaching, type CodeCoach } from "./coaches";
 import { allActivities, BOOKING_DEFAULT_SPORT, courtAllowed, isActivity, isSport, SPORTS, sportEmoji, sportLabel, type Sport } from "./sports";
 import { holidayOn, holidaysBetween } from "./holidays";
 import { closedAllDay, closedRanges, closureTimeText, overlapsClosure } from "./closures";
@@ -1460,6 +1460,51 @@ export async function setNoShow(id: string, on: unknown, by: string): Promise<Re
   if (!rows[0]) return fail(400, "Only bookings that have started (and weren't cancelled) can be marked as a no-show.");
   await logBooking({ id }, staff(by), flag ? "No-show" : "No-show undone", flag ? "The player didn't turn up" : "");
   return { ok: true, data: { id } };
+}
+
+/**
+ * Staff: "please pay" now, by push — to the devices that turned on updates for the booking, and
+ * for a coach's own booking, to the coach's devices too. When no device gets it, by email instead
+ * (the booking's email, or the coach's). For unpaid (or rejected) bookings, any time, including
+ * coaches who pay after their session. At most once a minute per booking.
+ */
+export async function sendPaymentReminder(id: string, by: string): Promise<Result<{ devices: number; emailed: string | null }>> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid booking id.");
+  // The booking the customer uses: a group's first court (its devices and total are there).
+  const { rows } = await db().query<{
+    id: string; code: string; coach_id: string | null; status: string; payment_status: string; court: string; date: string;
+    start_hour: number; end_hour: number; total: number; recent: boolean; registered: number;
+  }>(
+    `SELECT r.id, r.cancel_code AS code, r.coach_id, r.status, r.payment_status, r.booking_date AS date,
+            r.start_hour::float8 AS start_hour, r.end_hour::float8 AS end_hour,
+            (SELECT string_agg(gc.name, ' + ' ORDER BY gc.sort_order, gc.id) FROM bookings g JOIN courts gc ON gc.id = g.court_id
+              WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS court,
+            (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS total,
+            COALESCE(r.pay_nudged_at > now() - interval '1 minute', false) AS recent,
+            (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = r.id)
+              + (SELECT count(*)::int FROM coach_push_subscriptions s WHERE s.coach_id = r.coach_id) AS registered
+       FROM bookings b JOIN bookings r ON r.id = COALESCE(b.group_id, b.id) WHERE b.id = $1`,
+    [id]
+  );
+  const r = rows[0];
+  if (!r) return fail(404, "Booking not found.");
+  if (r.status === "cancelled") return fail(400, "This booking is cancelled.");
+  if (!["unpaid", "rejected"].includes(r.payment_status) || r.total <= 0) return fail(400, "This booking has nothing left to pay.");
+  if (r.recent) return fail(429, "A reminder was just sent for this booking. Please wait a minute before sending another.");
+  const info = { code: r.code, court: r.court, date: r.date, start: r.start_hour, end: r.end_hour, total: r.total };
+  const devices = (await pushPayReminder(r.id)) + (r.coach_id ? await pushCoachPayReminder(r.coach_id, info) : 0);
+  // No device got it: email instead (the coach's own booking goes to the coach).
+  const emailed = devices > 0 ? null : r.coach_id ? await emailCoachPayReminder(r.coach_id, info) : await emailPayReminder(r.id);
+  if (devices === 0 && !emailed)
+    return fail(409, r.registered > 0
+      ? "Their devices couldn't be reached just now, and there's no email to send it to. Please try again later, or call or message them."
+      : r.coach_id
+      ? "The coach hasn't turned on notifications, and the email couldn't be sent. Please call or message them."
+      : "The customer hasn't turned on notifications or given an email for this booking, so nothing was sent. Please call or message them.");
+  await db().query(`UPDATE bookings SET pay_nudged_at = now(), pay_nudged_by = $2 WHERE id = $1`, [r.id, by.slice(0, 60) || "Staff"]);
+  await logBooking({ id: r.id }, staff(by), "Payment reminder sent",
+    `${emailed ? `Email to ${emailed}` : `Push notification to ${devices} device${devices === 1 ? "" : "s"}`} · ${formatPeso(r.total)}`);
+  return { ok: true, data: { devices, emailed } };
 }
 
 /** Staff: a coach's code was used by someone else on this booking (or undo). Counted on the coach. */

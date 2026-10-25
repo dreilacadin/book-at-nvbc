@@ -2,7 +2,8 @@
 // imports), so it can be tested.
 import { formatDateLong, formatRange } from "./format.ts";
 
-export type CustomerNoticeKind = "confirmed" | "rejected" | "upcoming" | "message" | "refunded" | "coaching_accepted" | "coaching_declined";
+export type CustomerNoticeKind =
+  | "confirmed" | "rejected" | "upcoming" | "message" | "refunded" | "coaching_accepted" | "coaching_declined" | "pay_reminder";
 
 /** The "coming up" reminder goes out this long before the start. */
 export const REMINDER_MINUTES = 60;
@@ -109,6 +110,20 @@ export function customerNotice(
         `Hi ${firstName(b.name)},\n\nWe've sent your refund of ${amount}${ref} for your cancelled booking:\n\n${where}\n` +
         `Booking code: ${b.code}\n\nIt may take a little while to show in your account. If you have any questions, please reply ` +
         `on your booking page or contact the front desk:\n${opts.link}\n\nNV Badminton Center`,
+    };
+  }
+
+  if (kind === "pay_reminder") {
+    // Sent by staff from the booking: cash is paid at the desk, anything else online with a receipt.
+    const cash = b.paymentMethod === "cash";
+    const how = cash ? "at the front desk" : "and send your receipt or reference number on your booking page";
+    return {
+      title: "Reminder: please pay for your booking",
+      body: `Please pay ${pesos(b.amount)} ${cash ? "at the front desk" : "and send your receipt"} — ${b.courtName}, ${formatRange(b.startHour, b.endHour)} on ${formatDateLong(b.date)}.`,
+      subject: `Reminder: please pay for your booking (${b.code})`,
+      text:
+        `Hi ${firstName(b.name)},\n\nA friendly reminder to pay ${pesos(b.amount)} for your booking:\n\n${where}\nBooking code: ${b.code}\n\n` +
+        `Please pay ${how}:\n${opts.link}\n\nNV Badminton Center`,
     };
   }
 

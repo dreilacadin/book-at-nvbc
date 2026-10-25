@@ -241,25 +241,32 @@ export async function availableCoaches(sport: string, date: string, start: numbe
     }));
 }
 
+/** Push to the coach's devices. Returns how many got it. */
+async function pushCoach(coachId: string, push: { title: string; body: string; url: string }): Promise<number> {
+  const subs = await db().query<{ endpoint: string; p256dh: string; auth: string }>(
+    `SELECT endpoint, p256dh, auth FROM coach_push_subscriptions WHERE coach_id = $1`,
+    [coachId]
+  );
+  if (!subs.rows.length || !setupVapid()) return 0;
+  let sent = 0;
+  for (const s of subs.rows) {
+    try {
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify({ ...push, tag: `nvbc-coach-${push.url}` }), { TTL: 6 * 3600 });
+      sent++;
+    } catch (e) {
+      const code = (e as { statusCode?: number }).statusCode;
+      if (code === 404 || code === 410) await db().query(`DELETE FROM coach_push_subscriptions WHERE endpoint = $1`, [s.endpoint]);
+    }
+  }
+  return sent;
+}
+
 /** Emails / pushes a coach. Never throws. */
 async function tellCoach(coachId: string, push: { title: string; body: string; url: string }, email?: { subject: string; text: string }) {
   try {
     const { rows } = await db().query<{ email: string }>(`SELECT email FROM coaches WHERE id = $1`, [coachId]);
     if (!rows[0]) return;
-    const subs = await db().query<{ endpoint: string; p256dh: string; auth: string }>(
-      `SELECT endpoint, p256dh, auth FROM coach_push_subscriptions WHERE coach_id = $1`,
-      [coachId]
-    );
-    if (subs.rows.length && setupVapid()) {
-      for (const s of subs.rows) {
-        try {
-          await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify({ ...push, tag: `nvbc-coach-${push.url}` }), { TTL: 6 * 3600 });
-        } catch (e) {
-          const code = (e as { statusCode?: number }).statusCode;
-          if (code === 404 || code === 410) await db().query(`DELETE FROM coach_push_subscriptions WHERE endpoint = $1`, [s.endpoint]);
-        }
-      }
-    }
+    await pushCoach(coachId, push);
     if (email && emailSender()) await sendEmail(rows[0].email, email.subject, email.text);
   } catch (e) {
     console.error("coach notification failed", e instanceof Error ? e.message : e);
@@ -661,6 +668,47 @@ async function sendPayAfterReminders(): Promise<number> {
       bookingCode: r.code,
     })));
   return ended.rows.length + overdue.rows.length;
+}
+
+/**
+ * Staff's "please pay" reminder for a coach's own booking, by push only and right away. Returns
+ * how many of the coach's devices got it.
+ */
+export async function pushCoachPayReminder(
+  coachId: string,
+  b: { court: string; date: string; start: number; end: number; total: number }
+): Promise<number> {
+  return pushCoach(coachId, {
+    title: `Please pay ${formatPeso(b.total)} for your booking`,
+    body: `${b.court} · ${formatDateLong(b.date)}, ${formatRange(b.start, b.end)} · Pay at the desk or online, then tap "I paid"`,
+    url: "/coach",
+  });
+}
+
+/**
+ * The same reminder by email, for when none of the coach's devices got the push. Returns the
+ * address it went to, or null (email isn't set up, or sending failed).
+ */
+export async function emailCoachPayReminder(
+  coachId: string,
+  b: { code: string; court: string; date: string; start: number; end: number; total: number }
+): Promise<string | null> {
+  const { rows } = await db().query<{ email: string }>(`SELECT email FROM coaches WHERE id = $1`, [coachId]);
+  const to = rows[0]?.email.trim();
+  if (!to || !emailSender()) return null;
+  try {
+    await sendEmail(
+      to,
+      `Please pay ${formatPeso(b.total)} for your booking (${b.code})`,
+      `Hi!\n\nA friendly reminder from NVBC to pay ${formatPeso(b.total)} for your booking:\n\n` +
+        `${b.court}, ${formatDateLong(b.date)}, ${formatRange(b.start, b.end)}\nBooking code: ${b.code}\n\n` +
+        `Please pay at the front desk or online, then tap "I paid" on your Coaches Dashboard:\n${siteOrigin()}/coach\n\nNV Badminton Center`
+    );
+    return to;
+  } catch (e) {
+    console.error("coach email failed", e instanceof Error ? e.message : e);
+    return null;
+  }
 }
 
 // ---- Coaches' devices (push) ----------------------------------------------------------------
