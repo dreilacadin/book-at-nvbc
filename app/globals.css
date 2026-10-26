@@ -614,6 +614,13 @@ label.check { font-weight: 400; display: inline-flex; gap: 6px; align-items: cen
 .pay-timer.expired { background: var(--danger-soft); color: var(--danger); font-weight: 700; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pay-timer { background: #3a2e12; color: #ffd98a; } }
 :root[data-theme="dark"] .pay-timer { background: #3a2e12; color: #ffd98a; }
+/* "Need more time?" under the payment timer */
+.pay-extend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; padding: 10px 12px;
+  border: 1px dashed var(--border); border-radius: 10px; font-size: 14px; }
+.pay-extend p { margin: 0; flex: 1 1 240px; }
+.pay-extend .btn { flex: 0 0 auto; }
+.pay-extend.done { border-style: solid; border-color: var(--brand); background: var(--brand-soft); }
+.pay-extend .error { flex-basis: 100%; }
 
 /* Staff mode on the booking page */
 .staff-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14px;

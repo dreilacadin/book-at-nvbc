@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { awaitingPayment, bookingPhase, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified, coachSessionStage } from "./booking-policy.ts";
+import { awaitingPayment, bookingPhase, extendedPayBy, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified, coachSessionStage } from "./booking-policy.ts";
 import { formatClock } from "./format.ts";
 
 test("minutesUntilStart across days and half hours", () => {
@@ -132,4 +132,23 @@ test("shouldRelease: a rejected payment counts as unpaid (fresh window, then rel
   assert.equal(shouldRelease({ ...b, pay_by: new Date(nowMs - 1).toISOString() }, now, nowMs), true); // window over
   assert.equal(shouldRelease(b, { date: "2026-10-01", time: 17 + 50 / 60 }), true); // 10 minutes before the start
   assert.ok(awaitingPayment("rejected") && awaitingPayment("unpaid") && !awaitingPayment("for_verification"));
+});
+
+test("extendedPayBy: 15 more minutes, up to 10 minutes before the start", () => {
+  const nowMs = Date.parse("2026-10-01T02:00:00Z"); // 10:00 AM in Manila
+  const now = { date: "2026-10-01", time: 10 };
+  const payBy = nowMs + 5 * 60_000; // 10:05
+  // An evening slot: the full 15 minutes (10:05 → 10:20).
+  assert.equal(extendedPayBy(payBy, "2026-10-01", 18, nowMs, now)! - payBy, 15 * 60_000);
+  // Slot at 10:30: released at 10:20, so 10:05 → 10:20 is all that's left (also 15).
+  assert.equal(extendedPayBy(payBy, "2026-10-01", 10.5, nowMs, now)! - payBy, 15 * 60_000);
+  // Slot at 10:25: released at 10:15 → 10 more minutes.
+  assert.equal(extendedPayBy(payBy, "2026-10-01", 10 + 25 / 60, nowMs, now)! - payBy, 10 * 60_000);
+  // Already paying right up to the release time: nothing to add.
+  assert.equal(extendedPayBy(nowMs + 20 * 60_000, "2026-10-01", 10.5, nowMs, now), null);
+  // The deadline has passed.
+  assert.equal(extendedPayBy(nowMs - 1, "2026-10-01", 18, nowMs, now), null);
+  // 30 seconds into the minute (the facility clock still says 10:00): capped at exactly 10:15:00.
+  const later = nowMs + 30_000;
+  assert.equal(extendedPayBy(payBy, "2026-10-01", 10 + 25 / 60, later, now), nowMs + 15 * 60_000);
 });

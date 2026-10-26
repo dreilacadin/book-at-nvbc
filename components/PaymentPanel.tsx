@@ -314,7 +314,8 @@ export default function PaymentPanel({
   reference: initialRef = "",
   hasProof: initialHasProof = false,
   payBy,
-  deadline = null,
+  deadline: initialDeadline = null,
+  extendMinutes: initialExtend = null,
   rejectedNote = "",
   coachRate = false,
   payAfter = false,
@@ -329,6 +330,7 @@ export default function PaymentPanel({
   hasProof?: boolean;
   payBy?: string; // "9:50 AM on Thu, Oct 1": unpaid bookings are released then
   deadline?: string | null; // online booking: send the payment by this time (ISO) or the slot is released
+  extendMinutes?: number | null; // "Need more time?": minutes the player can add to the deadline (once)
   rejectedNote?: string; // staff rejected the payment sent: why
   coachRate?: boolean; // booked at the coach rate: paid the ways coaches may pay (Settings → Payment)
   payAfter?: boolean; // a coach paying after the session: kept until then, no time limit
@@ -349,6 +351,14 @@ export default function PaymentPanel({
   const [hasProof, setHasProof] = useState(initialHasProof);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // "Need more time?" moves the deadline (once): kept here, and reset when the booking reloads.
+  const [deadline, setDeadline] = useState(initialDeadline);
+  const [extendMinutes, setExtendMinutes] = useState(initialExtend);
+  const [added, setAdded] = useState(0); // minutes just added
+  const [extending, setExtending] = useState(false);
+  const [extendError, setExtendError] = useState("");
+  useEffect(() => setDeadline(initialDeadline), [initialDeadline]);
+  useEffect(() => setExtendMinutes(initialExtend), [initialExtend]);
   const secondsLeft = useSecondsLeft(
     status === "unpaid" || status === "rejected" ? deadline : null,
   );
@@ -389,6 +399,30 @@ export default function PaymentPanel({
         </p>
       </div>
     );
+
+  async function extend() {
+    setExtending(true);
+    setExtendError("");
+    try {
+      const res = await fetch("/api/bookings/payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, action: "extend" }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setExtendMinutes(null);
+        return setExtendError(json.error || "Couldn't add more time.");
+      }
+      setDeadline(json.payBy);
+      setExtendMinutes(null);
+      setAdded(json.minutes);
+    } catch {
+      setExtendError("Network error. Please try again.");
+    } finally {
+      setExtending(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -440,6 +474,27 @@ export default function PaymentPanel({
           aria-live={secondsLeft <= 60 ? "assertive" : "off"}
         >
           ⏱ Time left to pay: <strong>{mmss(secondsLeft)}</strong>
+        </div>
+      )}
+      {secondsLeft !== null && (extendMinutes || added > 0 || extendError) && (
+        <div className={`pay-extend${added ? " done" : ""}`} aria-live="polite">
+          {added > 0 ? (
+            <p>
+              ✓ <strong>{added} more minutes added.</strong> Please pay and send your receipt before the timer runs out —
+              more time can only be added once.
+            </p>
+          ) : extendMinutes ? (
+            <>
+              <p>
+                <strong>Need more time to pay?</strong> Add {extendMinutes} more minutes to the timer. You can do this once;
+                if the timer reaches 0:00, the booking is released for other players.
+              </p>
+              <button type="button" className="btn small secondary" disabled={extending} onClick={extend}>
+                {extending ? "Adding…" : `+ ${extendMinutes} more minutes`}
+              </button>
+            </>
+          ) : null}
+          {extendError && <p className="error">{extendError}</p>}
         </div>
       )}
       <div className="pay-row">

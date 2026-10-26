@@ -28,7 +28,7 @@ import {
 } from "@/lib/pricing";
 import { saveCode } from "@/lib/saved-codes";
 import { loadMembership } from "@/lib/saved-membership";
-import { minutesUntilStart, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
+import { minutesUntilStart, PAY_EXTEND_MINUTES, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
 import AddToCalendar from "./AddToCalendar";
 import BookingAlerts from "./BookingAlerts";
@@ -117,6 +117,7 @@ type Confirmed = {
   hasProof: boolean;
   status: ActiveStatus;
   payBy: string | null; // online: pay within the window or the slot is released
+  payExtendMinutes: number | null; // "Need more time?": minutes they can add to payBy (once)
   payAfter: boolean; // a coach paying after the session: kept until then
 };
 
@@ -836,6 +837,7 @@ function BookingDialog({
                 hasProof={done.hasProof}
                 payBy={payByLabel(done.date, done.startHour)}
                 deadline={done.payBy}
+                extendMinutes={done.payExtendMinutes}
                 coachRate={rateType === "coach"}
                 payAfter={done.payAfter}
                 onUpdated={(u) => setDone({ ...done, paymentStatus: u.paymentStatus, paymentRef: u.paymentRef, hasProof: u.hasProof, payBy: null })}
@@ -1047,7 +1049,7 @@ function BookingDialog({
                       ? "You pay after your session — your booking is kept for you (it won't be released). You'll get a reminder when it ends."
                       : paymentMethod === "cash"
                       ? `Your slot will be Reserved — please pay at the front desk at least ${RELEASE_MINUTES} minutes before your start time.`
-                      : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number.`}
+                      : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number (you can add ${PAY_EXTEND_MINUTES} more minutes once if you need to).`}
                     {coachOnly
                       ? ` Cash isn't available for ${coachOnly} times.`
                       : !cashOk && data.coachPaymentMethods.includes("cash") && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}

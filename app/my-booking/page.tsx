@@ -42,6 +42,7 @@ type Booking = {
   hasProof: boolean;
   cancelledBy: string | null; // "system" = released (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
+  payExtendMinutes: number | null; // "Need more time?": minutes they can add to payBy (once)
   payAfter: boolean; // a coach paying after the session: kept until then
   courtNotes: string;
   phase: "in_progress" | "completed" | null;
@@ -286,6 +287,7 @@ export default function MyBookingPage() {
               hasProof={booking.hasProof}
               payBy={payByLabel(booking.date, booking.startHour)}
               deadline={booking.payBy}
+              extendMinutes={booking.payExtendMinutes}
               rejectedNote={booking.rejectedNote}
               coachRate={booking.rateType === "coach"}
               payAfter={booking.payAfter}

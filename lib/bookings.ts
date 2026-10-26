@@ -27,7 +27,7 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { bookingPhase, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, refundOnCancel, RELEASE_MINUTES, type Phase } from "./booking-policy";
+import { awaitingPayment, bookingPhase, extendedPayBy, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, refundOnCancel, RELEASE_MINUTES, type Phase } from "./booking-policy";
 import { formatDateLong, formatRange, halfHours, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
@@ -381,6 +381,7 @@ export async function createBooking(
     hasProof: boolean;
     status: ActiveStatus;
     payBy: string | null; // online bookings: pay (send reference/screenshot) by this time, or the slot is released
+    payExtendMinutes: number | null; // "Need more time?": minutes the player can add to payBy (once)
     payAfter: boolean; // a coach paying after the session: kept until then, never released
   }>
 > {
@@ -721,6 +722,7 @@ export async function createBooking(
         code, courtName: courtNames.join(", "), courts: courtNames, sport, date, startHour, endHour,
         rateType, hourlyRate: price.hourlyRate, regularRate: price.regularRate, savings: groupSavings, amount: groupTotal,
         paymentMethod, paymentStatus, paymentRef, hasProof: paymentMethod !== "cash" && paymentProof !== "", status, payBy,
+        payExtendMinutes: extendMinutes(payBy, date, startHour, false),
         payAfter,
       },
     };
@@ -764,12 +766,63 @@ export type BookingView = {
   canCancel: boolean;
   cancelledBy: string | null; // "system" = released automatically (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
+  payExtendMinutes: number | null; // "Need more time?": minutes the player can add to payBy (once)
   payAfter: boolean; // a coach paying after the session: kept until then
   courtNotes: string;
   phase: Phase | null; // in progress / completed (by the clock for paid bookings, or set by staff)
   rejectedNote: string; // payment rejected by staff: why (empty otherwise)
   unreadMessages: number; // messages from staff the customer hasn't seen
 };
+
+/** Minutes "Need more time?" would add to an online booking's payment window now (null: can't). */
+function extendMinutes(payBy: string | null, date: string, startHour: number, extended: boolean): number | null {
+  if (!payBy || extended) return null;
+  const next = extendedPayBy(Date.parse(payBy), date, startHour, Date.now(), nowAtFacility());
+  return next === null ? null : Math.floor((next - Date.parse(payBy)) / 60_000);
+}
+
+/**
+ * "Need more time?": the player adds up to PAY_EXTEND_MINUTES to their online payment window,
+ * once per booking, while it's still running (never past the release time before the start).
+ * Applies to the whole group.
+ */
+export async function extendPaymentTime(rawCode: unknown): Promise<Result<{ payBy: string; minutes: number }>> {
+  const code = normalizeCode(rawCode);
+  if (!code) return fail(400, "Booking codes look like NV-ABC123.");
+  await releaseUnpaidBookings();
+  const { rows } = await db().query<{
+    id: string; status: string; cancelled_by: string | null; payment_status: string; pay_by: string | null;
+    pay_extended_at: string | null; booking_date: string; start_hour: number;
+  }>(
+    `SELECT id, status, cancelled_by, payment_status, pay_by, pay_extended_at, booking_date, start_hour::float8 AS start_hour
+       FROM bookings WHERE cancel_code = $1`,
+    [code]
+  );
+  const b = rows[0];
+  const timeUp =
+    "The time to pay for this booking has ended, so the slot was released for other players. You're welcome to book again.";
+  if (!b) return fail(404, "No booking found with that code.");
+  if (b.status === "cancelled") return fail(400, b.cancelled_by === "system" ? timeUp : "This booking is cancelled.");
+  if (b.status !== "pending" || !awaitingPayment(b.payment_status) || !b.pay_by)
+    return fail(400, "This booking has no time limit to pay, so there's no need to add more time.");
+  if (b.pay_extended_at) return fail(400, "You've already added more time once. Please pay before the timer runs out.");
+  const next = extendedPayBy(Date.parse(b.pay_by), b.booking_date, b.start_hour, Date.now(), nowAtFacility());
+  if (next === null)
+    return fail(400, Date.parse(b.pay_by) <= Date.now() ? timeUp
+      : `Your booking starts soon, so no more time can be added — unpaid bookings are released ${RELEASE_MINUTES} minutes before they start.`);
+  const payBy = new Date(next).toISOString();
+  const { rowCount } = await db().query(
+    `UPDATE bookings SET pay_by = $2, pay_extended_at = now()
+      WHERE COALESCE(group_id, id) = $1 AND status = 'pending' AND payment_status IN ('unpaid', 'rejected')
+        AND pay_by > now() AND pay_extended_at IS NULL`,
+    [b.id, payBy]
+  );
+  if (!rowCount) return fail(400, timeUp);
+  const minutes = Math.floor((next - Date.parse(b.pay_by)) / 60_000);
+  const clock = new Date(next).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", hour12: true });
+  await logBooking({ id: b.id }, CUSTOMER, "More time to pay", `+${minutes} min · now pay by ${clock}`);
+  return { ok: true, data: { payBy, minutes } };
+}
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
 export async function findByCode(rawCode: unknown): Promise<Result<BookingView>> {
@@ -785,7 +838,8 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
             (SELECT json_agg(json_build_object('name', c2.name, 'status', g.status) ORDER BY c2.sort_order, c2.id)
                FROM bookings g JOIN courts c2 ON c2.id = g.court_id WHERE g.group_id = b.id) AS group_courts,
             b.payment_method, b.payment_status, b.payment_ref, (b.payment_proof <> '') AS has_proof, b.cancelled_by,
-            b.pay_by, b.pay_after, c.notes AS court_notes, b.phase, b.rejected_note,
+            b.pay_by, b.pay_extended_at, b.pay_after, c.notes AS court_notes, b.phase, b.rejected_note,
+            (SELECT COALESCE(sum(g.amount), 0)::float8 FROM bookings g WHERE (g.id = b.id OR g.group_id = b.id) AND g.status <> 'cancelled') AS group_total,
             (SELECT count(*)::int FROM booking_messages m
               WHERE m.booking_id = b.id AND m.sender_kind = 'staff' AND m.read_at IS NULL) AS unread_messages
        FROM bookings b JOIN courts c ON c.id = b.court_id
@@ -798,7 +852,10 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
   const others = ((r.group_courts ?? []) as { name: string; status: BookingStatus }[]).filter((g) => g.status !== "cancelled");
   const courtNames = [...(r.status !== "cancelled" || others.length === 0 ? [r.court_name as string] : []), ...others.map((g) => g.name)];
   const groupStatus: BookingStatus = r.status === "cancelled" && others.length ? others[0].status : r.status;
-  const groupAmount = Number(r.amount) * courtNames.length;
+  // Each court at its own price (a shared court may cost more); all cancelled: what it cost.
+  const groupAmount = r.status !== "cancelled" || others.length ? Number(r.group_total) : Number(r.amount);
+  const payBy: string | null =
+    r.pay_by && awaitingPayment(r.payment_status) && r.status === "pending" ? new Date(r.pay_by).toISOString() : null;
   return {
     ok: true,
     data: {
@@ -827,8 +884,8 @@ export async function findByCode(rawCode: unknown): Promise<Result<BookingView>>
       hasProof: r.has_proof,
       canCancel: groupStatus !== "cancelled" && !isPastSlot(r.booking_date, r.start_hour),
       cancelledBy: r.cancelled_by,
-      payBy: r.pay_by && (r.payment_status === "unpaid" || r.payment_status === "rejected") && r.status === "pending"
-        ? new Date(r.pay_by).toISOString() : null,
+      payBy,
+      payExtendMinutes: extendMinutes(payBy, r.booking_date, Number(r.start_hour), r.pay_extended_at !== null),
       payAfter: r.pay_after === true,
       rejectedNote: r.payment_status === "rejected" ? r.rejected_note : "",
       unreadMessages: r.unread_messages,
