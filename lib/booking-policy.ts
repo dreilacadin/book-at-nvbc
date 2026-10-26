@@ -6,6 +6,8 @@ export const RELEASE_MINUTES = 10;
 export const REFUND_HOURS = 12;
 /** After booking online, players have this long to pay and send their receipt or reference number. */
 export const PAY_WINDOW_MINUTES = 15;
+/** Players who need longer can add this many minutes to their payment window, once per booking. */
+export const PAY_EXTEND_MINUTES = 15;
 /** Coaches who pay after their session: staff are told if it's still unpaid this long after the end. */
 export const PAY_AFTER_GRACE_MINUTES = 10;
 /** A coach loses "pay after the session" after this many no-shows in NO_SHOW_DAYS (staff can turn it back on). */
@@ -40,6 +42,20 @@ export function releaseAt(date: string, startHour: number): { date: string; time
 export function paymentDeadline(nowMs: number, date: string, startHour: number, now: Now): number {
   const untilRelease = (minutesUntilStart(date, startHour, now) - RELEASE_MINUTES) * 60_000;
   return nowMs + Math.min(PAY_WINDOW_MINUTES * 60_000, untilRelease);
+}
+
+/**
+ * The new payment deadline (ms since epoch) if the player asks for more time now: PAY_EXTEND_MINUTES
+ * after the current one, but no later than RELEASE_MINUTES before the start. Null once the deadline
+ * has passed, or when it would add less than a minute.
+ */
+export function extendedPayBy(payByMs: number, date: string, startHour: number, nowMs: number, now: Now): number | null {
+  if (payByMs <= nowMs) return null;
+  // `now` is the facility clock to the minute: count from the start of this minute, so the
+  // release time comes out exact.
+  const releaseMs = nowMs - (nowMs % 60_000) + (minutesUntilStart(date, startHour, now) - RELEASE_MINUTES) * 60_000;
+  const next = Math.min(payByMs + PAY_EXTEND_MINUTES * 60_000, releaseMs);
+  return next - payByMs >= 60_000 ? next : null;
 }
 
 /**

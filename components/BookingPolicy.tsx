@@ -1,4 +1,4 @@
-import { PAY_WINDOW_MINUTES, REFUND_HOURS, RELEASE_MINUTES, releaseAt } from "@/lib/booking-policy";
+import { PAY_EXTEND_MINUTES, PAY_WINDOW_MINUTES, REFUND_HOURS, RELEASE_MINUTES, releaseAt } from "@/lib/booking-policy";
 import { formatClock } from "@/lib/format";
 
 /** "9:50 AM on Thu, Oct 1" — when an unpaid booking is released. */
@@ -21,8 +21,9 @@ export default function BookingPolicy({ title = "Before you book" }: { title?: s
       <ul>
         <li>
           After booking, you have <strong>{PAY_WINDOW_MINUTES} minutes</strong> to pay by GCash, QR Ph or bank transfer and
-          send your receipt or reference number. Bookings not paid within that time are released automatically so other
-          players can book the court.
+          send your receipt or reference number. Need longer? Tap <strong>Need more time</strong> to add{" "}
+          {PAY_EXTEND_MINUTES} more minutes, once. Bookings not paid in time are released automatically so other players
+          can book the court.
         </li>
         <li>
           Coaches paying in cash: your slot is <strong>Reserved</strong>. Please settle your payment at the front desk at

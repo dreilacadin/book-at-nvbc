@@ -739,3 +739,8 @@ ALTER TABLE settings ADD COLUMN IF NOT EXISTS court_rates JSONB NOT NULL DEFAULT
 -- the last one was sent and by whom (on the group's first booking).
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_nudged_at TIMESTAMPTZ;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_nudged_by TEXT;
+
+-- v34: more time to pay ------------------------------------------------------------------------
+-- "Need more time?": a player paying online can add 15 minutes to their payment window (pay_by),
+-- once per booking. When they did (on every court of a group).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_extended_at TIMESTAMPTZ;

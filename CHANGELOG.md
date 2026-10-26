@@ -24,6 +24,11 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Need more time to pay?** When paying online, you can now add 15 more
+  minutes to the payment timer, once per booking: tap **+ 15 more minutes**
+  under the timer, right after booking or on My booking. Close to your start
+  time it adds what's left (bookings not paid are still released 10 minutes
+  before they start).
 - **Coaches: session details on the Clients tab.** Tap a session under a client
   to see its full booking: code, court, amount, payment, attendance and your
   message to the customer, with the same actions as on the Bookings tab.
@@ -37,7 +42,8 @@ Earlier changes (before this file existed) are in the git history.
   gets it, it's emailed instead (to the email on the booking, or the coach's
   account email). With neither, it says so, so you can call or message them.
   It can be sent once a minute, and each one is noted in the booking's history.
-- **Database:** bookings: when staff last sent a payment reminder, and who.
+- **Database:** bookings: when staff last sent a payment reminder, and who;
+  when the player added more time to pay.
 - **Courts shared with another sport can have their own prices.** When you
   book a court shared from another sport (e.g. pickleball on a badminton court),
   the price shown is that court's. A group booking across courts with different
@@ -161,6 +167,8 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Fixed
 
+- My booking showed the wrong total for a group booking whose courts have
+  different prices; it now adds up each court's price.
 - When scrolling the booking grid sideways, the half-hour times (e.g. 5:30 PM)
   no longer show the slots behind them, and "Time" stays in the corner.
 - The booking grid loads faster, especially when switching dates: it now asks
