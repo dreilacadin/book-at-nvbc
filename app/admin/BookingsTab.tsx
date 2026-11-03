@@ -17,7 +17,7 @@ import {
 } from "@/lib/pricing";
 import { SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 import { nowAtFacility } from "@/lib/time";
-import BookingLookup, { AdminBookingCard, flagSummary, displayLabel, displayStatus, releaseNote, type DisplayStatus } from "./BookingLookup";
+import BookingLookup, { AdminBookingCard, flagSummary, displayLabel, displayStatus, paymentReady, releaseNote, type DisplayStatus } from "./BookingLookup";
 import { api, todayManila, type AdminBooking, type Court } from "./shared";
 
 type Filter = "all" | "action" | "verify" | "upcoming" | "in_progress" | "completed";
@@ -305,11 +305,13 @@ function BookingRow({
   const release = releaseNote(b);
   const flags: string[] = [];
   const now = nowAtFacility();
+  const ready = paymentReady(b); // every payment check ticked
   if (startedUnverified(b, now)) flags.push("⚠ Started — payment not verified");
   // Played (time is over) but never paid — e.g. older bookings confirmed before payment was required.
   else if (b.status !== "cancelled" && awaitingPayment(b.payment_status) && b.amount > 0 && !b.phase && minutesUntilStart(b.date, b.end_hour, now) <= 0)
     flags.push("⚠ Ended — not paid");
   else if (b.payment_status === "for_verification" && b.coach_paid_desk_at) flags.push("💵 Coach says paid cash at the desk — confirm");
+  else if (ready) { /* shown as a green chip */ }
   else if (b.payment_status === "for_verification") flags.push(b.rejected_at ? "⚠ Verify payment (sent again)" : "⚠ Verify payment");
   else if (b.status !== "cancelled" && b.payment_status === "rejected") flags.push("✕ Payment rejected — waiting for customer");
   if (release) flags.push(release.replace(/^Released at /, "Releases "));
@@ -340,6 +342,7 @@ function BookingRow({
             {showSport ? `${sportEmoji(b.sport)} ` : ""}{b.court_name} · {formatPeso(b.amount)} · {b.payment_splits ? "Split" : paymentLabel(b.payment_method)}
             {b.payment_status !== "unpaid" ? ` · ${paymentStatusLabel(b.payment_status)}` : ""}
           </span>
+          {ready && <span className="bk-ready">✓ Checked — ready to confirm</span>}
           {flags.length > 0 && <span className="bk-flags">{flags.join(" · ")}</span>}
         </span>
         <span className={`pill status-${d}`}>{displayLabel(d)}</span>

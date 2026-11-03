@@ -744,3 +744,133 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_nudged_by TEXT;
 -- "Need more time?": a player paying online can add 15 minutes to their payment window (pay_by),
 -- once per booking. When they did (on every court of a group).
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_extended_at TIMESTAMPTZ;
+
+-- v35: vouchers ----------------------------------------------------------------------------------
+-- Vouchers staff create and print (Admin → Vouchers): free court hours, a fixed or percentage
+-- discount on court fees, or a cash voucher. Anyone with the code (VCH-XXXX-XXXX) can use it, online
+-- or at the desk. Free hours and cash keep a balance; fixed and percentage discounts count uses.
+CREATE TABLE IF NOT EXISTS vouchers (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code          TEXT NOT NULL UNIQUE,
+  kind          TEXT NOT NULL CHECK (kind IN ('free_hours', 'fixed', 'percent', 'cash')),
+  value         NUMERIC(10,2) NOT NULL CHECK (value > 0),  -- hours, pesos or percent
+  max_discount  NUMERIC(10,2) CHECK (max_discount > 0),     -- percent: at most this many pesos off per use
+  balance       NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (balance >= 0), -- free_hours: hours left; cash: pesos left
+  max_uses      INT NOT NULL DEFAULT 1 CHECK (max_uses >= 1),
+  uses          INT NOT NULL DEFAULT 0 CHECK (uses >= 0),   -- bookings it's on now
+  status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'void')),
+  valid_from    DATE,                                       -- bookings from this day
+  expires_on    DATE,                                       -- bookings up to this day (NULL: no expiry)
+  sports        TEXT[] NOT NULL DEFAULT '{}',               -- empty: any sport or activity
+  title         TEXT NOT NULL DEFAULT '',
+  issued_to     TEXT NOT NULL DEFAULT '',
+  note          TEXT NOT NULL DEFAULT '',                   -- staff only
+  terms         TEXT NOT NULL DEFAULT '',                   -- with {placeholders}, see lib/voucher.ts
+  batch         TEXT NOT NULL DEFAULT '',                   -- vouchers created together share this
+  created_by    TEXT NOT NULL DEFAULT '',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS vouchers_created_idx ON vouchers (created_at DESC);
+
+-- What a voucher took off each court of a booking. Courts booked together share an `application`.
+-- restored_at: the value went back on the voucher (the booking was cancelled, or staff removed it:
+-- removed). dropped: a restored booking couldn't take the voucher again, so that court pays full price.
+CREATE TABLE IF NOT EXISTS voucher_uses (
+  id            BIGSERIAL PRIMARY KEY,
+  voucher_id    UUID NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE,
+  application   UUID NOT NULL,
+  booking_id    UUID REFERENCES bookings(id) ON DELETE SET NULL,
+  booking_code  TEXT NOT NULL DEFAULT '',
+  amount        NUMERIC(10,2) NOT NULL DEFAULT 0,  -- pesos off this court
+  hours         NUMERIC(6,2) NOT NULL DEFAULT 0,   -- free hours used on it
+  used_by       TEXT NOT NULL DEFAULT '',
+  used_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  restored_at   TIMESTAMPTZ,
+  removed       BOOLEAN NOT NULL DEFAULT FALSE,
+  dropped       BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS voucher_uses_voucher_idx ON voucher_uses (voucher_id, used_at);
+CREATE INDEX IF NOT EXISTS voucher_uses_booking_idx ON voucher_uses (booking_id);
+
+-- Who changed what on a voucher (created, status, expiry, balance, terms, …).
+CREATE TABLE IF NOT EXISTS voucher_events (
+  id            BIGSERIAL PRIMARY KEY,
+  voucher_id    UUID NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE,
+  at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor         TEXT NOT NULL,
+  action        TEXT NOT NULL,
+  details       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS voucher_events_voucher_idx ON voucher_events (voucher_id, at);
+
+-- A booking's voucher, and what it took off this court (amount is the price after it).
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS voucher_id UUID REFERENCES vouchers(id) ON DELETE SET NULL;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS voucher_discount NUMERIC(10,2) NOT NULL DEFAULT 0;
+
+-- Every way a booking is cancelled (customer, staff, a coach's "Can't make it", released for not
+-- paying) gives the voucher its value back, unless the voucher is void or expired. A use is given
+-- back once no court booked with it is still on. When staff restore a cancelled booking, it takes
+-- the voucher again if the voucher can still cover it; otherwise that court pays the full price.
+CREATE OR REPLACE FUNCTION bookings_voucher_on_status() RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+  u voucher_uses%ROWTYPE;
+  v vouchers%ROWTYPE;
+  today DATE := (now() AT TIME ZONE 'Asia/Manila')::date;
+  others BOOLEAN;
+BEGIN
+  IF NEW.status = 'cancelled' AND OLD.status <> 'cancelled' THEN
+    FOR u IN SELECT * FROM voucher_uses WHERE booking_id = NEW.id AND restored_at IS NULL AND NOT dropped LOOP
+      SELECT * INTO v FROM vouchers WHERE id = u.voucher_id FOR UPDATE;
+      CONTINUE WHEN v.status = 'void' OR (v.expires_on IS NOT NULL AND v.expires_on < today);
+      SELECT EXISTS (SELECT 1 FROM voucher_uses o JOIN bookings ob ON ob.id = o.booking_id
+                      WHERE o.application = u.application AND o.id <> u.id AND o.restored_at IS NULL AND NOT o.dropped
+                        AND ob.status <> 'cancelled') INTO others;
+      UPDATE vouchers
+         SET balance = balance + CASE kind WHEN 'free_hours' THEN u.hours WHEN 'cash' THEN u.amount ELSE 0 END,
+             uses = GREATEST(0, uses - CASE WHEN others THEN 0 ELSE 1 END), updated_at = now()
+       WHERE id = v.id;
+      UPDATE voucher_uses SET restored_at = now() WHERE id = u.id;
+    END LOOP;
+  ELSIF OLD.status = 'cancelled' AND NEW.status <> 'cancelled' THEN
+    FOR u IN SELECT * FROM voucher_uses WHERE booking_id = NEW.id AND restored_at IS NOT NULL AND NOT removed AND NOT dropped LOOP
+      SELECT * INTO v FROM vouchers WHERE id = u.voucher_id FOR UPDATE;
+      SELECT EXISTS (SELECT 1 FROM voucher_uses o JOIN bookings ob ON ob.id = o.booking_id
+                      WHERE o.application = u.application AND o.id <> u.id AND o.restored_at IS NULL AND NOT o.dropped
+                        AND ob.status <> 'cancelled') INTO others;
+      IF v.status = 'active' AND (v.expires_on IS NULL OR v.expires_on >= today)
+         AND (CASE v.kind WHEN 'free_hours' THEN v.balance >= u.hours WHEN 'cash' THEN v.balance >= u.amount ELSE TRUE END)
+         AND (v.kind IN ('free_hours', 'cash') OR others OR v.uses < v.max_uses) THEN
+        UPDATE vouchers
+           SET balance = balance - CASE kind WHEN 'free_hours' THEN u.hours WHEN 'cash' THEN u.amount ELSE 0 END,
+               uses = uses + CASE WHEN others THEN 0 ELSE 1 END, updated_at = now()
+         WHERE id = v.id;
+        UPDATE voucher_uses SET restored_at = NULL WHERE id = u.id;
+      ELSE
+        NEW.amount := NEW.amount + u.amount;
+        NEW.voucher_discount := GREATEST(0, NEW.voucher_discount - u.amount);
+        UPDATE voucher_uses SET dropped = TRUE WHERE id = u.id;
+      END IF;
+    END LOOP;
+    IF NEW.voucher_discount <= 0 THEN NEW.voucher_id := NULL; END IF;
+    -- Charged more now: not confirmed until it's paid.
+    IF NEW.amount > OLD.amount AND NEW.status = 'confirmed' AND NEW.payment_status NOT IN ('paid', 'waived') THEN
+      NEW.status := CASE WHEN NEW.payment_method = 'cash' THEN 'reserved' ELSE 'pending' END;
+    END IF;
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+DROP TRIGGER IF EXISTS bookings_voucher_on_status ON bookings;
+CREATE TRIGGER bookings_voucher_on_status BEFORE UPDATE OF status ON bookings
+  FOR EACH ROW EXECUTE FUNCTION bookings_voucher_on_status();
+
+-- v36: payment checks staff ticked ---------------------------------------------------------------
+-- The checks staff ticked on a payment waiting to be verified (on a group's first booking), so the
+-- day list can show "✓ ready to confirm" and other staff see them. `pay_checks_sig` is the payment
+-- they were ticked for (amount, method, reference, screenshot, when it was sent): when it changes
+-- (the customer sends it again, or the amount changes), the ticks no longer count.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_sig TEXT NOT NULL DEFAULT '';
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_by TEXT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_at TIMESTAMPTZ;

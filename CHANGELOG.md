@@ -24,6 +24,35 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Vouchers.** Got an NVBC voucher? Scan its QR code (or enter the code at
+  **/voucher**) to see what it's worth, what's left and its terms, then tap
+  **Book a court with this voucher**. You can also enter it under **Have a
+  voucher?** when booking, or add it to an unpaid booking on My booking. It's
+  taken off the court fee before you pay; if it covers everything, your booking
+  is confirmed straight away. Free hours and cash vouchers keep what you don't
+  use. If a booking made with a voucher is cancelled (or released for not
+  paying), the voucher gets that value back, unless it has expired. Your
+  booking shows the voucher's name, what it took off and until when it's
+  valid, with a link to the voucher's page.
+- **Staff:** **Vouchers** tab: create vouchers (free court hours, ₱ off, % off
+  with an optional cap, or a cash voucher), one or up to 100 at a time, each
+  with its own code and QR. Set the dates, the sports it's for, who it's issued
+  to, how many bookings a discount can be used on, and the terms & conditions
+  (good defaults, filled in with the voucher's details). Each voucher has its
+  own page: pause, void or reactivate it, change its dates, terms or balance
+  (with a reason), see the bookings it was used on and its history, and
+  **Print** it — A4, two per page, centred, in the NVBC style, with its terms
+  below. Search, filter, scan a voucher's QR, and print several at once.
+  **Delete** vouchers made by mistake (one or several); a voucher still on a
+  booking is kept — void it instead.
+- **Staff:** **🎟 Apply voucher** on an unpaid booking's card (type or scan it),
+  and **Remove** to take it off again (the voucher gets its value back). The
+  card shows the voucher's name, what it took off and its validity, linked to
+  the voucher's page; a booking it fully covers says "Covered by the voucher".
+- **Database:** bookings: the payment checks staff ticked (`pay_checks`).
+- **Database:** vouchers, what they were used on, and their history; bookings:
+  the voucher and what it took off. A trigger gives vouchers back whenever a
+  booking is cancelled and takes them again when staff restore it.
 - **Need more time to pay?** When paying online, you can now add 15 more
   minutes to the payment timer, once per booking: tap **+ 15 more minutes**
   under the timer, right after booking or on My booking. Close to your start
@@ -155,8 +184,23 @@ Earlier changes (before this file existed) are in the git history.
   switch in settings; bookings' coach, coaching request, coach reminders and
   misuse flag; whether coaches can book a reserved time.
 
+
 ### Changed
 
+- **Staff:** A simpler booking card. One **Payment** box shows the court fee,
+  any voucher (with Remove), what's left to pay and what was sent, then the
+  checks. A reference or screenshot used on another booking is now one of the
+  checks. Once every check is ticked, the box says **Everything checks out**
+  and **Payment received — confirm** turns green. Warnings (reused reference,
+  unpaid bookings in the last 90 days, expired membership) take one line each,
+  with details on tap. Progress, the payment status picker and no-show moved
+  under **More**.
+- **Staff:** Checking payments is quicker. Opening a payment reads its screenshot
+  on your device: an amount or reference that matches is ticked for you (and
+  says so), and one that seems different is pointed out for you to check. Ticks
+  are now saved, so other staff see them, and **✓ Checked — ready to confirm**
+  shows on the booking in the day list once all are ticked. If the customer sends
+  the payment again or the amount changes, the old ticks no longer count.
 - On phones, the court names stay pinned at the top of the booking grid as you
   scroll down, so it's always clear which court you're picking.
 - The booking grid is roomier on phones: shorter times ("4PM", "4:30") and court

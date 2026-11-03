@@ -5,6 +5,8 @@ import BookingChat from "@/components/BookingChat";
 import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingQr from "@/components/BookingQr";
 import { BookingHeader, Fold } from "@/components/BookingSummary";
+import BookingVoucher from "@/components/BookingVoucher";
+import type { BookingVoucherInfo } from "@/lib/voucher";
 import AddToCalendar from "@/components/AddToCalendar";
 import BookingCoaching from "@/components/BookingCoaching";
 import RescheduleBooking from "@/components/RescheduleBooking";
@@ -43,6 +45,7 @@ type Booking = {
   cancelledBy: string | null; // "system" = released (not paid in time)
   payBy: string | null; // online booking: pay by this time (ISO) or it's released
   payExtendMinutes: number | null; // "Need more time?": minutes they can add to payBy (once)
+  voucher: BookingVoucherInfo | null; // a voucher on it, and what it took off
   payAfter: boolean; // a coach paying after the session: kept until then
   courtNotes: string;
   phase: "in_progress" | "completed" | null;
@@ -228,6 +231,10 @@ export default function MyBookingPage() {
           {booking.courtNotes && booking.status !== "cancelled" && (
             <div className="court-note">ⓘ {booking.courtNotes}</div>
           )}
+          {booking.voucher && (
+            <BookingVoucher key={`voucher-${booking.code}`} code={booking.code} voucher={booking.voucher} amountLeft={booking.amount}
+              canAdd={false} onAdded={() => {}} />
+          )}
 
           <div className="folds">
             {booking.status !== "cancelled" && (
@@ -275,6 +282,15 @@ export default function MyBookingPage() {
               />
             )}
           </div>
+          {!booking.voucher && <BookingVoucher
+            key={`voucher-add-${booking.code}`}
+            code={booking.code}
+            voucher={booking.voucher}
+            amountLeft={booking.amount}
+            canAdd={booking.status !== "cancelled" && booking.canCancel && booking.amount > 0 &&
+              (booking.paymentStatus === "unpaid" || booking.paymentStatus === "rejected")}
+            onAdded={() => lookup(booking.code).then(() => setMessage("Voucher added — the price is updated below."))}
+          />}
           {booking.status !== "cancelled" && booking.amount > 0 &&
             !["paid", "waived", "refunded"].includes(booking.paymentStatus) && (
             <PaymentPanel

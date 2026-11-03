@@ -54,7 +54,8 @@ export default function EditBooking({
   // The booking's sport or activity on the chosen court (a shared court may have its own prices).
   const plan = prices && planForCourt(prices, booking.sport, courtId);
   const currentRate = plan ? rateFor(ratesForDate(plan, date), rateType) : null; // switched-off rates fall back to regular
-  const amount = hours > 0 && hourlyRate !== "" ? Math.round(hourlyRate * hours * 100) / 100 : 0;
+  // A voucher on this court keeps taking its share off.
+  const amount = hours > 0 && hourlyRate !== "" ? Math.max(0, Math.round((hourlyRate * hours - booking.voucher_discount) * 100) / 100) : 0;
   const hourOptions = halfHours(0, 24);
 
   async function save(e: React.FormEvent) {
@@ -165,6 +166,7 @@ export default function EditBooking({
       </div>
       <p className="muted" style={{ margin: "4px 0 0", fontSize: 14 }}>
         {hours > 0 ? `${formatDuration(hours)} · amount ${formatPeso(amount)}` : "Choose a valid time."}
+        {booking.voucher_discount > 0 && hours > 0 && ` after the −${formatPeso(booking.voucher_discount)} voucher`}
         {amount !== booking.amount && hours > 0 && ` (was ${formatPeso(booking.amount)})`}
         {booking.payment_status === "paid" && amount > booking.amount && " — already paid, collect the difference."}
         {booking.payment_status === "paid" && amount < booking.amount && " — already paid, refund the difference."}
