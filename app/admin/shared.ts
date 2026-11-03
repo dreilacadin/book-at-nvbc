@@ -1,4 +1,5 @@
 // Types and helpers shared by the admin page and its parts.
+import type { BookingVoucherInfo } from "@/lib/voucher";
 import type { BookingStatus, CourtRates, GcashAccount, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
 import type { Sport } from "@/lib/sports";
 
@@ -34,7 +35,15 @@ export type AdminBooking = {
   coach_paid_desk_at: string | null; // the coach said (on their dashboard) they paid cash at the desk
   pay_nudged_at: string | null; // staff last sent a "please pay" reminder (push)
   pay_nudged_by: string | null;
+  pay_checks: string[]; // payment checks staff ticked (group's first booking) ...
+  pay_checks_sig: string; // ... for this payment (see checksSig); a different payment: they don't count
+  pay_checks_by: string | null;
+  pay_checks_at: string | null;
   coach_devices: number; // the booking's coach: their devices with notifications on
+  voucher_code: string | null; // a voucher on the booking (any of its courts)
+  voucher_info: Omit<BookingVoucherInfo, "discount"> | null; // ... its name and dates (with its id)
+  voucher_discount: number; // what it took off this court
+  group_voucher_discount: number; // ... off all its courts
   restored_by: string | null;
   court_order: number;
   has_proof: boolean;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { payByLabel } from "@/components/BookingPolicy";
 import {
   awaitingPayment,
@@ -13,7 +13,10 @@ import {
   startedUnverified,
   type Phase,
 } from "@/lib/booking-policy";
-import { formatClock, formatDateLong, formatHour, formatRange } from "@/lib/format";
+import { formatClock, formatDateLong, formatDuration, formatHour, formatRange } from "@/lib/format";
+import { voucherKindLabel } from "@/lib/voucher";
+import { readImageText } from "@/lib/ocr-client";
+import { readReceipt } from "@/lib/receipt-read";
 import {
   bookingStatusLabel,
   formatPeso,
@@ -116,7 +119,7 @@ function paymentChecks(b: AdminBooking): { id: string; label: ReactNode }[] {
   return checks;
 }
 
-/** Other bookings that used the same reference number or screenshot — shown whatever the payment status. */
+/** Other bookings that used the same reference number or screenshot: one line, the list on tap. */
 function ReuseWarning({ b }: { b: AdminBooking }) {
   const others = b.payment_reuse;
   if (others.length === 0) return null;
@@ -126,8 +129,11 @@ function ReuseWarning({ b }: { b: AdminBooking }) {
   const samePerson = others.every((o) => o.name.trim().toLowerCase() === b.name.trim().toLowerCase());
   const total = b.amount + active.reduce((n, o) => n + o.amount, 0);
   return (
-    <div className="notice pay-reuse" style={{ marginTop: 10 }}>
-      <strong>⚠ {others.some((o) => o.same_proof) ? "This payment was also sent" : "This reference number was also used"} for {others.length} other booking{others.length > 1 ? "s" : ""}:</strong>
+    <details className="pay-reuse heads-up-item">
+      <summary>
+        ⚠ <strong>{others.some((o) => o.same_proof) ? "This payment was also sent" : "This reference number was also used"} for {others.length} other booking{others.length > 1 ? "s" : ""}</strong>
+        {samePerson && active.length > 0 ? " · same name" : " · different name — check carefully"}
+      </summary>
       <ul>
         {others.map((o) => (
           <li key={o.code}>
@@ -141,16 +147,55 @@ function ReuseWarning({ b }: { b: AdminBooking }) {
       ) : (
         <span>{samePerson ? "Same name, but on a cancelled booking" : "A different name"} — check carefully; it may be a reused screenshot or reference.</span>
       )}
-    </div>
+    </details>
   );
 }
+
+/** Every check to tick before confirming: the payment's details, and other bookings with the same proof. */
+function allChecks(b: AdminBooking): { id: string; label: ReactNode }[] {
+  const checks = paymentChecks(b);
+  if (b.payment_reuse.length)
+    checks.push({
+      id: "reuse",
+      label: <>I looked at the <strong>{b.payment_reuse.length} other booking{b.payment_reuse.length > 1 ? "s" : ""}</strong> with this reference or screenshot (below)</>,
+    });
+  return checks;
+}
+
+/** An online payment waiting for staff to check it. */
+const verifyingOnline = (b: AdminBooking) => b.status !== "cancelled" && b.payment_status === "for_verification" && hasOnlineProof(b);
+
+/** The payment the checks are ticked for: when any of this changes, earlier ticks don't count. */
+const checksSig = (b: AdminBooking) =>
+  [b.group_size > 1 ? b.group_total : b.amount, b.payment_method, b.payment_ref, b.has_proof ? "shot" : "", b.payment_sent_at ?? ""].join("|");
+
+/** The checks staff ticked on this payment (saved), or none if the payment has changed since. */
+const savedChecks = (b: AdminBooking) => new Set(b.pay_checks_sig === checksSig(b) ? b.pay_checks : []);
+
+/** Every check on a payment waiting to be verified is ticked: ready to confirm (shown in the day list too). */
+export function paymentReady(b: AdminBooking): boolean {
+  if (!verifyingOnline(b)) return false;
+  const saved = savedChecks(b);
+  return allChecks(b).every((c) => saved.has(c.id));
+}
+
+/** What the screenshot reader found for a check: it matches (ticked for staff) or it seems different. */
+type AutoNote = { ok: boolean; text: string };
 
 /**
  * Online payment waiting to be verified: the screenshot beside a checklist of what it should show.
  * Amounts and dates on a screenshot can't be read automatically, so staff tick them off; reuse of
- * the same reference number or screenshot is found automatically (ReuseWarning).
+ * the same reference number or screenshot is found automatically and must be ticked too.
  */
-function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<string>; onTick: (id: string) => void }) {
+function PaymentCheck({
+  b, ticked, onTick, auto, reading,
+}: {
+  b: AdminBooking;
+  ticked: Set<string>;
+  onTick: (id: string) => void;
+  auto: Record<string, AutoNote>; // from reading the screenshot
+  reading: boolean;
+}) {
   const proof = `/api/admin/bookings/proof?id=${b.group_root}`;
   return (
     <div className="pay-check">
@@ -167,17 +212,26 @@ function PaymentCheck({ b, ticked, onTick }: { b: AdminBooking; ticked: Set<stri
       )}
       <div className="pay-checklist">
         <strong>Check the payment</strong>
-        {paymentChecks(b).map((c) => (
+        {reading && <span className="hint">🔎 Reading the screenshot…</span>}
+        {allChecks(b).map((c) => (
           <label key={c.id} className="check-row">
             <input type="checkbox" checked={ticked.has(c.id)} onChange={() => onTick(c.id)} />
-            <span>{c.label}</span>
+            <span>
+              {c.label}
+              {auto[c.id] && <span className={auto[c.id].ok ? "auto-ok" : "amount-off"}> — {auto[c.id].text}</span>}
+            </span>
           </label>
         ))}
-        <div className={`auto-check ${b.payment_reuse.length ? "bad" : "good"}`}>
-          {b.payment_reuse.length
-            ? "⚠ Reference or screenshot also sent for another booking (see below)"
-            : `✓ ${b.payment_ref && b.has_proof ? "Reference and screenshot" : b.payment_ref ? "Reference" : "Screenshot"} not used on any other booking`}
-        </div>
+        {b.pay_checks_by && b.pay_checks_sig === checksSig(b) && b.pay_checks.length > 0 && (
+          <span className="hint">Ticked by {b.pay_checks_by}{b.pay_checks_at ? `, ${clockFromIso(b.pay_checks_at)}` : ""}</span>
+        )}
+        {b.payment_reuse.length ? (
+          <ReuseWarning b={b} />
+        ) : (
+          <div className="auto-check good">
+            ✓ {b.payment_ref && b.has_proof ? "Reference and screenshot" : b.payment_ref ? "Reference" : "Screenshot"} not used on any other booking
+          </div>
+        )}
       </div>
     </div>
   );
@@ -369,31 +423,97 @@ export function AdminBookingCard({
   const [error, setError] = useState("");
   const [courts, setCourts] = useState<Court[] | null>(null); // loaded when editing
   const [editing, setEditing] = useState(false);
-  const [ticked, setTicked] = useState<Set<string>>(new Set()); // payment checklist
+  const [ticked, setTicked] = useState<Set<string>>(() => savedChecks(b)); // payment checklist (saved)
+  const [auto, setAuto] = useState<Record<string, AutoNote>>({});
+  const [reading, setReading] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [splitting, setSplitting] = useState(false); // recording a payment in parts
   const manage = useCanManage();
   const shown = displayStatus(b);
-  const verifying = b.status !== "cancelled" && b.payment_status === "for_verification" && hasOnlineProof(b);
+  const verifying = verifyingOnline(b);
+  // Ticks are saved (shortly after the last change), so the day list shows "ready" and other staff see them.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveChecks = useCallback((next: Set<string>) => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      api("/api/admin/bookings", { action: "pay-checks", id: b.id, checks: [...next], sig: checksSig(b) })
+        .then(onChanged)
+        .catch(onAuthError);
+    }, 600);
+  }, [b, onChanged, onAuthError]);
   const tick = (id: string) =>
     setTicked((t) => {
       const n = new Set(t);
       if (n.has(id)) n.delete(id);
       else n.add(id);
+      saveChecks(n);
       return n;
     });
+  // Reads the screenshot on this device: an amount or reference that matches is ticked (staff can
+  // untick it); a different one is pointed out. OCR can misread, so nothing is ever unticked or rejected.
+  const readFor = useRef("");
+  const open = useRef(true); // the card is still showing (a reload mustn't stop a read in progress)
+  useEffect(() => {
+    open.current = true;
+    return () => { open.current = false; };
+  }, []);
+  useEffect(() => {
+    if (!verifying || !b.has_proof || readFor.current === checksSig(b)) return;
+    readFor.current = checksSig(b);
+    const due = b.group_size > 1 ? b.group_total : b.amount;
+    setReading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/admin/bookings/proof?id=${b.group_root}`);
+        if (!res.ok) return;
+        const r = readReceipt(await readImageText(await res.blob()));
+        if (!open.current) return;
+        const notes: Record<string, AutoNote> = {};
+        const add: string[] = [];
+        if (r.amount !== null) {
+          const ok = Math.abs(r.amount - due) < 0.01;
+          notes.amount = { ok, text: ok ? `✓ the screenshot says ${formatPeso(r.amount)}` : `the screenshot seems to say ${formatPeso(r.amount)} — check it` };
+          if (ok) add.push("amount");
+        }
+        const norm = (x: string) => x.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (r.reference && b.payment_ref) {
+          const ok = norm(r.reference) === norm(b.payment_ref);
+          notes.ref = { ok, text: ok ? "✓ matches the screenshot" : `the screenshot seems to say ${r.reference} — check it` };
+          if (ok) add.push("ref");
+        }
+        setAuto(notes);
+        // Already saved for this payment: staff have seen it, so what they unticked stays unticked.
+        if (add.length && b.pay_checks_sig !== checksSig(b))
+          setTicked((t) => {
+            if (add.every((id) => t.has(id))) return t;
+            const n = new Set([...t, ...add]);
+            saveChecks(n);
+            return n;
+          });
+      } catch {
+        /* couldn't read it: staff check by eye, as before */
+      } finally {
+        if (open.current) setReading(false);
+      }
+    })();
+  }, [verifying, b, saveChecks]);
   const confirmPayment = () => {
     if (verifying) {
-      const left = paymentChecks(b).filter((c) => !ticked.has(c.id)).length;
-      const warn = [
-        left ? `${left} check${left > 1 ? "s aren't" : " isn't"} ticked yet.` : "",
-        b.payment_reuse.length ? "This reference number or screenshot was also sent for another booking." : "",
-      ].filter(Boolean);
+      const warn = checksLeft
+        ? [`${checksLeft} check${checksLeft > 1 ? "s aren't" : " isn't"} ticked yet.`, b.payment_reuse.length ? "This reference number or screenshot was also sent for another booking." : ""].filter(Boolean)
+        : [];
       if (warn.length && !window.confirm(`${warn.join("\n")}\n\nConfirm ${b.name}'s payment of ${formatPeso(b.amount)} anyway?`)) return;
     }
     run({ action: "payment", id: b.id, status: "paid", method });
   };
   const phase = bookingPhase(b, nowAtFacility());
+  // The money: the court fee, the voucher, what's left to pay, and whether the payment checks out.
+  const due = b.group_size > 1 ? b.group_total : b.amount; // one payment for a whole group
+  const voucherOff = b.group_size > 1 ? b.group_voucher_discount : b.voucher_discount;
+  const fee = Math.round((due + voucherOff) * 100) / 100;
+  const checksLeft = verifying ? allChecks(b).filter((c) => !ticked.has(c.id)).length : 0;
+  const ready = verifying && checksLeft === 0;
+  const unpaid = b.payment_status === "unpaid" || b.payment_status === "rejected";
 
   async function run(body: Record<string, unknown>) {
     setBusy(true);
@@ -493,24 +613,6 @@ export function AdminBookingCard({
       <dl className="member-details">
         <div><dt>Name</dt><dd><strong>{b.name}</strong></dd></div>
         <div><dt>Contact</dt><dd>{b.contact}</dd></div>
-        <div>
-          <dt>Rate</dt>
-          <dd>{rateTypeLabel(b.rate_type)}{b.member_code ? ` · ${b.member_code}` : ""} · {formatPeso(b.hourly_rate)}/hr</dd>
-        </div>
-        <div><dt>Amount</dt><dd><strong>{formatPeso(b.amount)}</strong></dd></div>
-        <div>
-          <dt>Payment</dt>
-          <dd>
-            {b.payment_splits ? splitText(b.payment_splits) : paymentLabel(b.payment_method)} · {paymentStatusLabel(b.payment_status)}
-            {b.payment_ref && <> · <span style={{ fontFamily: "ui-monospace, monospace" }}>{b.payment_ref}</span></>}
-            {b.proof_deleted && !b.has_proof && <span className="muted"> · 📷 screenshot checked (not kept)</span>}
-            {b.paid_amount_reported !== null && <> · they entered {formatPeso(b.paid_amount_reported)}</>}
-            {b.has_proof && (
-              <> · <ProofViewer src={`/api/admin/bookings/proof?id=${b.group_root}`} alt={`${b.name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>
-            )}
-          </dd>
-        </div>
-        {release && <div><dt>If unpaid</dt><dd><strong>{release}</strong></dd></div>}
         {b.status !== "cancelled" && (
           <div>
             <dt>Updates</dt>
@@ -524,29 +626,126 @@ export function AdminBookingCard({
         {b.notes && <div><dt>Notes</dt><dd>{b.notes}</dd></div>}
       </dl>
 
-      {startedUnverified(b, nowAtFacility()) && (
-        <div className="notice" style={{ marginTop: 10 }}>⚠ This booking has started, but its payment hasn&apos;t been verified yet.</div>
-      )}
-      {b.rejected_at && b.status !== "cancelled" && (b.payment_status === "rejected" || b.payment_status === "for_verification") && (
-        <div className="rejected-note">
-          <strong>✕ {b.payment_status === "rejected" ? "Payment rejected" : "Rejected earlier"}</strong> by {b.rejected_by ?? "staff"},{" "}
-          {clockFromIso(b.rejected_at)}: “{b.rejected_note}”
+      <section className={`pay-summary${ready ? " ready" : ""}`} aria-label="Payment">
+        <div className="pay-summary-head">
+          <strong>Payment</strong>
+          <span className={`pay-tag ${unpaid && due <= 0 ? "paid" : b.payment_status}`}>
+            {unpaid && due <= 0 && b.voucher_code ? "Covered by voucher" : paymentStatusLabel(b.payment_status)}
+          </span>
         </div>
-      )}
-      {verifying && <PaymentCheck b={b} ticked={ticked} onTick={tick} />}
-      {b.status !== "cancelled" && b.payment_status === "for_verification" && b.coach_paid_desk_at && (
-        <div className="notice coach-paid" style={{ marginTop: 10 }}>
-          💵 <strong>{b.coach_name ?? b.name} says they paid {formatPeso(b.group_size > 1 ? b.group_total : b.amount)} in cash at the front desk</strong>{" "}
-          ({dayFromIso(b.coach_paid_desk_at)}, {clockFromIso(b.coach_paid_desk_at)}, on their Coaches Dashboard). Check that the cash came in, then tap{" "}
-          <strong>Payment received — confirm</strong> below. If it didn&apos;t, set Payment back to Unpaid.
+        <div className="pay-line">
+          <span>
+            Court fee{" "}
+            <small>
+              {rateTypeLabel(b.rate_type)}{b.member_code ? ` (${b.member_code})` : ""} · {formatPeso(b.hourly_rate)}/hr × {formatDuration(b.end_hour - b.start_hour)}
+              {b.group_size > 1 ? ` · ${b.group_size} courts` : ""}
+            </small>
+          </span>
+          <span>{formatPeso(fee)}</span>
         </div>
-      )}
-      <ReuseWarning b={b} />
-      {b.expired_member_id && (
-        <div className="expired-flag" style={{ marginTop: 10 }}>
-          ⚠ {b.expired_member_name}&apos;s membership expired — remind them to renew or forfeit.{" "}
-          {b.expired_member_reminded ? <span className="muted">Reminded.</span> : (
-            <button type="button" className="link-btn" onClick={remind}>Mark reminded</button>
+        {b.voucher_code && b.voucher_info && (
+          <div className="pay-line voucher">
+            <span>
+              🎟 <a href={`/admin?voucher=${b.voucher_info.id}`}>{b.voucher_info.title || voucherKindLabel(b.voucher_info.kind)} · <span className="mono">{b.voucher_code}</span></a>
+              {unpaid && b.status !== "cancelled" && (
+                <>
+                  {" "}
+                  <button type="button" className="link-btn" disabled={busy} onClick={() =>
+                    window.confirm(`Remove voucher ${b.voucher_code} from ${b.group_code}? The booking goes back to its full price and the voucher gets its value back.`) &&
+                    run({ action: "remove-voucher", id: b.id })}>Remove</button>
+                </>
+              )}
+            </span>
+            <span>−{formatPeso(voucherOff)}</span>
+          </div>
+        )}
+        <div className="pay-line total"><span>To pay</span><span>{formatPeso(due)}</span></div>
+        <div className="pay-sent">
+          {b.payment_status === "paid" ? (
+            <>✓ Received · {b.payment_splits ? splitText(b.payment_splits) : paymentLabel(b.payment_method)}{b.payment_ref && <> · ref <span className="mono">{b.payment_ref}</span></>}</>
+          ) : b.payment_status === "waived" ? (
+            "No charge"
+          ) : b.payment_status === "refunded" ? (
+            "Refunded"
+          ) : b.payment_status === "for_verification" && b.coach_paid_desk_at ? (
+            <>💵 <strong>{b.coach_name ?? b.name} says they paid cash at the desk</strong> ({dayFromIso(b.coach_paid_desk_at)}, {clockFromIso(b.coach_paid_desk_at)}). Check the cash came in, then confirm; if it didn&apos;t, set Payment back to Unpaid (More).</>
+          ) : b.payment_status === "for_verification" ? (
+            <>
+              Sent by <strong>{paymentLabel(b.payment_method)}</strong>
+              {b.payment_ref && <> · ref <span className="mono">{b.payment_ref}</span></>}
+              {b.has_proof && <> · <ProofViewer src={`/api/admin/bookings/proof?id=${b.group_root}`} alt={`${b.name}'s payment screenshot`} className="link-btn">📷 Screenshot</ProofViewer></>}
+              {b.paid_amount_reported !== null && (
+                <> · they entered <strong className={Math.abs(b.paid_amount_reported - due) < 0.01 ? "" : "amount-off"}>{formatPeso(b.paid_amount_reported)}</strong></>
+              )}
+            </>
+          ) : due <= 0 ? (
+            "Nothing to pay — the voucher covers it"
+          ) : (
+            <>Nothing sent yet · {paymentLabel(b.payment_method)}{release ? <> · <strong>{release}</strong></> : ""}</>
+          )}
+          {b.proof_deleted && !b.has_proof && <span className="muted"> · 📷 screenshot checked (not kept)</span>}
+        </div>
+        {b.rejected_at && b.status !== "cancelled" && (b.payment_status === "rejected" || b.payment_status === "for_verification") && (
+          <div className="rejected-note">
+            <strong>✕ {b.payment_status === "rejected" ? "Payment rejected" : "Rejected earlier"}</strong> by {b.rejected_by ?? "staff"},{" "}
+            {clockFromIso(b.rejected_at)}: “{b.rejected_note}”
+          </div>
+        )}
+        {verifying && <PaymentCheck b={b} ticked={ticked} onTick={tick} auto={auto} reading={reading} />}
+        {verifying && (
+          <div className={`pay-verdict ${ready ? "good" : ""}`}>
+            {ready ? "✓ Everything checks out — ready to confirm." : `Tick each check above before confirming (${checksLeft} left).`}
+          </div>
+        )}
+
+        {b.status !== "cancelled" && b.status !== "confirmed" && (
+          <div className="confirm-pay">
+            <button className={`btn${ready ? " go" : ""}`} disabled={busy} onClick={confirmPayment}>
+              ✓ Payment received — confirm ({formatPeso(due)})
+            </button>
+            <label htmlFor={`bl-method-${b.id}`} className="sr-only">Paid by</label>
+            <select id={`bl-method-${b.id}`} aria-label="Paid by" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} style={{ width: "auto" }}>
+              {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+            {!splitting && <button type="button" className="btn secondary" disabled={busy} onClick={() => setSplitting(true)}>Split…</button>}
+            {verifying && !rejecting && (
+              <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setRejecting(true)}>✕ Reject…</button>
+            )}
+          </div>
+        )}
+        {splitting && b.status !== "cancelled" && b.status !== "confirmed" && (
+          <SplitPayment due={due} first={method} busy={busy} onCancel={() => setSplitting(false)}
+            onConfirm={(splits) => run({ action: "payment", id: b.id, status: "paid", splits })} />
+        )}
+        {verifying && rejecting && (
+          <RejectPayment b={b} busy={busy} onCancel={() => setRejecting(false)}
+            onReject={(note) => run({ action: "payment", id: b.id, status: "rejected", note })} />
+        )}
+        {b.status !== "cancelled" && unpaid && (
+          <div className="pay-extras">
+            {due > 0 && <PayReminder b={b} onSent={onChanged} onAuthError={onAuthError} />}
+            <StaffVoucher b={b} onChanged={onChanged} onAuthError={onAuthError} />
+          </div>
+        )}
+      </section>
+
+      {/* Heads-up: one line each; details on tap. */}
+      {(startedUnverified(b, nowAtFacility()) || (!verifying && b.payment_reuse.length > 0) || (b.player_flags.length > 0 && !b.pay_after) || b.expired_member_id) && (
+        <div className="heads-up">
+          {startedUnverified(b, nowAtFacility()) && <div className="heads-up-item">⚠ <strong>Started, but the payment isn&apos;t verified yet.</strong></div>}
+          {!verifying && <ReuseWarning b={b} />}
+          {/* Not on a coach's pay-after booking: paying after the session is the agreed rule there. */}
+          {b.player_flags.length > 0 && !b.pay_after && (
+            <details className="heads-up-item">
+              <summary>⚠ <strong>{flagSummary(b.player_flags)}</strong> in the last 90 days (same phone/email) — consider asking them to pay before they play</summary>
+              <p>{b.player_flags.slice(0, 12).map((f) => `${shortDay(f.date)} (${f.kind === "no_show" ? "no-show" : "not paid in time"})`).join(", ")}{b.player_flags.length > 12 ? ", …" : ""}</p>
+            </details>
+          )}
+          {b.expired_member_id && (
+            <div className="heads-up-item">
+              ⚠ <strong>{b.expired_member_name}&apos;s membership expired</strong> — remind them to renew or forfeit.{" "}
+              {b.expired_member_reminded ? <span className="muted">Reminded.</span> : <button type="button" className="link-btn" onClick={remind}>Mark reminded</button>}
+            </div>
           )}
         </div>
       )}
@@ -576,14 +775,6 @@ export function AdminBookingCard({
           )}
         </div>
       )}
-      {/* Not on a coach's pay-after booking: paying after the session is the agreed rule there. */}
-      {b.player_flags.length > 0 && !b.pay_after && (
-        <div className="notice player-flags" style={{ marginTop: 10 }}>
-          ⚠ <strong>{flagSummary(b.player_flags)}</strong> in the last 90 days (same phone/email):{" "}
-          {b.player_flags.slice(0, 5).map((f) => `${shortDay(f.date)} (${f.kind === "no_show" ? "no-show" : "not paid in time"})`).join(", ")}
-          {b.player_flags.length > 5 ? ", …" : ""}. Consider asking them to pay before they play.
-        </div>
-      )}
       {b.no_show && <div className="rejected-note">✕ <strong>No-show</strong> — marked by {b.no_show_by ?? "staff"}.</div>}
       {b.status === "cancelled" && <RefundBox b={b} busy={busy} run={run} />}
       {b.restored_by && b.status !== "cancelled" && (
@@ -592,64 +783,44 @@ export function AdminBookingCard({
       {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
 
       {b.status !== "cancelled" && (
-        <>
-          {b.status !== "confirmed" && (
-            <div className="confirm-pay">
-              <label htmlFor={`bl-method-${b.id}`} style={{ margin: 0 }}>Paid by</label>
-              <select id={`bl-method-${b.id}`} value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} style={{ width: "auto" }}>
-                {PAYMENT_METHODS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-              <button className="btn" disabled={busy} onClick={confirmPayment}>
-                ✓ Payment received — confirm ({formatPeso(b.group_size > 1 ? b.group_total : b.amount)})
-              </button>
-              {!splitting && (
-                <button type="button" className="btn secondary" disabled={busy} onClick={() => setSplitting(true)}>Split payment…</button>
-              )}
-              {verifying && !rejecting && (
-                <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setRejecting(true)}>
-                  ✕ Reject payment…
+        <div className="card-actions">
+          <button className="btn small secondary" disabled={busy} onClick={startEdit}>✎ Edit</button>
+          <button className="btn small secondary danger-text" disabled={busy} onClick={cancel}>Cancel booking</button>
+          <details className="more-actions">
+            <summary className="btn small secondary">More ▾</summary>
+            <div className="more-actions-body">
+              <div className="segmented phase-switch" role="radiogroup" aria-label="Progress">
+                <button type="button" role="radio" aria-checked={!b.phase} disabled={busy} onClick={() => setPhase(null)}
+                  title="Paid bookings are In progress during their time and Completed after">
+                  Automatic{!b.phase && phase ? ` · ${phaseLabel(phase)}` : ""}
+                </button>
+                <button type="button" role="radio" aria-checked={b.phase === "in_progress"} disabled={busy} onClick={() => setPhase("in_progress")}>
+                  ▶ In progress
+                </button>
+                <button type="button" role="radio" aria-checked={b.phase === "completed"} disabled={busy} onClick={() => setPhase("completed")}>
+                  ✓ Completed
+                </button>
+              </div>
+              <label className="pay-status-pick">
+                Payment status
+                <select aria-label="Payment status" className={`pay-status ${b.payment_status}`} value={b.payment_status} disabled={busy}
+                  onChange={(e) => run({ action: "payment", id: b.id, status: e.target.value as PaymentStatus })}>
+                  {PAYMENT_STATUSES.filter((st) => st.id !== "rejected" || b.payment_status === "rejected").map((st) => (
+                    <option key={st.id} value={st.id} disabled={st.id === "rejected"}>{st.label}</option>
+                  ))}
+                </select>
+              </label>
+              {minutesUntilStart(b.date, b.start_hour, nowAtFacility()) <= 0 && (
+                <button className="btn small secondary" disabled={busy} onClick={() => {
+                  if (b.no_show || window.confirm(`Mark ${b.name} as a no-show? Staff will see it when they book again.`))
+                    run({ action: "noshow", id: b.id, on: !b.no_show });
+                }}>
+                  {b.no_show ? "Undo no-show" : "🚫 Mark no-show"}
                 </button>
               )}
             </div>
-          )}
-          {splitting && b.status !== "confirmed" && (
-            <SplitPayment due={b.group_size > 1 ? b.group_total : b.amount} first={method} busy={busy}
-              onCancel={() => setSplitting(false)}
-              onConfirm={(splits) => run({ action: "payment", id: b.id, status: "paid", splits })} />
-          )}
-          {verifying && rejecting && (
-            <RejectPayment b={b} busy={busy} onCancel={() => setRejecting(false)}
-              onReject={(note) => run({ action: "payment", id: b.id, status: "rejected", note })} />
-          )}
-          {(b.payment_status === "unpaid" || b.payment_status === "rejected") && (b.group_size > 1 ? b.group_total : b.amount) > 0 && (
-            <PayReminder b={b} onSent={onChanged} onAuthError={onAuthError} />
-          )}
-          <div className="card-actions">
-            <div className="segmented phase-switch" role="radiogroup" aria-label="Progress">
-              <button type="button" role="radio" aria-checked={!b.phase} disabled={busy} onClick={() => setPhase(null)}
-                title="Paid bookings are In progress during their time and Completed after">
-                Automatic{!b.phase && phase ? ` · ${phaseLabel(phase)}` : ""}
-              </button>
-              <button type="button" role="radio" aria-checked={b.phase === "in_progress"} disabled={busy} onClick={() => setPhase("in_progress")}>
-                ▶ In progress
-              </button>
-              <button type="button" role="radio" aria-checked={b.phase === "completed"} disabled={busy} onClick={() => setPhase("completed")}>
-                ✓ Completed
-              </button>
-            </div>
-            <label className="pay-status-pick">
-              Payment
-              <select aria-label="Payment status" className={`pay-status ${b.payment_status}`} value={b.payment_status} disabled={busy}
-                onChange={(e) => run({ action: "payment", id: b.id, status: e.target.value as PaymentStatus })}>
-                {PAYMENT_STATUSES.filter((st) => st.id !== "rejected" || b.payment_status === "rejected").map((st) => (
-                  <option key={st.id} value={st.id} disabled={st.id === "rejected"}>{st.label}</option>
-                ))}
-              </select>
-            </label>
-            <button className="btn small secondary" disabled={busy} onClick={startEdit}>✎ Edit</button>
-            <button className="btn small secondary danger-text" disabled={busy} onClick={cancel}>Cancel booking</button>
-          </div>
-        </>
+          </details>
+        </div>
       )}
 
       {released && (
@@ -665,19 +836,62 @@ export function AdminBookingCard({
           <button className="btn small secondary danger-text" disabled={busy} onClick={remove}>Delete permanently</button>
         </div>
       )}
-      {b.status !== "cancelled" && minutesUntilStart(b.date, b.start_hour, nowAtFacility()) <= 0 && (
-        <div className="card-actions">
-          <button className="btn small secondary" disabled={busy} onClick={() => {
-            if (b.no_show || window.confirm(`Mark ${b.name} as a no-show? Staff will see it when they book again.`))
-              run({ action: "noshow", id: b.id, on: !b.no_show });
-          }}>
-            {b.no_show ? "Undo no-show" : "🚫 Mark no-show"}
-          </button>
-        </div>
-      )}
       <BookingMessages b={b} onAuthError={onAuthError} />
       <BookingHistory bookingId={b.id} onAuthError={onAuthError}
         version={[b.status, b.payment_status, b.phase, b.date, b.start_hour, b.end_hour, b.court_id, b.name, b.amount, b.payment_ref, b.rejected_at].join("|")} />
+    </div>
+  );
+}
+
+/**
+ * Staff: the voucher on a booking (with Remove), or — before it's paid — apply one (typed or
+ * scanned). The voucher is taken off all the booking's courts.
+ */
+function StaffVoucher({ b, onChanged, onAuthError }: { b: AdminBooking; onChanged: () => void; onAuthError: (e: unknown) => void }) {
+  const [code, setCode] = useState("");
+  const [open, setOpen] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const unpaid = b.payment_status === "unpaid" || b.payment_status === "rejected";
+
+  async function run(body: Record<string, unknown>, ok: (r: { discount?: number; amount: number; code?: string }) => string) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await api<{ discount?: number; amount: number; code?: string }>("/api/admin/bookings", { id: b.id, ...body });
+      setNote({ ok: true, text: ok(r) });
+      setCode("");
+      setOpen(false);
+      onChanged();
+    } catch (e) {
+      onAuthError(e);
+      setNote({ ok: false, text: e instanceof Error ? e.message : "Couldn't update the voucher." });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const apply = (raw: string) =>
+    run({ action: "voucher", code: raw }, (r) =>
+      `Voucher ${r.code} applied: −${formatPeso(r.discount ?? 0)}. ${r.amount > 0 ? `Now ${formatPeso(r.amount)} to pay.` : "Nothing left to pay — confirmed."}`);
+
+  if (b.voucher_code) return null; // shown in the payment box, with Remove
+  if (!unpaid) return note ? <div className={note.ok ? "success" : "error"} style={{ marginTop: 10 }}>{note.text}</div> : null;
+  return (
+    <div className="staff-voucher">
+      {!open ? (
+        <button type="button" className="btn small secondary" onClick={() => setOpen(true)}>🎟 Apply voucher</button>
+      ) : (
+        <form className="voucher-entry" onSubmit={(e) => { e.preventDefault(); apply(code); }}>
+          <input aria-label="Voucher code" placeholder="VCH-XXXX-XXXX" autoFocus value={code} onChange={(e) => setCode(e.target.value)}
+            autoCapitalize="characters" autoComplete="off" spellCheck={false} />
+          <button className="btn small" disabled={busy || !code.trim()}>{busy ? "Applying…" : "Apply"}</button>
+          <button type="button" className="btn small secondary" onClick={() => setScanning(true)}>📷 Scan</button>
+          <button type="button" className="btn small secondary" onClick={() => { setOpen(false); setNote(null); }}>Cancel</button>
+        </form>
+      )}
+      {scanning && <QrScanner onClose={() => setScanning(false)} onCode={(text) => { setScanning(false); apply(text); }} />}
+      {note && <div className={note.ok ? "success" : "error"}>{note.text}</div>}
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
-import { sendPaymentReminder, setCoachMisuse, setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { savePaymentChecks, sendPaymentReminder, setCoachMisuse, setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { staff } from "@/lib/booking-history";
 import { restoreCoaching } from "@/lib/coaches";
+import { applyVoucherToBooking, removeVoucherFromBooking } from "@/lib/vouchers";
+import { voucherInfoSql } from "@/lib/voucher";
 import { db, getSettings } from "@/lib/db";
 import { gcashAccounts } from "@/lib/pricing";
 import { readJson, respond, serverError } from "@/lib/http";
@@ -63,7 +65,13 @@ export async function GET(req: NextRequest) {
                 WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_courts,
               b.phase, b.auto_release, b.restored_by, c.sort_order AS court_order,
               r.pay_after, r.coach_confirmed_at, r.coach_arrived_at, r.client_name, r.coach_paid_desk_at,
-              r.pay_nudged_at, r.pay_nudged_by,
+              r.pay_nudged_at, r.pay_nudged_by, r.pay_checks, r.pay_checks_sig, r.pay_checks_by, r.pay_checks_at,
+              b.voucher_discount::float8 AS voucher_discount,
+              (SELECT v.code FROM bookings g JOIN vouchers v ON v.id = g.voucher_id
+                WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled' LIMIT 1) AS voucher_code,
+              ${voucherInfoSql("r.id", true)} AS voucher_info,
+              (SELECT COALESCE(sum(g.voucher_discount), 0)::float8 FROM bookings g
+                WHERE COALESCE(g.group_id, g.id) = r.id AND g.status <> 'cancelled') AS group_voucher_discount,
               (SELECT count(*)::int FROM coach_push_subscriptions s WHERE s.coach_id = r.coach_id) AS coach_devices,
               b.rejected_note, b.rejected_by, b.rejected_at, r.customer_email,
               (SELECT count(*)::int FROM customer_push_subscriptions s WHERE s.booking_id = r.id) AS alert_devices,
@@ -129,7 +137,9 @@ export async function GET(req: NextRequest) {
 // Admin only: { action: "cancel", id } | { action: "create", ...booking fields }
 //           | { action: "payment", id, status, method?, reference?, note? }   (note: required to reject)
 //           | { action: "delete", id }   (cancelled bookings only)
+//           | { action: "pay-checks", id, checks, sig }   (payment checks ticked, see AdminBookingCard)
 //           | { action: "pay-reminder", id }   (push "please pay" to the customer's / coach's devices)
+//           | { action: "voucher", id, code } | { action: "remove-voucher", id }   (unpaid bookings)
 //           | { action: "update", id, courtId, date, startHour, endHour, name, contact, notes,
 //               rateType, hourlyRate, paymentMethod, paymentRef }
 export async function POST(req: NextRequest) {
@@ -143,7 +153,10 @@ export async function POST(req: NextRequest) {
     if (body.action === "refund") return respond(await setRefund(String(body.id ?? ""), body, me.name));
     if (body.action === "coach-misuse") return respond(await setCoachMisuse(String(body.id ?? ""), body.on, me.name));
     if (body.action === "noshow") return respond(await setNoShow(String(body.id ?? ""), body.on, me.name));
+    if (body.action === "pay-checks") return respond(await savePaymentChecks(String(body.id ?? ""), body.checks, body.sig, me.name));
     if (body.action === "pay-reminder") return respond(await sendPaymentReminder(String(body.id ?? ""), me.name));
+    if (body.action === "voucher") return respond(await applyVoucherToBooking({ id: String(body.id ?? "") }, body.code, staff(me.name)));
+    if (body.action === "remove-voucher") return respond(await removeVoucherFromBooking(String(body.id ?? ""), staff(me.name)));
     if (body.action === "phase") return respond(await setBookingPhase(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore") return respond(await restoreBooking(String(body.id ?? ""), body.phase ?? null, me.name));
     if (body.action === "restore-coaching") return respond(await restoreCoaching(String(body.id ?? ""), staff(me.name)));

@@ -24,6 +24,7 @@ type Current = {
   start_hour: number; end_hour: number; amount: number; rate_type: RateType; status: string; phase: string | null;
   reschedule_count: number; group_id: string | null; members: number; membership_expires: string | null;
   coaching_status: string | null;
+  voucher_discount: number; voucher_expires: string | null; // a voucher on it: what it took off, and until when it's valid
 };
 
 async function current(code: string): Promise<Current | null> {
@@ -31,7 +32,8 @@ async function current(code: string): Promise<Current | null> {
     `SELECT b.id, b.cancel_code AS code, b.player_name AS name, b.court_id, c.name AS court_name,
             COALESCE(b.activity, c.sport) AS activity, b.booking_date AS date, b.start_hour::float8 AS start_hour,
             b.end_hour::float8 AS end_hour, b.amount::float8 AS amount, b.rate_type, b.status, b.phase, b.reschedule_count, b.group_id,
-            b.coaching_status,
+            b.coaching_status, b.voucher_discount::float8 AS voucher_discount,
+            (SELECT expires_on FROM vouchers WHERE id = b.voucher_id) AS voucher_expires,
             (SELECT count(*)::int FROM bookings g WHERE g.group_id = b.id AND g.status <> 'cancelled') AS members,
             m.expires_on AS membership_expires
        FROM bookings b JOIN courts c ON c.id = b.court_id LEFT JOIN memberships m ON m.id = b.membership_id
@@ -117,7 +119,9 @@ function samePrice(b: Current, settings: Awaited<ReturnType<typeof getSettings>>
   if (!plan) return false;
   const rates = ratesForDate(plan, date, holiday);
   const total = computePrice(rateFor(rates, b.rate_type), b.end_hour - b.start_hour, rates.regular).total;
-  return Math.abs(total - b.amount) < 0.01;
+  // A voucher's share stays the same: compare the price before it. Not past the voucher's expiry.
+  if (b.voucher_expires && date > b.voucher_expires) return false;
+  return Math.abs(total - (b.amount + b.voucher_discount)) < 0.01;
 }
 
 /** Moves the booking. Everything is checked again here, inside one transaction. */

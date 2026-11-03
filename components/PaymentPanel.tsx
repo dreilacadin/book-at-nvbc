@@ -1,6 +1,7 @@
 "use client";
 
 import { imageToDataUrl } from "@/lib/image";
+import { readImageText } from "@/lib/ocr-client";
 import { readReceipt } from "@/lib/receipt-read";
 import {
   formatPeso,
@@ -128,19 +129,6 @@ export function PaymentDetails({
     );
 
   return null;
-}
-
-/** Text in a screenshot, read on this device (the image isn't sent anywhere for this). */
-async function readImageText(file: File): Promise<string> {
-  const { createWorker } = await import("tesseract.js");
-  const worker = await createWorker("eng");
-  try {
-    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 45_000));
-    const { data } = await Promise.race([worker.recognize(file), timeout]);
-    return data.text;
-  } finally {
-    await worker.terminate();
-  }
 }
 
 type ReadState = { state: "reading" } | { state: "done"; reference: string | null; amount: number | null } | { state: "failed" };

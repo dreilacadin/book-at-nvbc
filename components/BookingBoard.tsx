@@ -27,6 +27,9 @@ import {
   type RateType,
 } from "@/lib/pricing";
 import { saveCode } from "@/lib/saved-codes";
+import { forgetVoucher, loadVoucher } from "@/lib/saved-voucher";
+import { normalizeVoucherCode, splitDiscount, voucherPath, voucherProblem, type BookingVoucherInfo, type Voucher } from "@/lib/voucher";
+import VoucherOnBooking from "./VoucherOnBooking";
 import { loadMembership } from "@/lib/saved-membership";
 import { minutesUntilStart, PAY_EXTEND_MINUTES, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
@@ -119,6 +122,7 @@ type Confirmed = {
   payBy: string | null; // online: pay within the window or the slot is released
   payExtendMinutes: number | null; // "Need more time?": minutes they can add to payBy (once)
   payAfter: boolean; // a coach paying after the session: kept until then
+  voucher: BookingVoucherInfo | null; // the voucher used, and what it took off
 };
 
 // The sport is already shown in the tab, so "Badminton Court 1" → "Court 1" in the grid header.
@@ -655,6 +659,35 @@ function BookingDialog({
   const [error, setError] = useState("");
   const [done, setDone] = useState<Confirmed | null>(null);
   const [copied, setCopied] = useState(false);
+  // A voucher: looked up when applied (or filled in from the voucher page), worked out here for the
+  // price shown, and checked and taken again by the server when booking.
+  const [voucherInput, setVoucherInput] = useState(() => (typeof window === "undefined" ? "" : loadVoucher()));
+  const [voucher, setVoucher] = useState<Omit<Voucher, "issuedTo"> | null>(null);
+  const [voucherError, setVoucherError] = useState("");
+  const [voucherBusy, setVoucherBusy] = useState(false);
+  const checkVoucher = useCallback(async (raw: string) => {
+    const code = normalizeVoucherCode(raw);
+    if (!code) return setVoucherError("Voucher codes look like VCH-ABCD-2345. Please check the code.");
+    setVoucherBusy(true);
+    setVoucherError("");
+    try {
+      const res = await fetch("/api/vouchers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+      const j = await res.json();
+      if (!res.ok) return setVoucherError(j.error || "Couldn't check that voucher.");
+      setVoucher(j);
+      setVoucherInput(code);
+    } catch {
+      setVoucherError("Network error. Please try again.");
+    } finally {
+      setVoucherBusy(false);
+    }
+  }, []);
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !voucherInput) return;
+    prefilled.current = true;
+    checkVoucher(voucherInput); // from the voucher page ("Book a court with this voucher")
+  }, [voucherInput, checkVoucher]);
 
   const p = data.pricing;
   // A shared court may have its own prices; a group pays for every court at its own price.
@@ -668,6 +701,12 @@ function BookingDialog({
   const total = Math.round(courtPrices.reduce((sum, c) => sum + c.price.total, 0) * 100) / 100;
   const savings = Math.round(courtPrices.reduce((sum, c) => sum + c.price.savings, 0) * 100) / 100;
   const sameRate = courtPrices.every((c) => c.price.hourlyRate === price.hourlyRate && c.price.regularRate === price.regularRate);
+  const voucherIssue = voucher ? voucherProblem(voucher, { today: data.today, date: data.date, activity: data.sport }) : null;
+  const voucherSplit = voucher && !voucherIssue
+    ? splitDiscount(voucher, courtPrices.map((c) => ({ hours, rate: c.price.hourlyRate, amount: c.price.total })))
+    : null;
+  const voucherOff = voucherSplit?.total ?? 0;
+  const toPay = Math.round((total - voucherOff) * 100) / 100; // after the voucher
   const hasPrices = [selection.courtId, ...extraIds].some((id) => {
     const r = ratesOf(id);
     return r.regular > 0 || r.member > 0 || r.coach > 0;
@@ -676,7 +715,7 @@ function BookingDialog({
   const rateName = standardOnly ? "Standard" : rateTypeLabel(rateType);
   // A logged-in coach booking with their own code pays after the session (unless staff turned that off).
   const coachPaysAfter = rateType === "coach" && !coachOnly && !!data.coach?.payLater && normalizeCoachCode(rateCode) === data.coach.code;
-  const noWayToPay = hasPrices && total > 0 && methodChoices.length === 0;
+  const noWayToPay = hasPrices && toPay > 0 && methodChoices.length === 0;
   const codeRequired = rateType === "member" ? p.memberCodeRequired : rateType === "coach" ? p.coachCodeRequired || !!coachOnly : false;
 
   // A coach's own code: check it and book under the coach's details (filled in and locked).
@@ -751,6 +790,7 @@ function BookingDialog({
           coachingCoachId: rateType !== "coach" && wantCoach ? coachingId : "",
           clientName: rateType === "coach" && coachInfo ? clientName : "",
           paymentMethod,
+          voucherCode: voucher && voucherSplit && voucherOff > 0 ? voucher.code : "",
         }),
       });
       const json = await res.json();
@@ -760,6 +800,7 @@ function BookingDialog({
         return;
       }
       setDone(json);
+      if (json.voucher) forgetVoucher(); // used: the voucher page has what's left
       saveCode({
         code: json.code,
         date: json.date,
@@ -812,6 +853,7 @@ function BookingDialog({
               b={done}
               extra={done.rateType !== "regular" ? `${rateTypeLabel(done.rateType)} rate · ${formatPeso(done.hourlyRate)}/hour` : undefined}
             />
+            {done.voucher && <VoucherOnBooking v={done.voucher} href={voucherPath(done.voucher.code)} amountLeft={done.amount} />}
             {court?.notes && <div className="court-note">ⓘ {court.notes}</div>}
             <div className="folds">
               <Fold icon="🎟️" title="Booking QR code" hint={done.code}
@@ -1027,7 +1069,34 @@ function BookingDialog({
             </div>
 
             {hasPrices && (
+              <details className="field voucher-field" open={!!voucherInput || !!voucher}>
+                <summary>🎟 Have a voucher?</summary>
+                {voucher ? (
+                  <div className={`voucher-applied${voucherIssue ? " bad" : ""}`}>
+                    <span>
+                      <strong className="mono">{voucher.code}</strong>
+                      {voucherIssue ? <> — {voucherIssue}</> : voucherOff > 0 ? <> — takes {formatPeso(voucherOff)} off</> : <> — nothing to take off this booking</>}
+                    </span>
+                    <button type="button" className="link-btn" onClick={() => { setVoucher(null); setVoucherInput(""); forgetVoucher(); }}>Remove</button>
+                  </div>
+                ) : (
+                  <div className="voucher-entry">
+                    <input aria-label="Voucher code" placeholder="VCH-XXXX-XXXX" value={voucherInput} autoCapitalize="characters"
+                      autoComplete="off" spellCheck={false} onChange={(e) => setVoucherInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); checkVoucher(voucherInput); } }} />
+                    <button type="button" className="btn secondary" disabled={voucherBusy || !voucherInput.trim()} onClick={() => checkVoucher(voucherInput)}>
+                      {voucherBusy ? "Checking…" : "Apply"}
+                    </button>
+                  </div>
+                )}
+                {voucherError && <p className="error" style={{ margin: "6px 0 0" }}>{voucherError}</p>}
+                {!voucher && <p className="hint" style={{ margin: "6px 0 0" }}>One voucher per booking. It&apos;s taken off the court fee before you pay.</p>}
+              </details>
+            )}
+
+            {hasPrices && (
               <>
+                {toPay > 0 ? (
                 <div className="field">
                   <label id="pay-label">How will you pay?</label>
                   <div className="pay-options" role="radiogroup" aria-labelledby="pay-label">
@@ -1060,6 +1129,9 @@ function BookingDialog({
                     </p>
                   )}
                 </div>
+                ) : voucherOff > 0 ? (
+                  <p className="success" style={{ margin: "0 0 10px" }}>✓ Your voucher covers this booking — nothing to pay.</p>
+                ) : null}
 
                 <div className="price-box" aria-live="polite">
                   {sameRate ? (
@@ -1086,16 +1158,22 @@ function BookingDialog({
                       <span>{formatPeso(savings)}</span>
                     </div>
                   )}
+                  {voucherOff > 0 && (
+                    <div className="pay-row" style={{ color: "var(--brand)", fontSize: 14 }}>
+                      <span>🎟 Voucher {voucher?.code}{voucherSplit?.hours ? ` (${voucherSplit.hours} free h)` : ""}</span>
+                      <span>−{formatPeso(voucherOff)}</span>
+                    </div>
+                  )}
                   <div className="pay-row total">
                     <span>Total</span>
-                    <span>{formatPeso(total)}</span>
+                    <span>{formatPeso(toPay)}</span>
                   </div>
                 </div>
 
               </>
             )}
 
-            {hasPrices && total > 0 && <BookingPolicy />}
+            {hasPrices && toPay > 0 && <BookingPolicy />}
 
             {/* Honeypot: hidden from people, often filled in by spam bots. */}
             <div className="hp" aria-hidden="true">
@@ -1110,9 +1188,9 @@ function BookingDialog({
               <button type="button" className="btn secondary" onClick={onClose}>Cancel</button>
               <button type="submit" className="btn" disabled={busy || startsSoon || noWayToPay}>
                 {busy ? "Booking…"
-                  : !hasPrices || total <= 0 ? "Confirm booking"
-                  : paymentMethod === "cash" ? `Reserve · ${formatPeso(total)}`
-                  : `Book & pay · ${formatPeso(total)}`}
+                  : !hasPrices || toPay <= 0 ? "Confirm booking"
+                  : paymentMethod === "cash" ? `Reserve · ${formatPeso(toPay)}`
+                  : `Book & pay · ${formatPeso(toPay)}`}
               </button>
             </div>
           </form>

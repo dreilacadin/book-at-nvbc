@@ -45,6 +45,7 @@ export function BookingHeader({
   b: {
     code: string; courtName: string; sport: string; date: string; startHour: number; endHour: number;
     amount: number; paymentMethod: string; status: string; paymentStatus: string; phase?: string | null; cancelledBy?: string | null;
+    voucher?: unknown; // a voucher took something off
   };
   extra?: React.ReactNode; // e.g. "Booked under Juan · Member rate"
 }) {
@@ -58,7 +59,10 @@ export function BookingHeader({
       </div>
       <div className="bk-head-when">{day} · {formatRange(b.startHour, b.endHour)}</div>
       <div className="muted">
-        {sportEmoji(b.sport)} {b.courtName} · {b.amount > 0 ? `${formatPeso(b.amount)} · ${paymentLabel(b.paymentMethod)}` : "No charge"}
+        {sportEmoji(b.sport)} {b.courtName} ·{" "}
+        {b.amount > 0
+          ? `${formatPeso(b.amount)}${b.voucher ? " after voucher" : ""} · ${paymentLabel(b.paymentMethod)}`
+          : b.voucher ? "Covered by voucher" : "No charge"}
       </div>
       {extra && <div className="muted bk-head-extra">{extra}</div>}
       <p className={`bk-head-line ${s.tone}`}>{s.line}</p>

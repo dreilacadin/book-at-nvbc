@@ -30,6 +30,7 @@ import CoachesTab from "./CoachesTab";
 import MembersTab from "./MembersTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
+import VouchersTab from "./VouchersTab";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { setCustomActivities, SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 import { RoleContext, type AdminRole } from "./role";
@@ -41,7 +42,8 @@ const shortDate = (d: string | null) =>
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "coaches" | "reports" | "courts" | "staff" | "settings">("overview");
+  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "vouchers" | "coaches" | "reports" | "courts" | "staff" | "settings">("overview");
+  const [openVoucher, setOpenVoucher] = useState<string | null>(null); // /admin?voucher=<id>
   const [bookingsDate, setBookingsDate] = useState(todayManila);
   const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
   // A booking opened from a notification (or /admin?booking=NV-…), shown in a pop-up card.
@@ -55,7 +57,13 @@ export default function AdminPage() {
     if (code) setOpenCode(code);
     if (q.get("tab") === "members") setTab("members");
     if (q.get("tab") === "coaches") setTab("coaches");
-    if (code || q.get("tab")) window.history.replaceState(null, "", "/admin");
+    if (q.get("tab") === "vouchers") setTab("vouchers");
+    const voucher = q.get("voucher");
+    if (voucher) {
+      setOpenVoucher(voucher);
+      setTab("vouchers");
+    }
+    if (code || voucher || q.get("tab")) window.history.replaceState(null, "", "/admin");
   }, []);
 
   const reloadOpenBooking = useCallback(async () => {
@@ -103,7 +111,7 @@ export default function AdminPage() {
   const role: AdminRole = me?.role ?? "staff";
   const manage = role !== "staff";
   // Staff accounts don't see Courts (setup) or Settings.
-  const tabs = (["overview", "bookings", "members", "coaches", "reports", "courts", "staff", "settings"] as const).filter(
+  const tabs = (["overview", "bookings", "members", "vouchers", "coaches", "reports", "courts", "staff", "settings"] as const).filter(
     (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports" && t !== "coaches")
   );
 
@@ -132,7 +140,7 @@ export default function AdminPage() {
       </div>
       <div className="tabs" role="tablist">
         {tabs.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => { setTab(t); setBookingsOpen(null); }}>
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => { setTab(t); setBookingsOpen(null); setOpenVoucher(null); }}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -151,6 +159,7 @@ export default function AdminPage() {
         <BookingsTab initialDate={bookingsDate} initialOpen={bookingsOpen} onDateChange={setBookingsDate} onAuthError={onAuthError} />
       )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
+      {tab === "vouchers" && <VouchersTab key={openVoucher ?? "list"} onAuthError={onAuthError} openId={openVoucher} onOpenBooking={setOpenCode} />}
       {tab === "reports" && manage && <Reports onAuthError={onAuthError} />}
       {tab === "coaches" && manage && <CoachesTab onAuthError={onAuthError} />}
       {tab === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}

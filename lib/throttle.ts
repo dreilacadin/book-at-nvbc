@@ -33,6 +33,25 @@ export async function clearHits(bucket: string, key: string): Promise<void> {
 const CODE_MISSES = 30;
 const CODE_WINDOW = 15;
 
+// Voucher codes: a visitor who tries this many unknown voucher codes in CODE_WINDOW minutes is paused.
+const VOUCHER_MISSES = 20;
+
+/**
+ * Wraps a public route that takes a voucher code: refuses visitors who've tried too many unknown
+ * codes, and counts a "No voucher found" answer (404) as a miss.
+ */
+export async function guardVoucherCode(req: NextRequest, handler: () => Promise<Response>): Promise<Response> {
+  const ip = clientIp(req);
+  if (await tooMany("voucher-miss", ip, VOUCHER_MISSES, CODE_WINDOW))
+    return Response.json(
+      { error: "Too many voucher codes tried. Please wait 15 minutes, or ask the front desk for help." },
+      { status: 429 }
+    );
+  const res = await handler();
+  if (res.status === 404) await recordHit("voucher-miss", ip);
+  return res;
+}
+
 /**
  * Wraps a public route that takes a booking code: refuses visitors who've tried too many unknown
  * codes, and counts a "No booking found" answer (404) as a miss. Real customers never get near it.
