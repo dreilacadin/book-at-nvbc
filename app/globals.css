@@ -1330,3 +1330,36 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .bk-ready { align-self: flex-start; margin-top: 3px; padding: 1px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
   background: var(--open-bg); color: var(--open-text); border: 1px solid var(--open-border); }
 .auto-ok { color: var(--open-text); font-weight: 600; }
+
+/* NVBC Scholar applications */
+.scholar-hero {
+  position: relative; overflow: hidden; margin-bottom: 16px; padding: 26px 24px 28px; border-radius: var(--radius); color: #f4f6fb;
+  background: radial-gradient(420px 260px at 100% -10%, rgba(64, 86, 170, .6), transparent 65%),
+    radial-gradient(340px 240px at -6% 112%, rgba(243, 182, 31, .14), transparent 62%), linear-gradient(180deg, #04062a, #000023);
+}
+.scholar-hero h1 { margin: 14px 0 10px; color: #f4f6fb; font-size: clamp(32px, 8vw, 46px); font-weight: 800; line-height: 1.05; letter-spacing: -.035em; overflow-wrap: anywhere; }
+.scholar-hero h1 em { font-style: normal; color: #f3b61f; }
+.scholar-hero p { margin: 0; color: #c3cae0; font-size: 16px; line-height: 1.45; }
+.scholar-pill {
+  display: inline-block; padding: 5px 13px; border-radius: 999px; border: 1.5px solid rgba(243, 182, 31, .55); background: rgba(243, 182, 31, .14);
+  color: #f3b61f; font-size: 12px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+}
+.segmented.scholar-one { grid-template-columns: 1fr; }
+.scholar-check { display: flex; gap: 10px; margin-bottom: 12px !important; font-weight: 400; cursor: pointer; }
+.scholar-check input { flex: none; width: 18px; height: 18px; }
+.scholar-check:last-child { margin-bottom: 0 !important; }
+.scholar-grid { display: grid; grid-template-columns: minmax(72px, 1.4fr) repeat(7, 1fr); align-items: center; gap: 8px 0; font-size: 13px; text-align: center; }
+.scholar-grid-row { display: contents; }
+.scholar-grid-row > span { text-align: left; color: var(--muted); font-weight: 600; }
+.scholar-grid label { display: flex; justify-content: center; margin: 0; padding: 7px 0; cursor: pointer; }
+.scholar-grid input { width: 20px; height: 20px; }
+.scholar-summary { display: grid; gap: 10px; margin-bottom: 16px; }
+.scholar-summary > div { display: flex; justify-content: space-between; gap: 16px; }
+.scholar-summary strong { text-align: right; }
+.scholar-card { margin-bottom: 10px; }
+.scholar-card summary { cursor: pointer; }
+.scholar-card-sub { display: block; margin-top: 2px; font-size: 14px; }
+.scholar-card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.scholar-card h3 { margin: 18px 0 8px; font-size: 15px; }
+.scholar-line { display: grid; grid-template-columns: 120px 1fr; gap: 10px; padding: 4px 0; font-size: 14px; }
+.scholar-text { white-space: pre-wrap; overflow-wrap: anywhere; }
