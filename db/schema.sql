@@ -874,3 +874,42 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks TEXT[] NOT NULL DEFAULT
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_sig TEXT NOT NULL DEFAULT '';
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_by TEXT;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_at TIMESTAMPTZ;
+
+-- v37: NVBC Scholar applications --------------------------------------------------------------------
+-- Applications to be an NVBC Scholar (often from minors): readable by the owner and managers only.
+-- `token` is the secret part of the guardian's consent link. Under-18s need a guardian's consent:
+-- consent_at stays NULL until it's signed. Delete applications once they're no longer needed.
+CREATE TABLE IF NOT EXISTS scholar_applications (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token                 TEXT NOT NULL UNIQUE,
+  status                TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'selected', 'not_selected')),
+  full_name             TEXT NOT NULL,
+  birthdate             DATE NOT NULL,
+  mobile                TEXT NOT NULL,
+  facebook_name         TEXT NOT NULL,
+  address               TEXT NOT NULL,
+  school                TEXT NOT NULL,
+  year_level            TEXT NOT NULL,
+  sport                 TEXT NOT NULL CHECK (sport IN ('badminton', 'pickleball')),
+  batch                 TEXT NOT NULL,
+  years_playing         TEXT NOT NULL,
+  experience            TEXT NOT NULL DEFAULT '',
+  availability          TEXT[] NOT NULL DEFAULT '{}',
+  why_fit               TEXT NOT NULL,
+  initiative            TEXT NOT NULL,
+  emergency_name        TEXT NOT NULL,
+  emergency_mobile      TEXT NOT NULL,
+  medical               TEXT NOT NULL,
+  consent_required      BOOLEAN NOT NULL,
+  photo_consent         TEXT NOT NULL DEFAULT '' CHECK (photo_consent IN ('', 'yes', 'no')),
+  guardian_name         TEXT NOT NULL DEFAULT '',
+  guardian_relationship TEXT NOT NULL DEFAULT '',
+  guardian_mobile       TEXT NOT NULL DEFAULT '',
+  guardian_notes        TEXT NOT NULL DEFAULT '',
+  consent_signature     TEXT NOT NULL DEFAULT '', -- the guardian's typed name
+  consent_at            TIMESTAMPTZ,
+  staff_notes           TEXT NOT NULL DEFAULT '',
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS scholar_applications_person_idx
+  ON scholar_applications (regexp_replace(lower(trim(full_name)), '\s+', ' ', 'g'), birthdate);
