@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { payByLabel } from "@/components/BookingPolicy";
+import { ShareLinkBox } from "@/components/ShareBooking";
 import {
   awaitingPayment,
   bookingPhase,
@@ -428,6 +429,7 @@ export function AdminBookingCard({
   const [reading, setReading] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [splitting, setSplitting] = useState(false); // recording a payment in parts
+  const [sharing, setSharing] = useState(false); // the booking's view-only link
   const manage = useCanManage();
   const shown = displayStatus(b);
   const verifying = verifyingOnline(b);
@@ -785,6 +787,7 @@ export function AdminBookingCard({
       {b.status !== "cancelled" && (
         <div className="card-actions">
           <button className="btn small secondary" disabled={busy} onClick={startEdit}>✎ Edit</button>
+          <button type="button" className="btn small secondary" aria-expanded={sharing} onClick={() => setSharing((x) => !x)}>🔗 Share</button>
           <button className="btn small secondary danger-text" disabled={busy} onClick={cancel}>Cancel booking</button>
           <details className="more-actions">
             <summary className="btn small secondary">More ▾</summary>
@@ -834,6 +837,15 @@ export function AdminBookingCard({
       {b.status === "cancelled" && manage && (
         <div className="card-actions">
           <button className="btn small secondary danger-text" disabled={busy} onClick={remove}>Delete permanently</button>
+        </div>
+      )}
+      {sharing && b.status !== "cancelled" && (
+        <div className="staff-share">
+          <p className="hint" style={{ margin: "0 0 8px" }}>
+            View-only link for the customer or their group: date, time, court and status, with no contact details or price. Nobody can change the booking with it.
+          </p>
+          <ShareLinkBox code={b.group_code}
+            summary={`${sportLabel(b.sport)} at NVBC: ${formatDateLong(b.date)}, ${formatRange(b.start_hour, b.end_hour)}, ${b.group_size > 1 ? b.group_courts : b.court_name}`} />
         </div>
       )}
       <BookingMessages b={b} onAuthError={onAuthError} />

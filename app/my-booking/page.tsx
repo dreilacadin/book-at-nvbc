@@ -6,6 +6,8 @@ import BookingPolicy, { payByLabel } from "@/components/BookingPolicy";
 import BookingQr from "@/components/BookingQr";
 import { BookingHeader, Fold } from "@/components/BookingSummary";
 import BookingVoucher from "@/components/BookingVoucher";
+import { formatDateLong, formatRange } from "@/lib/format";
+import ShareBooking from "@/components/ShareBooking";
 import type { BookingVoucherInfo } from "@/lib/voucher";
 import AddToCalendar from "@/components/AddToCalendar";
 import BookingCoaching from "@/components/BookingCoaching";
@@ -279,6 +281,13 @@ export default function MyBookingPage() {
                 date={booking.date}
                 startHour={booking.startHour}
                 endHour={booking.endHour}
+              />
+            )}
+            {booking.status !== "cancelled" && booking.phase !== "completed" && (
+              <ShareBooking
+                key={`share-${booking.code}`}
+                code={booking.code}
+                summary={`${booking.activity.label} at NVBC: ${formatDateLong(booking.date)}, ${formatRange(booking.startHour, booking.endHour)}, ${booking.courtName}`}
               />
             )}
           </div>

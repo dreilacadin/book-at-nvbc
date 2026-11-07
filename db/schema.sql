@@ -874,3 +874,10 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks TEXT[] NOT NULL DEFAULT
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_sig TEXT NOT NULL DEFAULT '';
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_by TEXT;
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS pay_checks_at TIMESTAMPTZ;
+
+-- v37: view-only booking links --------------------------------------------------------------------
+-- "Share this booking" on My booking: a random token (on a group's first booking) for /b/<token>,
+-- which shows when and where it is, and nothing that lets anyone change it. Unlike the booking code,
+-- it's safe to post in a group chat. Made the first time someone shares the booking.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS share_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS bookings_share_token_idx ON bookings (share_token) WHERE share_token IS NOT NULL;

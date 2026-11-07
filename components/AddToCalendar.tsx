@@ -12,6 +12,7 @@ export default function AddToCalendar({
   date,
   startHour,
   endHour,
+  details,
 }: {
   code: string;
   sport: string;
@@ -19,12 +20,13 @@ export default function AddToCalendar({
   date: string;
   startHour: number;
   endHour: number;
+  details?: string; // instead of the booking code and link (a view-only link has neither)
 }) {
   const page = typeof window === "undefined" ? "/my-booking" : `${window.location.origin}/my-booking`;
   const base = { code, title: `${sportLabel(sport)} at NVBC — ${courts}`, location: "NV Badminton Center", date, startHour, endHour };
-  const ics: CalendarBooking = { ...base, details: `Booking code ${code}. Show your booking QR code at the front desk.\nView or change your booking: ${page}` };
+  const ics: CalendarBooking = { ...base, details: details ?? `Booking code ${code}. Show your booking QR code at the front desk.\nView or change your booking: ${page}` };
   // The Google link is sent to Google: no booking code in it.
-  const google: CalendarBooking = { ...base, details: `Show your booking QR code at the front desk.\nView or change your booking: ${page}` };
+  const google: CalendarBooking = { ...base, details: details ?? `Show your booking QR code at the front desk.\nView or change your booking: ${page}` };
 
   function download() {
     const url = URL.createObjectURL(new Blob([icsFile(ics)], { type: "text/calendar;charset=utf-8" }));

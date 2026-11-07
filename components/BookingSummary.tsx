@@ -17,6 +17,8 @@ export function customerStatus(b: {
   amount: number;
   date: string;
   startHour: number;
+  paymentMethod?: string;
+  payAfter?: boolean; // a coach paying after the session: kept until then, no deadline
 }): { label: string; tone: Tone; line: string } {
   if (b.status === "cancelled")
     return b.cancelledBy === "system"
@@ -24,6 +26,14 @@ export function customerStatus(b: {
       : { label: "Cancelled", tone: "grey", line: "This booking was cancelled." };
   if (b.phase === "in_progress") return { label: "In progress", tone: "ok", line: "Enjoy your game!" };
   if (b.phase === "completed") return { label: "Completed", tone: "grey", line: "Thanks for playing at NVBC!" };
+  if (b.payAfter && b.paymentStatus === "unpaid" && (b.status === "reserved" || b.status === "pending"))
+    return {
+      label: b.status === "reserved" ? "Reserved" : "Pending",
+      tone: b.status === "reserved" ? "reserved" : "pending",
+      line: b.paymentMethod === "cash"
+        ? `Pay ${formatPeso(b.amount)} cash at the front desk after your session. Your slot is kept for you.`
+        : `Pay ${formatPeso(b.amount)} after your session. Your slot is kept for you.`,
+    };
   if (b.status === "reserved")
     return { label: "Reserved", tone: "reserved", line: `Pay ${formatPeso(b.amount)} cash at the front desk by ${payByLabel(b.date, b.startHour)}.` };
   if (b.status === "pending") {
@@ -46,6 +56,7 @@ export function BookingHeader({
     code: string; courtName: string; sport: string; date: string; startHour: number; endHour: number;
     amount: number; paymentMethod: string; status: string; paymentStatus: string; phase?: string | null; cancelledBy?: string | null;
     voucher?: unknown; // a voucher took something off
+    payAfter?: boolean;
   };
   extra?: React.ReactNode; // e.g. "Booked under Juan · Member rate"
 }) {
