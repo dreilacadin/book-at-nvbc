@@ -28,6 +28,7 @@ import ActivityLog from "./ActivityLog";
 import Reports from "./Reports";
 import CoachesTab from "./CoachesTab";
 import MembersTab from "./MembersTab";
+import ScholarsTab from "./ScholarsTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
 import VouchersTab from "./VouchersTab";
@@ -42,7 +43,7 @@ const shortDate = (d: string | null) =>
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "vouchers" | "coaches" | "reports" | "courts" | "staff" | "settings">("overview");
+  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "scholars" | "vouchers" | "coaches" | "reports" | "courts" | "staff" | "settings">("overview");
   const [openVoucher, setOpenVoucher] = useState<string | null>(null); // /admin?voucher=<id>
   const [bookingsDate, setBookingsDate] = useState(todayManila);
   const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
@@ -110,9 +111,9 @@ export default function AdminPage() {
 
   const role: AdminRole = me?.role ?? "staff";
   const manage = role !== "staff";
-  // Staff accounts don't see Courts (setup) or Settings.
-  const tabs = (["overview", "bookings", "members", "vouchers", "coaches", "reports", "courts", "staff", "settings"] as const).filter(
-    (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports" && t !== "coaches")
+  // Staff accounts don't see Courts (setup), Settings or Scholars (minors' details).
+  const tabs = (["overview", "bookings", "members", "scholars", "vouchers", "coaches", "reports", "courts", "staff", "settings"] as const).filter(
+    (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports" && t !== "coaches" && t !== "scholars")
   );
 
   return (
@@ -159,6 +160,7 @@ export default function AdminPage() {
         <BookingsTab initialDate={bookingsDate} initialOpen={bookingsOpen} onDateChange={setBookingsDate} onAuthError={onAuthError} />
       )}
       {tab === "members" && <MembersTab onAuthError={onAuthError} />}
+      {tab === "scholars" && manage && <ScholarsTab onAuthError={onAuthError} />}
       {tab === "vouchers" && <VouchersTab key={openVoucher ?? "list"} onAuthError={onAuthError} openId={openVoucher} onOpenBooking={setOpenCode} />}
       {tab === "reports" && manage && <Reports onAuthError={onAuthError} />}
       {tab === "coaches" && manage && <CoachesTab onAuthError={onAuthError} />}

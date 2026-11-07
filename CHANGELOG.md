@@ -31,6 +31,13 @@ Earlier changes (before this file existed) are in the git history.
 - **Staff:** **🔗 Share** on a booking's card gives its view-only link, to send to
   the customer or their group.
 - **Database:** bookings: the token for the view-only link (`share_token`).
+- **NVBC Scholar applications.** Students in Nueva Vizcaya can apply to be an NVBC
+  Scholar at **/scholars**. Under 18? You'll get a link to send your parent or
+  guardian so they can give their consent.
+- **Staff:** **Scholars tab** (owner and managers only) lists scholar applications
+  with their guardian's consent, status and notes.
+- **Database:** new table `scholar_applications`.
+
 - **Vouchers.** Got an NVBC voucher? Scan its QR code (or enter the code at
   **/voucher**) to see what it's worth, what's left and its terms, then tap
   **Book a court with this voucher**. You can also enter it under **Have a
