@@ -29,6 +29,7 @@ import {
 import { saveCode } from "@/lib/saved-codes";
 import { forgetVoucher, loadVoucher } from "@/lib/saved-voucher";
 import { normalizeVoucherCode, splitDiscount, voucherPath, voucherProblem, type BookingVoucherInfo, type Voucher } from "@/lib/voucher";
+import ShareBooking from "./ShareBooking";
 import VoucherOnBooking from "./VoucherOnBooking";
 import { loadMembership } from "@/lib/saved-membership";
 import { minutesUntilStart, PAY_EXTEND_MINUTES, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
@@ -868,6 +869,8 @@ function BookingDialog({
               <AddToCalendar code={done.code} sport={done.sport} courts={done.courtName} date={done.date}
                 startHour={done.startHour} endHour={done.endHour} />
               <BookingAlerts code={done.code} />
+              <ShareBooking code={done.code}
+                summary={`${sportLabel(done.sport)} at NVBC: ${formatDateLong(done.date)}, ${formatRange(done.startHour, done.endHour)}, ${done.courtName}`} />
             </div>
             {done.amount > 0 && done.paymentStatus !== "paid" && done.paymentStatus !== "waived" && (
               <PaymentPanel

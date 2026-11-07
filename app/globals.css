@@ -1331,6 +1331,17 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
   background: var(--open-bg); color: var(--open-text); border: 1px solid var(--open-border); }
 .auto-ok { color: var(--open-text); font-weight: 600; }
 
+/* A view-only booking link, and sharing it from My booking */
+.shared-booking { max-width: 560px; margin: 0 auto; display: grid; gap: 6px; justify-items: start; }
+.shared-booking h1 { margin: 6px 0 0; font-size: 26px; }
+.shared-booking > p { margin: 0; }
+.shared-booking .shared-when { font-size: 22px; font-weight: 700; }
+.shared-booking .shared-where { font-size: 16px; font-weight: 600; }
+.shared-booking .folds, .shared-booking .court-note, .shared-booking .bk-head-line { justify-self: stretch; }
+.shared-booking .bk-head-line { margin: 6px 0; }
+.share-url { width: 100%; font-size: 14px; }
+.staff-share { margin-top: 10px; }
+
 /* NVBC Scholar applications */
 .scholar-hero {
   position: relative; overflow: hidden; margin-bottom: 16px; padding: 26px 24px 28px; border-radius: var(--radius); color: #f4f6fb;

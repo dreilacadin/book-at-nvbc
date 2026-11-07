@@ -24,6 +24,13 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Share your booking.** **Share this booking**, right after booking and on My
+  booking, gives you a link to send to the people playing with you. They see the date, time and court (and
+  can add it to their calendar), and it stays up to date if the booking moves.
+  It's view-only, so nobody can change, cancel or pay for your booking with it.
+- **Staff:** **🔗 Share** on a booking's card gives its view-only link, to send to
+  the customer or their group.
+- **Database:** bookings: the token for the view-only link (`share_token`).
 - **NVBC Scholar applications.** Students in Nueva Vizcaya can apply to be an NVBC
   Scholar at **/scholars**. Under 18? You'll get a link to send your parent or
   guardian so they can give their consent.
@@ -218,6 +225,9 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Fixed
 
+- Coaches who pay after their session were told to pay by a deadline before it
+  (or "before the timer runs out"). The booking now says to pay after the
+  session, and that the slot is kept for you.
 - My booking showed the wrong total for a group booking whose courts have
   different prices; it now adds up each court's price.
 - When scrolling the booking grid sideways, the half-hour times (e.g. 5:30 PM)

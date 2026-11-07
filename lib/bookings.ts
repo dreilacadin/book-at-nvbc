@@ -1,4 +1,4 @@
-import { randomInt } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { db, getQrphImage, getSettings, type Settings } from "./db";
 import {
   activeBookingStatus,
@@ -848,6 +848,76 @@ export async function extendPaymentTime(rawCode: unknown): Promise<Result<{ payB
   const clock = new Date(next).toLocaleTimeString("en-PH", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", hour12: true });
   await logBooking({ id: b.id }, CUSTOMER, "More time to pay", `+${minutes} min · now pay by ${clock}`);
   return { ok: true, data: { payBy, minutes } };
+}
+
+/**
+ * "Share this booking": the view-only link for a booking the customer holds the code of. The same
+ * link every time, so one already shared keeps working (see sharedBooking).
+ */
+export async function shareLink(rawCode: unknown): Promise<Result<{ path: string }>> {
+  const code = normalizeCode(rawCode);
+  if (!code) return fail(400, "Booking codes look like NV-ABC123.");
+  const { rows } = await db().query<{ share_token: string }>(
+    `UPDATE bookings SET share_token = COALESCE(share_token, $2)
+      WHERE id = (SELECT COALESCE(group_id, id) FROM bookings WHERE cancel_code = $1)
+      RETURNING share_token`,
+    [code, randomBytes(16).toString("base64url")]
+  );
+  if (!rows[0]) return fail(404, "No booking found with that code.");
+  return { ok: true, data: { path: `/b/${rows[0].share_token}` } };
+}
+
+/** What a view-only link shows: when and where. Never the code, contact details, price or payment. */
+export type SharedBooking = {
+  sport: string;
+  label: string;
+  emoji: string;
+  courts: string[];
+  notes: string[]; // the courts' notes, as on the booking page
+  date: string;
+  startHour: number;
+  endHour: number;
+  bookedBy: string; // as on the public grid ("Ana C.")
+  state: "confirmed" | "unconfirmed" | "cancelled" | "over";
+  calendarId: string; // for the calendar event (not the booking code)
+};
+
+/** The booking behind a view-only link, or null. It always shows the booking as it is now. */
+export async function sharedBooking(token: string): Promise<SharedBooking | null> {
+  if (!/^[A-Za-z0-9_-]{22}$/.test(token)) return null;
+  await releaseUnpaidBookings();
+  await getSettings(); // registers custom activities, for their names
+  const { rows } = await db().query<{
+    court_name: string; court_notes: string; sport: string; booking_date: string; start_hour: number; end_hour: number;
+    player_name: string; status: string; coach_id: string | null; root: boolean;
+  }>(
+    `SELECT c.name AS court_name, c.notes AS court_notes, COALESCE(b.activity, c.sport) AS sport, b.booking_date,
+            b.start_hour::float8 AS start_hour, b.end_hour::float8 AS end_hour, b.player_name, b.status, b.coach_id,
+            (b.group_id IS NULL) AS root
+       FROM bookings r JOIN bookings b ON COALESCE(b.group_id, b.id) = r.id JOIN courts c ON c.id = b.court_id
+      WHERE r.share_token = $1
+      ORDER BY (b.group_id IS NULL) DESC, c.sort_order, c.id`,
+    [token]
+  );
+  if (!rows.length) return null;
+  const on = rows.filter((r) => r.status !== "cancelled");
+  const list = on.length ? on : rows.filter((r) => r.root);
+  const b = list[0] ?? rows[0];
+  return {
+    sport: b.sport,
+    label: sportLabel(b.sport),
+    emoji: sportEmoji(b.sport),
+    courts: list.map((r) => r.court_name),
+    notes: [...new Set(on.map((r) => r.court_notes).filter(Boolean))],
+    date: b.booking_date,
+    startHour: b.start_hour,
+    endHour: b.end_hour,
+    bookedBy: b.coach_id ? b.player_name : publicName(b.player_name),
+    state: !on.length ? "cancelled"
+      : isPastSlot(b.booking_date, b.end_hour) ? "over"
+      : on.every((r) => r.status === "confirmed") ? "confirmed" : "unconfirmed",
+    calendarId: `shared-${token.slice(0, 12)}`,
+  };
 }
 
 /** Look up a booking by its code. Only the person holding the code sees the name. */
