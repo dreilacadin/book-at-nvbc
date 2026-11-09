@@ -920,3 +920,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS scholar_applications_person_idx
 -- it's safe to post in a group chat. Made the first time someone shares the booking.
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS share_token TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS bookings_share_token_idx ON bookings (share_token) WHERE share_token IS NOT NULL;
+
+-- v39: cash hours ---------------------------------------------------------------------------------
+-- Settings → Payment methods: times when everyone (not only coaches) may pay cash at the front desk,
+-- e.g. {"from": 13, "to": 17} for 1–5 PM. Hours of the day in half-hour steps; NULL = off.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_hours JSONB;

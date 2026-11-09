@@ -26,7 +26,7 @@ export default function BookingPolicy({ title = "Before you book" }: { title?: s
           can book the court.
         </li>
         <li>
-          Coaches paying in cash: your slot is <strong>Reserved</strong>. Please settle your payment at the front desk at
+          Paying cash at the front desk: your slot is <strong>Reserved</strong>. Please settle your payment at the front desk at
           least <strong>{RELEASE_MINUTES} minutes before your start time</strong>, or the slot will be released.
         </li>
         <li>

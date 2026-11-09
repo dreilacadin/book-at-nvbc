@@ -27,12 +27,12 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
-import { awaitingPayment, bookingPhase, extendedPayBy, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, refundOnCancel, RELEASE_MINUTES, type Phase } from "./booking-policy";
+import { activeCashHours, awaitingPayment, bookingPhase, extendedPayBy, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, cashAllowed, cashHoursNote, refundOnCancel, RELEASE_MINUTES, type Phase } from "./booking-policy";
 import { formatDateLong, formatRange, halfHours, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
 import { blocksOn } from "./court-blocks";
 import { notifyStaff, pushConfig } from "./notify";
-import { emailPayReminder, notifyCustomer, pushPayReminder, scheduleReminders } from "./customer-notify";
+import { emailPayReminder, notifyCustomer, notifyCustomersReleased, pushPayReminder, scheduleReminders } from "./customer-notify";
 import { isEmail } from "./customer-messages";
 import { CUSTOMER, logBooking, logBookings, staff, SYSTEM } from "./booking-history";
 import { describeChanges, type BookingFields } from "./booking-changes";
@@ -100,6 +100,7 @@ export async function releaseUnpaidBookings(): Promise<number> {
   const { rows } = await db().query<{
     id: string; cancel_code: string; player_name: string; court_name: string; sport: string;
     booking_date: string; start_hour: number; end_hour: number; group_id: string | null;
+    window_passed: boolean; payment_status: string;
   }>(
     `WITH rel AS (
        UPDATE bookings b SET status = 'cancelled', cancelled_by = 'system', cancelled_at = now()
@@ -110,7 +111,8 @@ export async function releaseUnpaidBookings(): Promise<number> {
           AND NOT b.pay_after -- a coach paying after the session
           AND ((b.booking_date - $1::date) * 1440 + (b.start_hour - $2::numeric) * 60 <= $3
                OR b.pay_by <= now())
-        RETURNING b.id, b.cancel_code, b.player_name, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, b.booking_date, b.start_hour, b.end_hour, b.group_id
+        RETURNING b.id, b.cancel_code, b.player_name, c.name AS court_name, COALESCE(b.activity, c.sport) AS sport, b.booking_date, b.start_hour, b.end_hour, b.group_id,
+                  COALESCE(b.pay_by <= now(), FALSE) AS window_passed, b.payment_status
      ), freed AS (
        DELETE FROM booking_slots WHERE booking_id IN (SELECT id FROM rel)
      )
@@ -129,6 +131,12 @@ export async function releaseUnpaidBookings(): Promise<number> {
       bookingCode: r.cancel_code,
     }))
   );
+  // And the customer, so they know why it's gone: once per booking code (the group's first court,
+  // which has the code, even if staff had cancelled that court already).
+  const released = new Map<string, "window" | "rejected" | "start">();
+  for (const r of rows)
+    released.set(r.group_id ?? r.id, r.payment_status === "rejected" ? "rejected" : r.window_passed ? "window" : "start");
+  notifyCustomersReleased([...released].map(([id, why]) => ({ id, why })));
   return rows.length;
 }
 
@@ -224,6 +232,7 @@ export async function getAvailability(date: string, requestedSport?: string, vie
     // GCash / QR Ph / bank transfer for everyone; coaches (coach rate + coach code) pay as set in /admin.
     paymentMethods: enabledMethods(settings),
     coachPaymentMethods: coachMethods(settings, coachCodesExist(settings, activeCoaches)),
+    cashHours: activeCashHours(settings), // everyone may also pay cash for bookings within these hours
     coach: viewer, // { name, code, payLater, clients } when a coach is logged in on this device
     courts,
     // Booked times, shown with the booker's first name and last initial only ("Ana C.").
@@ -448,14 +457,21 @@ export async function createBooking(
     contact = coach.mobile;
     email = email || coach.email;
   }
-  // Coaches with a working code pay as set in /admin; everyone else pays online (cash at the desk is for coaches).
+  // Coaches with a working code pay as set in /admin; everyone else pays online, or cash at the desk
+  // during the cash hours (Settings → Payment methods), for a same-day booking starting soon.
   if (!admin) {
     if (rateType === "coach" && (coach || sharedCoachCode)) {
       const allowed = coachMethods(settings, true);
       if (!allowed.includes(paymentMethod))
         return fail(400, allowed.length ? `Coaches can pay by ${methodList(allowed)}. Please choose one of those.` : "Coaches can't book online right now. Please contact the front desk.");
-    } else if (paymentMethod === "cash")
-      return fail(400, "Cash payment is reserved for coaches (with their coach code). Please pay by GCash, QR Ph or bank transfer.");
+    } else if (paymentMethod === "cash") {
+      // Cash hours: everyone may pay cash for a same-day booking starting soon, like a walk-in.
+      const cash = activeCashHours(settings);
+      if (!cashAllowed(cash, date, startHour, startHour + hours, nowAtFacility()))
+        return fail(400, cash
+          ? `${cashHoursNote(cash, date, startHour, startHour + hours, nowAtFacility())} Please pay by GCash, QR Ph or bank transfer.`
+          : "Cash payment is reserved for coaches (with their coach code). Please pay by GCash, QR Ph or bank transfer.");
+    }
   }
   // A customer asking for a coaching session with a coach who's free then.
   const coachingId = rateType !== "coach" && typeof input.coachingCoachId === "string" && input.coachingCoachId ? input.coachingCoachId : null;
@@ -729,7 +745,7 @@ export async function createBooking(
       const paying =
         paymentStatus === "for_verification" ? `${paymentLabel(paymentMethod)} payment sent — please verify`
         : payAfter ? `Coach · pays after the session (${paymentLabel(paymentMethod)})`
-        : paymentMethod === "cash" ? "Coach · cash at the desk"
+        : paymentMethod === "cash" ? (rateType === "coach" ? "Coach · cash at the desk" : "Cash at the desk")
         : groupTotal > 0 ? `${paymentLabel(paymentMethod)} · paying within ${PAY_WINDOW_MINUTES} min` : "No charge";
       const extra = extraIds.length ? ` (+${extraIds.length} more court${extraIds.length > 1 ? "s" : ""})` : "";
       await notifyStaff([{

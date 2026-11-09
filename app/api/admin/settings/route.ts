@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
 import { db, getQrphImage, getSettings, settingsChanged } from "@/lib/db";
 import { readJson, serverError } from "@/lib/http";
+import { parseCashHours } from "@/lib/booking-policy";
 import {
   isPaymentMethod,
   MAX_EXTRA_GCASH,
@@ -216,6 +217,10 @@ export async function POST(req: NextRequest) {
       : current.coach_payment_methods.filter(isPaymentMethod);
     if (!coach_payment_methods.some((m) => payment_methods.includes(m)))
       return bad("Choose at least one way coaches can pay (under Payment methods).");
+    // Cash hours for everyone (only used while Cash is on). Older admin pages don't send them (keep them).
+    const cash_hours = b.cash_hours === undefined ? current.cash_hours : parseCashHours(b.cash_hours);
+    if (cash_hours === "invalid")
+      return bad("Choose cash hours that start before they end, and how long before the start cash can be chosen (30 minutes to 12 hours).");
     // Extra GCash accounts. Blank rows are dropped; older admin pages don't send them (keep them).
     let gcashMore = current.gcash_more;
     if (b.gcash_more !== undefined) {
@@ -251,7 +256,8 @@ export async function POST(req: NextRequest) {
          qrph_image = $15, payment_note = $16, membership_fee_student = $17, membership_fee_adult = $18,
          gcash_more = $19::jsonb, activities = $20::jsonb, activity_courts = $21::jsonb,
          reschedule_hours = $22, reschedule_max = $23, closed_weekdays = $24::int[],
-         weekly_closure_hours = $25::jsonb, coach_payment_methods = $26::text[], court_rates = $27::jsonb
+         weekly_closure_hours = $25::jsonb, coach_payment_methods = $26::text[], court_rates = $27::jsonb,
+         cash_hours = $28::jsonb
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -263,6 +269,7 @@ export async function POST(req: NextRequest) {
         JSON.stringify(activities), JSON.stringify(activity_courts), resHours, resMax, closedWeekdays, JSON.stringify(weeklyHours),
         `{${coach_payment_methods.join(",")}}`,
         JSON.stringify(court_rates),
+        cash_hours ? JSON.stringify(cash_hours) : null,
       ]
     );
     settingsChanged();

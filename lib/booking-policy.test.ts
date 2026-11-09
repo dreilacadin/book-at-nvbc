@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { awaitingPayment, bookingPhase, extendedPayBy, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified, coachSessionStage } from "./booking-policy.ts";
+import { activeCashHours, awaitingPayment, bookingPhase, cashAllowed, cashHoursNote, inCashHours, parseCashHours, extendedPayBy, minutesUntilStart, paymentDeadline, refundOnCancel, releaseAt, shouldRelease, startedUnverified, coachSessionStage } from "./booking-policy.ts";
 import { formatClock } from "./format.ts";
 
 test("minutesUntilStart across days and half hours", () => {
@@ -151,4 +151,48 @@ test("extendedPayBy: 15 more minutes, up to 10 minutes before the start", () => 
   // 30 seconds into the minute (the facility clock still says 10:00): capped at exactly 10:15:00.
   const later = nowMs + 30_000;
   assert.equal(extendedPayBy(payBy, "2026-10-01", 10 + 25 / 60, later, now), nowMs + 15 * 60_000);
+});
+
+test("cash hours: read, switched on with Cash, and the whole booking inside them", () => {
+  assert.deepEqual(parseCashHours({ from: 13, to: 17 }), { from: 13, to: 17, ahead: 1 }); // 1 hour unless set
+  assert.deepEqual(parseCashHours({ from: 13.5, to: 24, ahead: 2.5 }), { from: 13.5, to: 24, ahead: 2.5 });
+  assert.equal(parseCashHours(null), null);
+  assert.equal(parseCashHours(undefined), null);
+  for (const bad of [{ from: 17, to: 13 }, { from: 13, to: 13 }, { from: 13.25, to: 17 }, { from: -1, to: 5 }, { from: 13, to: 25 },
+    { from: "13", to: 17 }, { from: 13, to: 17, ahead: 0 }, { from: 13, to: 17, ahead: 13 }, { from: 13, to: 17, ahead: 0.75 }, "13-17", 5])
+    assert.equal(parseCashHours(bad), "invalid", JSON.stringify(bad));
+
+  const h = { from: 13, to: 17, ahead: 1 };
+  assert.deepEqual(activeCashHours({ payment_methods: ["cash", "gcash"], cash_hours: h }), h);
+  assert.equal(activeCashHours({ payment_methods: ["gcash"], cash_hours: h }), null); // Cash switched off
+  assert.equal(activeCashHours({ payment_methods: ["cash"], cash_hours: null }), null);
+
+  assert.equal(inCashHours(h, 13, 17), true);
+  assert.equal(inCashHours(h, 14.5, 15.5), true);
+  assert.equal(inCashHours(h, 12.5, 14), false); // starts before
+  assert.equal(inCashHours(h, 16, 18), false); // ends after
+  assert.equal(inCashHours(null, 14, 15), false);
+});
+
+test("cash hours are for walk-ins: same day, up to `ahead` hours before the start", () => {
+  const h = { from: 13, to: 17, ahead: 1 };
+  const day = "2026-11-10";
+  const at = (time: number) => ({ date: day, time });
+  assert.equal(cashAllowed(h, day, 13, 15, at(12.5)), true); // walks in at 12:30 for 1–3 PM
+  assert.equal(cashAllowed(h, day, 13, 15, at(12)), true); // exactly 1 hour before
+  assert.equal(cashAllowed(h, day, 13, 15, at(8)), false); // books from home at 8 AM: online only
+  assert.equal(cashAllowed(h, day, 15, 17, at(12.5)), false); // 2½ hours ahead
+  assert.equal(cashAllowed(h, day, 15, 17, at(14.5)), true); // already playing hours: 3 PM at 2:30
+  assert.equal(cashAllowed(h, day, 16, 18, at(15.5)), false); // runs past 5 PM
+  assert.equal(cashAllowed(h, "2026-11-11", 13, 14, { date: day, time: 23.5 }), false); // tomorrow
+  assert.equal(cashAllowed({ ...h, ahead: 3 }, day, 15, 17, at(12.5)), true); // staff allow 3 hours
+  assert.equal(cashAllowed(null, day, 13, 14, at(12.5)), false);
+
+  assert.equal(cashHoursNote(h, day, 13, 15, at(12.5)), null);
+  assert.equal(cashHoursNote(null, day, 19, 20, at(12.5)), null);
+  assert.equal(cashHoursNote(h, day, 13, 15, at(8)),
+    "Cash at the front desk is for same-day bookings from 1:00 PM to 5:00 PM, made up to 1 hour before the start. For this time, you can choose cash from 12:00 PM.");
+  assert.equal(cashHoursNote({ ...h, ahead: 0.5 }, day, 19, 20, at(8)),
+    "Cash at the front desk is for same-day bookings from 1:00 PM to 5:00 PM, made up to 30 minutes before the start.");
+  assert.match(cashHoursNote(h, "2026-11-11", 13, 14, at(8))!, /same-day/);
 });
