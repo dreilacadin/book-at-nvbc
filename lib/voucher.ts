@@ -8,30 +8,58 @@ export const VOUCHER_KINDS = [
   { id: "fixed", label: "Fixed discount", hint: "A set amount off the court fee of a booking (e.g. ₱200 off)." },
   { id: "percent", label: "Percentage discount", hint: "A percentage off the court fee of a booking, with an optional cap." },
   { id: "cash", label: "Cash voucher", hint: "A peso amount to spend on court fees. Unused balance stays on the voucher." },
+  {
+    id: "ondeck_session",
+    label: "Free On Deck session",
+    hint: "A free Pickleball Open Play or Badminton Queueing Session, used at NVBC On Deck (not for court bookings).",
+  },
 ] as const;
 export type VoucherKind = (typeof VOUCHER_KINDS)[number]["id"];
 export const isVoucherKind = (v: unknown): v is VoucherKind => VOUCHER_KINDS.some((k) => k.id === v);
 export const voucherKindLabel = (k: string) => VOUCHER_KINDS.find((x) => x.id === k)?.label ?? k;
 
-/** Set by staff: active, paused for now (e.g. while checking something), or void for good. */
-export type VoucherStatus = "active" | "paused" | "void";
-export const isVoucherStatus = (v: unknown): v is VoucherStatus => v === "active" || v === "paused" || v === "void";
+/**
+ * Set by staff: active, paused for now (e.g. while checking something), void for good (lost,
+ * replaced, made by mistake), or redeemed (used up outside the app, e.g. handed in at the desk).
+ */
+export type VoucherStatus = "active" | "paused" | "void" | "redeemed";
+export const isVoucherStatus = (v: unknown): v is VoucherStatus => v === "active" || v === "paused" || v === "void" || v === "redeemed";
 
-/** Kinds that carry a balance (hours or pesos left); the others count uses. */
-export const hasBalance = (k: VoucherKind) => k === "free_hours" || k === "cash";
+/** Kinds that carry a balance (hours, pesos or sessions left); the others count uses. */
+export const hasBalance = (k: VoucherKind) => k === "free_hours" || k === "cash" || k === "ondeck_session";
+
+// ---- NVBC On Deck --------------------------------------------------------------------------------
+
+/** NVBC On Deck, the sister app that runs open play and queueing: where On Deck vouchers are used. */
+export const ONDECK_HOST = "ondeck.nvbc.app";
+export const ONDECK_URL = `https://${ONDECK_HOST}`;
+
+/** What On Deck runs for each sport. A free-session voucher is for exactly one of them. */
+export const ONDECK_SESSIONS = [
+  { sport: "badminton", name: "Badminton Queueing" },
+  { sport: "pickleball", name: "Pickleball Open Play" },
+] as const;
+export type OnDeckSport = (typeof ONDECK_SESSIONS)[number]["sport"];
+export const isOnDeckSport = (s: unknown): s is OnDeckSport => ONDECK_SESSIONS.some((x) => x.sport === s);
+
+/** "Pickleball Open Play Session", "Badminton Queueing Sessions". */
+export function onDeckSessionName(sport: string | undefined, n = 1): string {
+  const name = ONDECK_SESSIONS.find((x) => x.sport === sport)?.name ?? "On Deck";
+  return `${name} ${n === 1 ? "Session" : "Sessions"}`;
+}
 
 export type Voucher = {
   code: string;
   kind: VoucherKind;
-  value: number; // hours (free_hours), pesos (fixed, cash) or percent (percent)
+  value: number; // hours (free_hours), pesos (fixed, cash), percent (percent) or sessions (ondeck_session)
   maxDiscount: number | null; // percent: at most this many pesos off per use
-  balance: number; // free_hours: hours left; cash: pesos left; others: unused
+  balance: number; // free_hours: hours left; cash: pesos left; ondeck_session: sessions left; others: unused
   maxUses: number; // bookings it can be used on (fixed / percent)
   uses: number; // bookings it's on now (cancelled ones give their use back)
   status: VoucherStatus;
   validFrom: string | null; // "YYYY-MM-DD": bookings from this day
   expiresOn: string | null; // bookings up to this day (null: no expiry)
-  sports: string[]; // empty: every sport and activity
+  sports: string[]; // empty: every sport and activity (ondeck_session: always exactly one On Deck sport)
   title: string; // e.g. "Opening promo" (optional)
   issuedTo: string; // who it was given to (optional; anyone with the code can use it)
   terms: string; // terms & conditions, with {placeholders} (see renderTerms)
@@ -79,27 +107,34 @@ const peso = (n: number) => "₱" + n.toLocaleString("en-PH", { minimumFractionD
 const hoursText = (h: number) => `${h % 1 ? h.toFixed(1) : h} hour${h === 1 ? "" : "s"}`;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** The headline: "2 free hours", "₱200 off", "20% off", "₱1,000". */
-export function voucherValueLabel(v: Pick<Voucher, "kind" | "value" | "maxDiscount">): string {
+/** "1 free Pickleball Open Play session", "2 free Badminton Queueing sessions". */
+const sessionsText = (n: number, sport: string | undefined) =>
+  `${n} free ${onDeckSessionName(sport, n).replace(/ Sessions?$/, "")} session${n === 1 ? "" : "s"}`;
+
+/** The headline: "2 hours free", "₱200 off", "20% off", "₱1,000", "1 free Pickleball Open Play session". */
+export function voucherValueLabel(v: Pick<Voucher, "kind" | "value" | "maxDiscount"> & { sports?: string[] }): string {
   if (v.kind === "free_hours") return `${hoursText(v.value)} free`;
   if (v.kind === "fixed") return `${peso(v.value)} off`;
   if (v.kind === "percent") return `${v.value}% off${v.maxDiscount ? ` (up to ${peso(v.maxDiscount)})` : ""}`;
+  if (v.kind === "ondeck_session") return sessionsText(v.value, v.sports?.[0]);
   return peso(v.value);
 }
 
-/** What's left: "1.5 of 3 hours left", "₱550 of ₱1,000 left", "2 of 5 uses left", "Not used yet". */
+/** What's left: "1.5 of 3 hours left", "₱550 of ₱1,000 left", "1 of 2 sessions left", "2 of 5 uses left", "Not used yet". */
 export function voucherLeftLabel(v: Pick<Voucher, "kind" | "value" | "balance" | "maxUses" | "uses">): string {
   if (v.kind === "free_hours") return `${hoursText(v.balance).replace(/ hours?$/, "")} of ${hoursText(v.value)} left`;
   if (v.kind === "cash") return `${peso(v.balance)} of ${peso(v.value)} left`;
+  if (v.kind === "ondeck_session") return `${v.balance} of ${v.value} session${v.value === 1 ? "" : "s"} left`;
   if (v.maxUses > 1) return `${Math.max(0, v.maxUses - v.uses)} of ${v.maxUses} uses left`;
   return v.uses >= 1 ? "Used" : "Not used yet";
 }
 
-export type VoucherState = "ready" | "paused" | "void" | "expired" | "used_up" | "not_yet";
+export type VoucherState = "ready" | "paused" | "void" | "redeemed" | "expired" | "used_up" | "not_yet";
 
 /** Where a voucher stands today. */
 export function voucherState(v: Pick<Voucher, "kind" | "balance" | "maxUses" | "uses" | "status" | "validFrom" | "expiresOn">, today: string): VoucherState {
   if (v.status === "void") return "void";
+  if (v.status === "redeemed") return "redeemed";
   if (v.expiresOn && v.expiresOn < today) return "expired";
   if (hasBalance(v.kind) ? v.balance <= 0 : v.uses >= v.maxUses) return "used_up";
   if (v.status === "paused") return "paused";
@@ -108,7 +143,17 @@ export function voucherState(v: Pick<Voucher, "kind" | "balance" | "maxUses" | "
 }
 
 export const voucherStateLabel = (s: VoucherState) =>
-  ({ ready: "Ready to use", paused: "Paused", void: "Void", expired: "Expired", used_up: "Used up", not_yet: "Not valid yet" })[s];
+  ({ ready: "Ready to use", paused: "Paused", void: "Void", redeemed: "Redeemed", expired: "Expired", used_up: "Used up", not_yet: "Not valid yet" })[s];
+
+/** Why a voucher in this state can't be used today, or null. */
+function stateProblem(v: Pick<Voucher, "expiresOn">, state: VoucherState): string | null {
+  if (state === "void") return "This voucher is no longer valid.";
+  if (state === "redeemed") return "This voucher has already been redeemed.";
+  if (state === "expired") return `This voucher expired on ${formatDateLong(v.expiresOn!)}.`;
+  if (state === "used_up") return "This voucher has been fully used.";
+  if (state === "paused") return "This voucher is paused for now. Please ask the front desk.";
+  return null;
+}
 
 /**
  * Why this voucher can't be used for a booking of `activity` on `date` (made `today`), or null if it
@@ -118,14 +163,31 @@ export function voucherProblem(
   v: Pick<Voucher, "kind" | "balance" | "maxUses" | "uses" | "status" | "validFrom" | "expiresOn" | "sports">,
   b: { today: string; date: string; activity: string }
 ): string | null {
-  const state = voucherState(v, b.today);
-  if (state === "void") return "This voucher is no longer valid.";
-  if (state === "expired") return `This voucher expired on ${formatDateLong(v.expiresOn!)}.`;
-  if (state === "used_up") return "This voucher has been fully used.";
-  if (state === "paused") return "This voucher is paused for now. Please ask the front desk.";
+  const problem = stateProblem(v, voucherState(v, b.today));
+  if (problem) return problem;
+  if (v.kind === "ondeck_session")
+    return `This voucher is for a free ${onDeckSessionName(v.sports[0])} at NVBC On Deck (${ONDECK_HOST}), not for court bookings.`;
   if (v.expiresOn && b.date > v.expiresOn) return `This voucher is for bookings on or before ${formatDateLong(v.expiresOn)}.`;
   if (v.validFrom && b.date < v.validFrom) return `This voucher is for bookings from ${formatDateLong(v.validFrom)}.`;
   if (v.sports.length && !v.sports.includes(b.activity)) return `This voucher is for ${v.sports.map(sportLabel).join(" or ")} only.`;
+  return null;
+}
+
+/**
+ * Why this voucher can't be used at NVBC On Deck for a session on `date` (`sport`, if On Deck says
+ * which), or null if it can. Court vouchers can't be used there.
+ */
+export function onDeckProblem(
+  v: Pick<Voucher, "kind" | "balance" | "maxUses" | "uses" | "status" | "validFrom" | "expiresOn" | "sports">,
+  s: { today: string; date: string; sport?: string | null }
+): string | null {
+  if (v.kind !== "ondeck_session")
+    return `This is a court voucher (${voucherKindLabel(v.kind).toLowerCase()}), not an On Deck voucher. It can be used when booking a court on NVBC Courts.`;
+  const problem = stateProblem(v, voucherState(v, s.today));
+  if (problem) return problem;
+  if (v.expiresOn && s.date > v.expiresOn) return `This voucher is for sessions on or before ${formatDateLong(v.expiresOn)}.`;
+  if (v.validFrom && s.date < v.validFrom) return `This voucher is for sessions from ${formatDateLong(v.validFrom)}.`;
+  if (s.sport && v.sports[0] !== s.sport) return `This voucher is for a ${onDeckSessionName(v.sports[0])} only.`;
   return null;
 }
 
@@ -142,7 +204,9 @@ export function splitDiscount(
   courts: VoucherCourt[]
 ): { shares: { amount: number; hours: number }[]; total: number; hours: number } {
   const shares: { amount: number; hours: number }[] = [];
-  if (v.kind === "free_hours") {
+  if (v.kind === "ondeck_session") {
+    shares.push(...courts.map(() => ({ amount: 0, hours: 0 }))); // used at On Deck, not on court bookings
+  } else if (v.kind === "free_hours") {
     let left = v.balance;
     for (const c of courts) {
       const h = Math.max(0, Math.min(left, c.hours));
@@ -178,6 +242,7 @@ export const TERMS_PLACEHOLDERS = [
   { key: "cap", hint: "percentage vouchers: “, up to ₱500 off each time” (or nothing)" },
   { key: "uses", hint: "how many times it can be used" },
   { key: "site", hint: "where to book online" },
+  { key: "ondeck", hint: `NVBC On Deck's address (${ONDECK_HOST})` },
 ] as const;
 
 const FIRST_LINE: Record<VoucherKind, string> = {
@@ -186,10 +251,21 @@ const FIRST_LINE: Record<VoucherKind, string> = {
   fixed: "Takes {value} the court fee of a booking for {sports}. If the fee is lower, the rest is forfeited. {uses}",
   percent: "Takes {value} the court fee of a booking for {sports}{cap}. {uses}",
   cash: "Worth {value} towards court fees at NV Badminton Center for {sports}. Any balance you don't use stays on this voucher for your next booking.",
+  ondeck_session: "Good for {value} at NVBC On Deck ({ondeck}).",
 };
 
 /** Default terms for a new voucher of this kind (staff can edit them). */
 export function defaultTerms(kind: VoucherKind): string {
+  if (kind === "ondeck_session")
+    return [
+      FIRST_LINE[kind],
+      "{validity}",
+      "Show this voucher, or its QR code, to the On Deck staff when you sign up for the session. Each visit uses one session; sessions you don't use stay on this voucher.",
+      "For {sports} at NVBC On Deck only — not for court bookings, coaching fees, rentals or other purchases.",
+      "Not exchangeable for cash.",
+      "Anyone with this code can use it, so keep it safe. Report a lost voucher to the front desk right away so it can be blocked.",
+      "NVBC may refuse or void vouchers that are altered, copied or misused.",
+    ].join("\n");
   return [
     FIRST_LINE[kind],
     "{validity}",
@@ -211,16 +287,21 @@ export function renderTerms(
     v.kind === "free_hours" ? hoursText(v.value)
     : v.kind === "fixed" ? `${peso(v.value)} off`
     : v.kind === "percent" ? `${v.value}% off`
+    : v.kind === "ondeck_session" ? sessionsText(v.value, v.sports[0])
     : peso(v.value);
   const cap = v.kind === "percent" && v.maxDiscount ? `, up to ${peso(v.maxDiscount)} off each time` : "";
+  const what = v.kind === "ondeck_session" ? "sessions" : "bookings";
   const validity =
-    v.validFrom && v.expiresOn ? `Valid for bookings from ${formatDateLong(v.validFrom)} to ${formatDateLong(v.expiresOn)}.`
-    : v.expiresOn ? `Valid for bookings on or before ${formatDateLong(v.expiresOn)}.`
-    : v.validFrom ? `Valid for bookings from ${formatDateLong(v.validFrom)}. No expiry date.`
+    v.validFrom && v.expiresOn ? `Valid for ${what} from ${formatDateLong(v.validFrom)} to ${formatDateLong(v.expiresOn)}.`
+    : v.expiresOn ? `Valid for ${what} on or before ${formatDateLong(v.expiresOn)}.`
+    : v.validFrom ? `Valid for ${what} from ${formatDateLong(v.validFrom)}. No expiry date.`
     : "No expiry date.";
-  const sports = v.sports.length ? v.sports.map((s) => sportLabel(s).toLowerCase()).join(" and ") : "any sport";
+  const sports =
+    v.kind === "ondeck_session" ? onDeckSessionName(v.sports[0]).replace(/ Session$/, "")
+    : v.sports.length ? v.sports.map((s) => sportLabel(s).toLowerCase()).join(" and ")
+    : "any sport";
   const uses = v.maxUses > 1 ? `Can be used on up to ${v.maxUses} bookings.` : "Can be used once.";
-  const fill: Record<string, string> = { value, cap, validity, sports, uses, site };
+  const fill: Record<string, string> = { value, cap, validity, sports, uses, site, ondeck: ONDECK_HOST };
   return v.terms
     .replace(/\{(\w+)\}/g, (m, k: string) => fill[k] ?? m)
     .split("\n")

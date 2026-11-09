@@ -5,6 +5,7 @@ import {
   defaultTerms,
   formatVoucherCode,
   normalizeVoucherCode,
+  onDeckProblem,
   renderTerms,
   splitDiscount,
   voucherLeftLabel,
@@ -94,4 +95,40 @@ test("terms: defaults fill in the value, dates, sports and uses", () => {
   assert.match(cash[0], /^Worth ₱1,000 towards court fees .* for any sport\./);
   assert.equal(cash[1], "No expiry date.");
   assert.match(renderTerms({ ...base, kind: "free_hours", value: 2, terms: defaultTerms("free_hours") }, "x")[0], /^Good for 2 hours of court time/);
+});
+
+const session: Voucher = { ...base, kind: "ondeck_session", value: 1, balance: 1, sports: ["pickleball"] };
+
+test("On Deck sessions: labels, and redeemed", () => {
+  assert.equal(voucherValueLabel(session), "1 free Pickleball Open Play session");
+  assert.equal(voucherValueLabel({ ...session, value: 2, sports: ["badminton"] }), "2 free Badminton Queueing sessions");
+  assert.equal(voucherLeftLabel({ ...session, value: 3, balance: 2 }), "2 of 3 sessions left");
+  assert.equal(voucherState({ ...session, balance: 0 }, today), "used_up");
+  // Redeemed (by staff) wins over expired and used up; void wins over redeemed.
+  assert.equal(voucherState({ ...base, status: "redeemed", balance: 0, expiresOn: "2026-11-01" }, today), "redeemed");
+  assert.equal(voucherState({ ...base, status: "void" }, today), "void");
+  assert.match(voucherProblem({ ...base, status: "redeemed" }, { today, date: today, activity: "badminton" })!, /already been redeemed/);
+});
+
+test("On Deck sessions: not for court bookings; court vouchers not for On Deck", () => {
+  const b = { today, date: "2026-11-20", activity: "pickleball" };
+  assert.match(voucherProblem(session, b)!, /free Pickleball Open Play Session at NVBC On Deck .*not for court bookings/);
+  assert.match(voucherProblem({ ...session, status: "void" }, b)!, /no longer valid/); // what's wrong with it comes first
+  assert.deepEqual(splitDiscount(session, [{ hours: 1, rate: 400, amount: 400 }]).shares, [{ amount: 0, hours: 0 }]);
+  const s = { today, date: today };
+  assert.equal(onDeckProblem(session, s), null);
+  assert.equal(onDeckProblem(session, { ...s, sport: "pickleball" }), null);
+  assert.match(onDeckProblem(session, { ...s, sport: "badminton" })!, /Pickleball Open Play Session only/);
+  assert.match(onDeckProblem(base, s)!, /court voucher \(cash voucher\)/);
+  assert.match(onDeckProblem({ ...session, balance: 0 }, s)!, /fully used/);
+  assert.match(onDeckProblem({ ...session, expiresOn: "2026-11-10" }, { ...s, date: "2026-11-11" })!, /sessions on or before/);
+  assert.match(onDeckProblem({ ...session, validFrom: "2026-11-05" }, s)!, /sessions from/);
+});
+
+test("On Deck sessions: default terms", () => {
+  const lines = renderTerms({ ...session, expiresOn: "2027-01-31", terms: defaultTerms("ondeck_session") }, "courts.nvbc.app");
+  assert.equal(lines[0], "Good for 1 free Pickleball Open Play session at NVBC On Deck (ondeck.nvbc.app).");
+  assert.equal(lines[1], "Valid for sessions on or before Sunday, January 31, 2027.");
+  assert.ok(lines.some((l) => l.startsWith("For Pickleball Open Play at NVBC On Deck only")));
+  assert.ok(!lines.join(" ").includes("{"));
 });

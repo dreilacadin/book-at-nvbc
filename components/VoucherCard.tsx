@@ -4,7 +4,7 @@ import { Plus_Jakarta_Sans } from "next/font/google";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { sportEmoji, sportLabel } from "@/lib/sports";
-import { renderTerms, voucherPath, voucherStateLabel, type Voucher, type VoucherState } from "@/lib/voucher";
+import { ONDECK_HOST, onDeckSessionName, renderTerms, voucherPath, voucherStateLabel, type Voucher, type VoucherState } from "@/lib/voucher";
 
 // The voucher as NVBC prints and shows it, in the "NVBC goes digital" style: navy with a faint grid,
 // a gold headline, the logo, a pill, and a white QR tile that opens the voucher page.
@@ -16,7 +16,9 @@ const shortDate = (d: string) =>
   new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
 /** The big gold headline and the line under it. */
-function headline(v: Pick<Voucher, "kind" | "value" | "maxDiscount">): { big: string; small: string; pill: string } {
+function headline(v: Pick<Voucher, "kind" | "value" | "maxDiscount" | "sports">): { big: string; small: string; pill: string } {
+  if (v.kind === "ondeck_session")
+    return { big: v.value === 1 ? "FREE" : `${v.value} FREE`, small: onDeckSessionName(v.sports[0], v.value), pill: "NVBC On Deck" };
   if (v.kind === "free_hours")
     return { big: `${v.value % 1 ? v.value.toFixed(1) : v.value} ${v.value === 1 ? "hour" : "hours"}`, small: "of free court time", pill: "Free court hours" };
   if (v.kind === "fixed") return { big: `${peso(v.value)} off`, small: "your court booking", pill: "Discount voucher" };
@@ -58,6 +60,7 @@ export default function VoucherCard({
   const h = headline(v);
   const stamp = state && state !== "ready" && state !== "not_yet" ? voucherStateLabel(state) : null;
   const sports = v.sports.length ? v.sports : null;
+  const ondeck = v.kind === "ondeck_session";
   return (
     <div className={`vcard ${jakarta.className}${print ? " print" : ""}`}>
       <div className="vcard-main">
@@ -98,10 +101,10 @@ export default function VoucherCard({
           {qr ? <img src={qr} alt={`QR code for voucher ${v.code}`} /> : <span aria-hidden="true" />}
         </div>
         <div className="vcard-code">{v.code}</div>
-        <small>📷 Scan to check &amp; book</small>
-        {site.host && <small className="vcard-site">{site.host}/voucher</small>}
+        <small>{ondeck ? "📷 Show at On Deck" : <>📷 Scan to check &amp; book</>}</small>
+        {ondeck ? <small className="vcard-site">{ONDECK_HOST}</small> : site.host && <small className="vcard-site">{site.host}/voucher</small>}
       </div>
-      {stamp && <div className="vcard-stamp" aria-label={`This voucher is ${stamp.toLowerCase()}`}>{stamp}</div>}
+      {stamp && <div className={`vcard-stamp${state === "redeemed" ? " redeemed" : ""}`} aria-label={`This voucher is ${stamp.toLowerCase()}`}>{stamp}</div>}
     </div>
   );
 }
