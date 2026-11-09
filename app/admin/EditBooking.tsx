@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { formatDuration, formatHour, halfHours } from "@/lib/format";
 import {
   formatPeso,
+  offPeakOn,
   PAYMENT_METHODS,
   planForCourt,
+  priceFor,
   RATE_TYPES,
-  rateFor,
   ratesForDate,
   type PaymentMethod,
   type RateType,
@@ -40,7 +41,7 @@ export default function EditBooking({
   const [hourlyRate, setHourlyRate] = useState<number | "">(booking.hourly_rate);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(booking.payment_method);
   const [paymentRef, setPaymentRef] = useState(booking.payment_ref);
-  const [prices, setPrices] = useState<Pick<Settings, "rate_plans" | "court_rates"> | null>(null);
+  const [prices, setPrices] = useState<Pick<Settings, "rate_plans" | "court_rates" | "off_peak"> | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -53,9 +54,13 @@ export default function EditBooking({
   const hours = end - start;
   // The booking's sport or activity on the chosen court (a shared court may have its own prices).
   const plan = prices && planForCourt(prices, booking.sport, courtId);
-  const currentRate = plan ? rateFor(ratesForDate(plan, date), rateType) : null; // switched-off rates fall back to regular
+  // Switched-off rates fall back to regular. With off-peak hours the rate is the average, and the
+  // server charges the exact total when this rate is used.
+  const current = plan && hours > 0 ? priceFor(ratesForDate(plan, date), rateType, offPeakOn(prices.off_peak, booking.sport, date), start, end) : null;
+  const currentRate = current ? current.hourlyRate : null;
+  const total = current && hourlyRate !== "" && Math.abs(current.hourlyRate - hourlyRate) < 0.005 ? current.total : hourlyRate === "" ? 0 : hourlyRate * hours;
   // A voucher on this court keeps taking its share off.
-  const amount = hours > 0 && hourlyRate !== "" ? Math.max(0, Math.round((hourlyRate * hours - booking.voucher_discount) * 100) / 100) : 0;
+  const amount = hours > 0 && hourlyRate !== "" ? Math.max(0, Math.round((total - booking.voucher_discount) * 100) / 100) : 0;
   const hourOptions = halfHours(0, 24);
 
   async function save(e: React.FormEvent) {
@@ -148,7 +153,7 @@ export default function EditBooking({
             onChange={(e) => setHourlyRate(e.target.value === "" ? "" : Number(e.target.value))} />
           {currentRate !== null && currentRate !== hourlyRate && (
             <button type="button" className="link-btn" onClick={() => setHourlyRate(currentRate)}>
-              Use current price ({formatPeso(currentRate)})
+              Use current price ({formatPeso(currentRate)}{current?.offPeakHours ? (current.offPeakHours < hours ? " avg., part off-peak" : " off-peak") : ""})
             </button>
           )}
         </div>

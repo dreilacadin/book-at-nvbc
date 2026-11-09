@@ -13,10 +13,12 @@ import {
   SLOT_HOURS,
 } from "@/lib/format";
 import {
-  computePrice,
   formatPeso,
+  offPeakHours,
   paymentLabel,
+  priceFor,
   rateFor,
+  type OffPeakDay,
   type SportRates,
   PAYMENT_METHODS,
   RATE_TYPES,
@@ -68,6 +70,7 @@ type Availability = {
     rateTypes: RateType[]; // just ["regular"] when the sport has one standard rate
     weekend: boolean; // this date uses the sport's weekend prices
     holiday: string | null; // an open holiday (priced like a weekend)
+    offPeak: OffPeakDay | null; // this sport's off-peak times on this date and their Regular price
     memberCodeRequired: boolean;
     coachCodeRequired: boolean;
   };
@@ -436,12 +439,22 @@ export default function BookingBoard() {
             <span><i className="swatch blocked coach-open" /> 🎓 Coaches only</span>
           )}
           <span><i className="swatch past" /> Past</span>
+          {data.pricing.offPeak && <span><i className="swatch offpeak" /> Off-peak</span>}
         </div>
       </div>
 
       {data.closed && <div className="holiday-banner closed">🎌 NVBC is closed on this day — {data.closed}.</div>}
       {data.pricing.holiday && (
         <div className="holiday-banner">🎉 {data.pricing.holiday} — holiday{data.pricing.weekend ? " (weekend) prices apply" : ""}.</div>
+      )}
+      {data.pricing.offPeak && !data.closed && (
+        <div className="holiday-banner offpeak">
+          🏷 Off-peak{" "}
+          {data.pricing.offPeak.ranges.map(([from, to]) => formatRange(from, to)).join(" and ")}:{" "}
+          {formatPeso(data.pricing.offPeak.price)}/hr
+          {data.pricing.rateTypes.length > 1 ? " at the Regular rate" : ""}
+          {data.pricing.offPeak.ranges.length === 1 ? " (marked on the times below)." : " (marked below)."}
+        </div>
       )}
       {loadError && <div className="error" style={{ marginBottom: 12 }}>{loadError}</div>}
       {courtNotes.length > 0 && (
@@ -467,7 +480,9 @@ export default function BookingBoard() {
             <tbody>
               {slots.map((h) => (
                 <tr key={h} className={h % 1 ? "half" : undefined}>
-                  <th className="time" scope="row"><Fit full={formatHour(h)} short={compactHour(h)} /></th>
+                  <th className={offPeakHours(data.pricing.offPeak, h, h + SLOT_HOURS) > 0 ? "time offpeak" : "time"} scope="row">
+                    <Fit full={formatHour(h)} short={compactHour(h)} />
+                  </th>
                   {data.courts.map((c) => {
                     const cell = cellAt(c.id, h);
                     if (cell === "covered") return null; // part of a merged cell above
@@ -702,9 +717,16 @@ function BookingDialog({
   const ratesOf = (id: number) => data.courts.find((c) => c.id === id)?.rates ?? p.rates;
   const rates = ratesOf(selection.courtId);
   const weekend = court?.rates ? court.weekend : p.weekend; // the chosen court's weekend prices apply
-  const courtPrices = [selection.courtId, ...extraIds].map((id) => ({
-    id, price: computePrice(rateFor(ratesOf(id), rateType), hours, ratesOf(id).regular),
-  }));
+  // Hours in this sport's off-peak times cost the off-peak price at the Regular rate.
+  const priceAt = (id: number, type: RateType) => priceFor(ratesOf(id), type, p.offPeak, selection.hour, selection.hour + hours);
+  const courtPrices = [selection.courtId, ...extraIds].map((id) => ({ id, price: priceAt(id, rateType) }));
+  // "₱400/hr", or "₱300–400/hr" when the time is partly off-peak.
+  const rateText = (id: number, type: RateType) => {
+    const pr = priceAt(id, type);
+    if (!pr.offPeakHours || pr.offPeakHours === hours || !p.offPeak) return `${formatPeso(pr.offPeakHours ? p.offPeak!.price : rateFor(ratesOf(id), type))}/hr`;
+    const [lo, hi] = [p.offPeak.price, ratesOf(id).regular].sort((a, b) => a - b);
+    return `${formatPeso(lo)}–${formatPeso(hi).slice(1)}/hr`;
+  };
   const price = courtPrices[0].price;
   const total = Math.round(courtPrices.reduce((sum, c) => sum + c.price.total, 0) * 100) / 100;
   const savings = Math.round(courtPrices.reduce((sum, c) => sum + c.price.savings, 0) * 100) / 100;
@@ -833,7 +855,7 @@ function BookingDialog({
   }
 
   const rateOptions = RATE_TYPES.filter((r) => p.rateTypes.includes(r.id) && (!coachOnly || r.id === "coach")).map((r) => ({
-    ...r, rate: rateFor(rates, r.id),
+    ...r, rate: rateText(selection.courtId, r.id),
   }));
 
   return (
@@ -954,8 +976,8 @@ function BookingDialog({
                       <input type="checkbox" checked={extraIds.includes(c.id)}
                         onChange={(e) => setExtra(e.target.checked ? [...extraIds, c.id] : extraIds.filter((x) => x !== c.id))} />
                       {c.name}
-                      {hasPrices && rateFor(ratesOf(c.id), rateType) !== price.hourlyRate && (
-                        <span className="hint"> ({formatPeso(rateFor(ratesOf(c.id), rateType))}/hr)</span>
+                      {hasPrices && priceAt(c.id, rateType).total !== price.total && (
+                        <span className="hint"> ({rateText(c.id, rateType)})</span>
                       )}
                     </label>
                   ))}
@@ -979,7 +1001,7 @@ function BookingDialog({
                       onClick={() => chooseRate(r.id)}
                     >
                       {r.label}
-                      {hasPrices && <small>{formatPeso(r.rate)}/hr</small>}
+                      {hasPrices && <small>{r.rate}</small>}
                     </button>
                   ))}
                 </div>
@@ -1146,7 +1168,27 @@ function BookingDialog({
                 ) : null}
 
                 <div className="price-box" aria-live="polite">
-                  {sameRate ? (
+                  {sameRate && price.offPeakHours > 0 ? (
+                    // Partly or all off-peak: each part at its own price.
+                    <>
+                      <div className="pay-row">
+                        <span>
+                          Off-peak rate {formatPeso(p.offPeak!.price)}/hr × {formatDuration(price.offPeakHours)}
+                          {courtCount > 1 && ` × ${courtCount} courts`}
+                        </span>
+                        <span>{formatPeso(Math.round(p.offPeak!.price * price.offPeakHours * courtCount * 100) / 100)}</span>
+                      </div>
+                      {price.offPeakHours < hours && (
+                        <div className="pay-row">
+                          <span>
+                            {weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(rates.regular)}/hr × {formatDuration(hours - price.offPeakHours)}
+                            {courtCount > 1 && ` × ${courtCount} courts`}
+                          </span>
+                          <span>{formatPeso(Math.round(rates.regular * (hours - price.offPeakHours) * courtCount * 100) / 100)}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : sameRate ? (
                     <div className="pay-row">
                       <span>
                         {weekend ? "Weekend " + rateName.toLowerCase() : rateName} rate {formatPeso(price.hourlyRate)}/hr × {formatDuration(hours)}
@@ -1158,7 +1200,10 @@ function BookingDialog({
                     courtPrices.map((c) => (
                       <div key={c.id} className="pay-row">
                         <span>
-                          {data.courts.find((x) => x.id === c.id)?.name} · {formatPeso(c.price.hourlyRate)}/hr × {formatDuration(hours)}
+                          {data.courts.find((x) => x.id === c.id)?.name} ·{" "}
+                          {c.price.offPeakHours > 0 && c.price.offPeakHours < hours
+                            ? `${formatPeso(p.offPeak!.price)}/hr × ${formatDuration(c.price.offPeakHours)} off-peak + ${formatPeso(ratesOf(c.id).regular)}/hr × ${formatDuration(hours - c.price.offPeakHours)}`
+                            : `${formatPeso(c.price.hourlyRate)}/hr × ${formatDuration(hours)}${c.price.offPeakHours ? " off-peak" : ""}`}
                         </span>
                         <span>{formatPeso(c.price.total)}</span>
                       </div>
@@ -1166,7 +1211,7 @@ function BookingDialog({
                   )}
                   {savings > 0 && (
                     <div className="pay-row" style={{ color: "var(--brand)", fontSize: 14 }}>
-                      <span>You save vs. regular{sameRate && ` (${formatPeso(price.regularRate)}/hr)`}</span>
+                      <span>You save vs. regular{sameRate && price.regularRate === rates.regular && ` (${formatPeso(price.regularRate)}/hr)`}</span>
                       <span>{formatPeso(savings)}</span>
                     </div>
                   )}

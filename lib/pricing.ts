@@ -173,6 +173,94 @@ export function computePrice(hourlyRate: number, hours: number, regularRate = ho
   return { hourlyRate, regularRate, hours, total, savings: Math.max(0, Math.round((regularTotal - total) * 100) / 100) };
 }
 
+/**
+ * Off-peak prices (Settings → Prices): times of the week when the Regular price is replaced by a
+ * sport's off-peak price, on every court for that sport (weekends and holidays included when their
+ * day is ticked). Member and Coach prices don't change.
+ * - periods: days (0 = Sunday … 6 = Saturday) and half-hour times, e.g. Mon–Fri 8:00–15:00.
+ * - prices: sport/activity → off-peak Regular price per hour (missing: no off-peak for it).
+ */
+export type OffPeakPeriod = { days: number[]; from: number; to: number };
+export type OffPeak = { periods: OffPeakPeriod[]; prices: Record<string, number> };
+export const MAX_OFF_PEAK_PERIODS = 8;
+
+/** Reads stored or submitted off-peak prices: null = off (no periods), "invalid" = a bad period or price. */
+export function parseOffPeak(v: unknown, isActivity: (id: string) => boolean = () => true): OffPeak | null | "invalid" {
+  if (v === null || v === undefined || v === false) return null;
+  if (typeof v !== "object") return "invalid";
+  const src = v as Record<string, unknown>;
+  const rawPeriods = Array.isArray(src.periods) ? src.periods : [];
+  if (rawPeriods.length > MAX_OFF_PEAK_PERIODS) return "invalid";
+  const periods: OffPeakPeriod[] = [];
+  for (const raw of rawPeriods as Record<string, unknown>[]) {
+    const from = Number(raw?.from);
+    const to = Number(raw?.to);
+    const days = Array.isArray(raw?.days)
+      ? [...new Set((raw.days as unknown[]).map(Number))].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort()
+      : [];
+    if (!days.length || !Number.isInteger(from * 2) || !Number.isInteger(to * 2) || from < 0 || to > 24 || to <= from) return "invalid";
+    periods.push({ days, from, to });
+  }
+  if (!periods.length) return null;
+  const prices: Record<string, number> = {};
+  for (const [id, raw] of Object.entries((src.prices && typeof src.prices === "object" ? src.prices : {}) as Record<string, unknown>)) {
+    if (raw === "" || raw === null || raw === undefined || !isActivity(id)) continue; // blank: no off-peak for it
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 100_000) return "invalid";
+    prices[id] = Math.round(n * 100) / 100;
+  }
+  return { periods, prices };
+}
+
+/** A sport's off-peak price and times on one date (overlapping periods merged), or null if none. */
+export type OffPeakDay = { price: number; ranges: [number, number][] };
+
+export function offPeakOn(op: OffPeak | null, activity: string, date: string): OffPeakDay | null {
+  const price = op?.prices[activity];
+  if (!op || price === undefined) return null;
+  const day = new Date(date + "T00:00:00Z").getUTCDay();
+  const ranges: [number, number][] = [];
+  for (const p of op.periods.filter((x) => x.days.includes(day)).sort((a, b) => a.from - b.from)) {
+    const last = ranges[ranges.length - 1];
+    if (last && p.from <= last[1]) last[1] = Math.max(last[1], p.to);
+    else ranges.push([p.from, p.to]);
+  }
+  return ranges.length ? { price, ranges } : null;
+}
+
+/** Hours of start–end that fall in off-peak times. */
+export function offPeakHours(o: OffPeakDay | null, start: number, end: number): number {
+  return (o?.ranges ?? []).reduce((sum, [from, to]) => sum + Math.max(0, Math.min(end, to) - Math.max(start, from)), 0);
+}
+
+/**
+ * A booking's price from start to end. At the Regular rate, hours in off-peak times cost the
+ * off-peak price and the rest the usual price; `hourlyRate` is then the average. Member and Coach
+ * rates are the same at every hour (savings are against the Regular price, off-peak included).
+ */
+export function priceFor(
+  rates: SportRates,
+  rateType: RateType,
+  offPeak: OffPeakDay | null,
+  start: number,
+  end: number
+): Price & { offPeakHours: number } {
+  const hours = end - start;
+  const off = offPeakHours(offPeak, start, end);
+  if (!off || !offPeak || hours <= 0) return { ...computePrice(rateFor(rates, rateType), hours, rates.regular), offPeakHours: 0 };
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const regularTotal = round(off * offPeak.price + (hours - off) * rates.regular);
+  const total = rateType === "regular" ? regularTotal : round(rateFor(rates, rateType) * hours);
+  return {
+    hourlyRate: rateType === "regular" ? round(total / hours) : rateFor(rates, rateType),
+    regularRate: round(regularTotal / hours),
+    hours,
+    total,
+    savings: Math.max(0, round(regularTotal - total)),
+    offPeakHours: rateType === "regular" ? off : 0,
+  };
+}
+
 export function formatPeso(n: number): string {
   return "₱" + n.toLocaleString("en-PH", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
 }

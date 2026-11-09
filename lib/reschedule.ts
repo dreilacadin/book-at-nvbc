@@ -5,7 +5,7 @@ import { CUSTOMER, logBooking } from "./booking-history";
 import { activeCashHours, awaitingPayment, cashAllowed, cashHoursNote, inCashHours, minutesUntilStart, RELEASE_MINUTES, type CashHours } from "./booking-policy";
 import { formatDateLong, formatHour, formatRange, halfHours, publicName, SLOT_HOURS } from "./format";
 import { notifyStaff } from "./notify";
-import { computePrice, planForCourt, rateFor, ratesForDate, type RateType } from "./pricing";
+import { offPeakOn, planForCourt, priceFor, ratesForDate, type RateType } from "./pricing";
 import { courtAllowed, sportEmoji, sportLabel } from "./sports";
 import { addDays, daysBetween, isValidDate, nowAtFacility } from "./time";
 import { holidayOn } from "./holidays";
@@ -108,15 +108,13 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
     ),
     blocksOn(date),
   ]);
-  // Only courts where it costs the same that day (a shared court may have its own prices).
-  const samePriced = courts.rows.filter(
-    (c) => courtAllowed(b.activity, c, settings.activity_courts) && samePrice(b, settings, date, holiday?.kind === "holiday", c.id)
-  );
-  if (!samePriced.length)
-    return { ok: true as const, data: { ...base, options: [], note: "Prices are different on this day, so your booking can't be moved to it online." } };
+  if (b.voucher_expires && date > b.voucher_expires)
+    return { ok: true as const, data: { ...base, options: [], note: `Your voucher is valid until ${formatDateLong(b.voucher_expires)}, so the booking can't move past that day online.` } };
+  const allowed = courts.rows.filter((c) => courtAllowed(b.activity, c, settings.activity_courts));
   const busy = new Set(taken.rows.map((t) => `${t.court_id}:${t.slot_hour}`));
   const options: MoveOption[] = [];
-  for (const c of samePriced) {
+  let pricedOut = false; // a free time was left out only because it costs differently (e.g. off-peak)
+  for (const c of allowed) {
     for (const start of halfHours(settings.open_hour, settings.close_hour - hours)) {
       if (date === b.date && start === b.start_hour && c.id === b.court_id) continue; // where it is now
       if (minutesUntilStart(date, start, today) <= RELEASE_MINUTES) continue;
@@ -124,18 +122,31 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
       if (findBlockConflict(blocks, c.id, date, start, start + hours)) continue;
       if (overlapsClosure(closedTimes, start, start + hours)) continue; // closed for part of the day
       if (cash && !cashAllowed(cash, date, start, start + hours, today)) continue; // paying cash: as if booked with cash now
+      // Only where it costs the same (a shared court may have its own prices; off-peak hours cost less).
+      if (!samePrice(b, settings, date, holiday?.kind === "holiday", c.id, start)) {
+        pricedOut = true;
+        continue;
+      }
       options.push({ courtId: c.id, courtName: c.name, start });
     }
   }
   options.sort((x, y) => x.start - y.start || Number(y.courtId === b.court_id) - Number(x.courtId === b.court_id));
-  return { ok: true as const, data: { ...base, options } };
+  const note = pricedOut
+    ? options.length
+      ? "Some free times cost a different amount (e.g. off-peak hours), so they aren't listed."
+      : "The free times on this day cost a different amount, so your booking can't be moved to them online."
+    : undefined;
+  return { ok: true as const, data: { ...base, options, ...(note ? { note } : {}) } };
 }
 
-function samePrice(b: Current, settings: Awaited<ReturnType<typeof getSettings>>, date: string, holiday: boolean, courtId: number): boolean {
+function samePrice(
+  b: Current, settings: Awaited<ReturnType<typeof getSettings>>, date: string, holiday: boolean, courtId: number, start: number
+): boolean {
   const plan = planForCourt(settings, b.activity, courtId);
   if (!plan) return false;
   const rates = ratesForDate(plan, date, holiday);
-  const total = computePrice(rateFor(rates, b.rate_type), b.end_hour - b.start_hour, rates.regular).total;
+  const offPeak = offPeakOn(settings.off_peak, b.activity, date);
+  const total = priceFor(rates, b.rate_type, offPeak, start, start + (b.end_hour - b.start_hour)).total;
   // A voucher's share stays the same: compare the price before it. Not past the voucher's expiry.
   if (b.voucher_expires && date > b.voucher_expires) return false;
   return Math.abs(total - (b.amount + b.voucher_discount)) < 0.01;
@@ -179,9 +190,9 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
       await client.query("ROLLBACK");
       return fail(400, `That court can't be booked for ${sportLabel(b.activity)}.`);
     }
-    if (!samePrice(b, settings, date, holiday?.kind === "holiday", courtId)) {
+    if (!samePrice(b, settings, date, holiday?.kind === "holiday", courtId, start)) {
       await client.query("ROLLBACK");
-      return fail(400, "That court or day has different prices, so the booking can't be moved there online.");
+      return fail(400, "That court or time costs a different amount, so the booking can't be moved there online.");
     }
     if (findBlockConflict(await blocksOn(date), courtId, date, start, start + hours)) {
       await client.query("ROLLBACK");

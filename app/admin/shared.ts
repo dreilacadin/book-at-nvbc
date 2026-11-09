@@ -1,6 +1,6 @@
 // Types and helpers shared by the admin page and its parts.
 import type { BookingVoucherInfo } from "@/lib/voucher";
-import type { BookingStatus, CourtRates, GcashAccount, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
+import type { BookingStatus, CourtRates, GcashAccount, OffPeak, PaymentMethod, PaymentStatus, RateType, SportPricing } from "@/lib/pricing";
 import type { Sport } from "@/lib/sports";
 
 export type AdminBooking = {
@@ -118,6 +118,7 @@ export type Settings = {
   booking_window_days: number;
   announcement: string;
   rate_plans: Record<string, SportPricing>;
+  off_peak: OffPeak | null; // times when each sport's Regular price is lower (null = off)
   member_code: string;
   coach_code: string;
   payment_methods: PaymentMethod[];

@@ -6,6 +6,8 @@ import { parseCashHours } from "@/lib/booking-policy";
 import {
   isPaymentMethod,
   MAX_EXTRA_GCASH,
+  MAX_OFF_PEAK_PERIODS,
+  parseOffPeak,
   rateTypeLabel,
   type CourtRates,
   type RateType,
@@ -203,6 +205,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Off-peak prices: periods of the week and each sport's off-peak Regular price (blank = none).
+    // Older admin pages don't send them: keep what's saved.
+    const known = new Set([...SPORTS.map((x) => x.id as string), ...activities.map((a) => a.id)]);
+    const off_peak = b.off_peak === undefined ? existing.off_peak : parseOffPeak(b.off_peak, (id) => known.has(id));
+    if (off_peak === "invalid")
+      return bad(`Off-peak prices: give each period at least one day and a start before its end (up to ${MAX_OFF_PEAK_PERIODS} periods), and enter valid prices.`);
+
     // Payment methods
     const methods = Array.isArray(b.payment_methods) ? b.payment_methods.filter(isPaymentMethod) : [];
     const payment_methods = [...new Set(methods)];
@@ -257,7 +266,7 @@ export async function POST(req: NextRequest) {
          gcash_more = $19::jsonb, activities = $20::jsonb, activity_courts = $21::jsonb,
          reschedule_hours = $22, reschedule_max = $23, closed_weekdays = $24::int[],
          weekly_closure_hours = $25::jsonb, coach_payment_methods = $26::text[], court_rates = $27::jsonb,
-         cash_hours = $28::jsonb
+         cash_hours = $28::jsonb, off_peak = $29::jsonb
        WHERE id = 1`,
       [
         s.open_hour, s.close_hour, s.max_hours_per_booking, s.max_hours_per_day, s.booking_window_days, s.announcement,
@@ -270,6 +279,7 @@ export async function POST(req: NextRequest) {
         `{${coach_payment_methods.join(",")}}`,
         JSON.stringify(court_rates),
         cash_hours ? JSON.stringify(cash_hours) : null,
+        off_peak ? JSON.stringify(off_peak) : null,
       ]
     );
     settingsChanged();
