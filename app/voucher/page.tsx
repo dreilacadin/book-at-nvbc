@@ -5,7 +5,16 @@ import { useCallback, useEffect, useState } from "react";
 import VoucherCard, { VoucherTerms } from "@/components/VoucherCard";
 import { formatDateLong } from "@/lib/format";
 import { saveVoucher } from "@/lib/saved-voucher";
-import { normalizeVoucherCode, voucherLeftLabel, voucherPath, type Voucher, type VoucherState } from "@/lib/voucher";
+import {
+  normalizeVoucherCode,
+  ONDECK_HOST,
+  ONDECK_URL,
+  onDeckSessionName,
+  voucherLeftLabel,
+  voucherPath,
+  type Voucher,
+  type VoucherState,
+} from "@/lib/voucher";
 
 type PublicVoucher = Omit<Voucher, "issuedTo"> & { state: VoucherState };
 
@@ -46,11 +55,17 @@ export default function VoucherPage() {
   const usable = voucher && (voucher.state === "ready" || voucher.state === "not_yet");
   const banner: Record<VoucherState, { tone: string; text: string }> | null = voucher && {
     ready: { tone: "success", text: `✓ Ready to use · ${voucherLeftLabel(voucher)}` },
-    not_yet: { tone: "notice", text: `Valid for bookings from ${voucher.validFrom ? formatDateLong(voucher.validFrom) : "a later date"} · you can book now for then.` },
+    not_yet: {
+      tone: "notice",
+      text: voucher.kind === "ondeck_session"
+        ? `Valid for sessions from ${voucher.validFrom ? formatDateLong(voucher.validFrom) : "a later date"}.`
+        : `Valid for bookings from ${voucher.validFrom ? formatDateLong(voucher.validFrom) : "a later date"} · you can book now for then.`,
+    },
     paused: { tone: "notice", text: "This voucher is paused for now. Please ask the front desk." },
     used_up: { tone: "notice", text: "This voucher has been fully used." },
     expired: { tone: "error", text: `This voucher expired on ${voucher.expiresOn ? formatDateLong(voucher.expiresOn) : "an earlier date"}.` },
     void: { tone: "error", text: "This voucher is no longer valid. If you think that's a mistake, please contact the front desk." },
+    redeemed: { tone: "notice", text: "This voucher has been redeemed." },
   };
 
   return (
@@ -66,7 +81,20 @@ export default function VoucherPage() {
         <>
           <VoucherCard v={voucher} state={voucher.state} />
           <div className={banner[voucher.state].tone}>{banner[voucher.state].text}</div>
-          {usable && (
+          {usable && voucher.kind === "ondeck_session" && (
+            <div className="card stack">
+              <strong>How to use it</strong>
+              <p style={{ margin: 0 }}>
+                This voucher is for a free <strong>{onDeckSessionName(voucher.sports[0])}</strong> at NVBC On Deck. Show it, or this
+                page, to the On Deck staff when you sign up for the session — they&apos;ll scan or type the code. It can&apos;t be used
+                to book a court.
+              </p>
+              <div className="actions" style={{ margin: 0 }}>
+                <a href={ONDECK_URL} className="btn" target="_blank" rel="noopener">Open NVBC On Deck ({ONDECK_HOST})</a>
+              </div>
+            </div>
+          )}
+          {usable && voucher.kind !== "ondeck_session" && (
             <div className="card stack">
               <strong>How to use it</strong>
               <p style={{ margin: 0 }}>

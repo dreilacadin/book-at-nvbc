@@ -24,6 +24,25 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Free On Deck session vouchers.** NVBC can now give vouchers for a free
+  **Pickleball Open Play** or **Badminton Queueing** session at NVBC On Deck
+  (ondeck.nvbc.app). Show the voucher or its QR code to the On Deck staff when
+  you sign up. Scanning it shows the voucher's page here, with how many sessions
+  are left. These vouchers are for On Deck sessions only, not court bookings.
+- **Staff:** **Free On Deck session** is a new kind under Vouchers → Create:
+  choose Pickleball Open Play or Badminton Queueing, and how many sessions it's
+  worth. On Deck checks and uses them directly, and each use shows on the
+  voucher's page under Used on. If a use is undone at On Deck, the session goes
+  back on the voucher.
+- **Staff:** **✓ Mark redeemed** on a voucher's page, for one that was used up
+  outside the app, for example handed in at the desk. It stops working and shows
+  REDEEMED instead of VOID. Any balance left is used up and listed under Used
+  on. **↩ Undo redeemed** gives it back. Vouchers has a new **Redeemed** filter.
+- **Database:** vouchers: the `ondeck_session` kind and the `redeemed` status.
+  voucher_uses: where each use happened (`source`, `sessions`, `ref`, `details`).
+- **Internal:** `/api/ondeck/vouchers` lets NVBC On Deck check vouchers,
+  redeem sessions and undo redemptions. It needs `ONDECK_API_KEY`; see
+  `docs/ondeck-vouchers.md`.
 - **Off-peak prices.** At NVBC's quieter times, the Regular price can be lower.
   Off-peak times are marked with a yellow bar on the booking grid, with the price
   above it. A booking that runs past off-peak is charged off-peak for those hours

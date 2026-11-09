@@ -10,6 +10,9 @@ import {
   defaultTerms,
   hasBalance,
   normalizeVoucherCode,
+  ONDECK_HOST,
+  ONDECK_SESSIONS,
+  onDeckSessionName,
   TERMS_PLACEHOLDERS,
   VOUCHER_KINDS,
   voucherKindLabel,
@@ -31,6 +34,7 @@ import { api, todayManila } from "./shared";
 
 const STATE_BADGE: Record<VoucherState, string> = {
   ready: "badge", not_yet: "badge pending", paused: "badge pending", used_up: "badge grey", expired: "badge grey", void: "badge grey",
+  redeemed: "badge grey",
 };
 const printUrl = (ids: string[]) => `/admin/vouchers/print?ids=${ids.join(",")}`;
 const openPrint = (ids: string[]) => window.open(printUrl(ids), "_blank", "noopener");
@@ -39,16 +43,16 @@ const dateOrNone = (d: string | null) => (d ? formatDateLong(d) : "No expiry");
 /** Deletes vouchers after a confirm; a message for staff, or null if they cancelled. */
 async function deleteVouchers(vouchers: { id: string; code: string }[]): Promise<{ ok: boolean; text: string; deleted: number } | null> {
   const what = vouchers.length === 1 ? vouchers[0].code : `${vouchers.length} vouchers`;
-  if (!window.confirm(`Delete ${what} for good? Printed copies stop working, and this can't be undone. (A voucher still on a booking is kept — void it instead.)`))
+  if (!window.confirm(`Delete ${what} for good? Printed copies stop working, and this can't be undone. (A voucher that's been used is kept — void it or mark it redeemed instead.)`))
     return null;
   try {
-    const r = await api<{ deleted: string[]; kept: { code: string; bookings: number }[] }>("/api/admin/vouchers", { action: "delete", ids: vouchers.map((v) => v.id) });
-    const kept = r.kept.map((k) => `${k.code} (on ${k.bookings} booking${k.bookings === 1 ? "" : "s"})`).join(", ");
+    const r = await api<{ deleted: string[]; kept: { code: string; used: number }[] }>("/api/admin/vouchers", { action: "delete", ids: vouchers.map((v) => v.id) });
+    const kept = r.kept.map((k) => `${k.code} (used ${k.used === 1 ? "once" : `${k.used} times`})`).join(", ");
     return {
       ok: r.kept.length === 0,
       deleted: r.deleted.length,
       text: [r.deleted.length ? `Deleted ${r.deleted.length === 1 ? r.deleted[0] : `${r.deleted.length} vouchers`}.` : "",
-        kept ? `Kept ${kept} — a voucher on a booking can't be deleted; void it instead.` : ""].filter(Boolean).join(" "),
+        kept ? `Kept ${kept} — a voucher that's been used can't be deleted; void it or mark it redeemed instead.` : ""].filter(Boolean).join(" "),
     };
   } catch (e) {
     return { ok: false, deleted: 0, text: e instanceof Error ? e.message : "Couldn't delete." };
@@ -163,7 +167,7 @@ function VoucherList({
         />
       )}
       <div className="segmented voucher-filter" role="radiogroup" aria-label="Show">
-        {(["all", "ready", "used_up", "expired", "paused", "void"] as const).map((f) => (
+        {(["all", "ready", "used_up", "redeemed", "expired", "paused", "void"] as const).map((f) => (
           <button key={f} type="button" role="radio" aria-checked={filter === f} onClick={() => setFilter(f)}>
             {f === "all" ? "All" : voucherStateLabel(f)}
             <small>{f === "all" ? vouchers?.length ?? 0 : counts[f] ?? 0}</small>
@@ -327,12 +331,14 @@ function CreateVouchers({
 
   const chooseKind = (k: VoucherKind) => {
     setKind(k);
-    setValue({ free_hours: "1", fixed: "200", percent: "20", cash: "1000" }[k]);
+    setValue({ free_hours: "1", fixed: "200", percent: "20", cash: "1000", ondeck_session: "1" }[k]);
     // Default terms follow the kind (unless staff already changed them); cash vouchers don't expire.
+    // An On Deck voucher is for one sport (Pickleball Open Play to start with).
     setF((x) => ({
       ...x,
       terms: x.terms === defaultTerms(kind) ? defaultTerms(k) : x.terms,
       expiresOn: k === "cash" ? "" : x.expiresOn || addDays(today, 90),
+      sports: k === "ondeck_session" ? ["pickleball"] : kind === "ondeck_session" ? [] : x.sports,
     }));
   };
   const n = Number(value) || 0;
@@ -377,10 +383,12 @@ function CreateVouchers({
         <div className="row field" style={{ marginTop: 12 }}>
           <div>
             <label htmlFor="v-value">
-              {kind === "free_hours" ? "Free court hours" : kind === "percent" ? "Percent off" : kind === "fixed" ? "Pesos off (₱)" : "Value (₱)"}
+              {kind === "free_hours" ? "Free court hours" : kind === "percent" ? "Percent off" : kind === "fixed" ? "Pesos off (₱)"
+                : kind === "ondeck_session" ? "Free sessions" : "Value (₱)"}
             </label>
-            <input id="v-value" type="number" required min={kind === "free_hours" ? 0.5 : 1} step={kind === "free_hours" ? 0.5 : kind === "percent" ? 1 : 0.01}
-              max={kind === "free_hours" ? 100 : kind === "percent" ? 100 : 100000} value={value} onChange={(e) => setValue(e.target.value)} />
+            <input id="v-value" type="number" required min={kind === "free_hours" ? 0.5 : 1}
+              step={kind === "free_hours" ? 0.5 : kind === "percent" || kind === "ondeck_session" ? 1 : 0.01}
+              max={kind === "free_hours" ? 100 : kind === "percent" ? 100 : kind === "ondeck_session" ? 50 : 100000} value={value} onChange={(e) => setValue(e.target.value)} />
           </div>
           {kind === "percent" && (
             <div>
@@ -404,6 +412,7 @@ function CreateVouchers({
           {kind === "fixed" && "Taken off the court fee of each booking it's used on; if the fee is lower, the rest is forfeited."}
           {kind === "percent" && "Off the court fee of each booking it's used on (all courts of a group booking)."}
           {kind === "cash" && "Spent on court fees like a gift card; the balance carries over. Cash vouchers that people pay for shouldn't expire (see below)."}
+          {kind === "ondeck_session" && `Used at NVBC On Deck (${ONDECK_HOST}): its staff scan or type the code when the player joins, and each visit uses one session. It can't be used on court bookings here.`}
           {qty > 1 && ` ${qty} vouchers will be made, each with its own code and QR, all with these settings.`}
         </p>
       </fieldset>
@@ -449,16 +458,37 @@ function VoucherFields({
           </div>
         </div>
         <p className="hint" style={{ margin: "0 0 8px" }}>
-          The booking&apos;s date must be within these dates (it can be booked any time before).
+          {kind === "ondeck_session"
+            ? "The session's date must be within these dates."
+            : "The booking's date must be within these dates (it can be booked any time before)."}
           {kind === "cash" && f.expiresOn && (
             <> <strong>Heads-up:</strong> if this cash voucher is sold or given in exchange for money, the Gift Check Act (RA 10962)
             doesn&apos;t allow an expiry date on it. Leave it blank unless it&apos;s a free promo.</>
           )}
         </p>
-        <div className="field">
-          <label>For <span className="hint">— all ticked: any sport or activity, including ones added later</span></label>
-          <SportsPicker value={f.sports} onChange={(v) => set("sports", v)} />
-        </div>
+        {kind === "ondeck_session" && !isNew ? (
+          <p style={{ margin: 0 }}>
+            <strong>For</strong> {sportEmoji(f.sports[0])} {onDeckSessionName(f.sports[0])} at NVBC On Deck{" "}
+            <span className="hint">— printed on the voucher, so it can&apos;t be changed</span>
+          </p>
+        ) : kind === "ondeck_session" ? (
+          <div className="field">
+            <label>For</label>
+            <div className="court-checks" role="radiogroup" aria-label="What it's for">
+              {ONDECK_SESSIONS.map((o) => (
+                <label key={o.sport}>
+                  <input type="radio" name="v-ondeck-sport" checked={f.sports[0] === o.sport} onChange={() => set("sports", [o.sport])} />
+                  {sportEmoji(o.sport)} {onDeckSessionName(o.sport)}
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="field">
+            <label>For <span className="hint">— all ticked: any sport or activity, including ones added later</span></label>
+            <SportsPicker value={f.sports} onChange={(v) => set("sports", v)} />
+          </div>
+        )}
       </fieldset>
       <fieldset>
         <legend>Details</legend>
@@ -483,6 +513,13 @@ function VoucherFields({
 }
 
 // ---- One voucher's page -------------------------------------------------------------------------
+
+/** What a use took off the voucher: "₱150", "₱400 (2 h)", "1 session". */
+function useTook(u: VoucherUse): string {
+  if (u.sessions) return `${u.sessions} session${u.sessions === 1 ? "" : "s"}`;
+  if (u.hours) return u.amount ? `${formatPeso(u.amount)} (${u.hours} h)` : `${u.hours} h`;
+  return formatPeso(u.amount);
+}
 
 function VoucherPage({
   id, onAuthError, onBack, onOpenBooking,
@@ -553,7 +590,17 @@ function VoucherPage({
       if (reason === null) return;
       return run({ action: "status", status, reason }, "Voucher voided.");
     }
-    run({ action: "status", status }, status === "paused" ? "Voucher paused — it can't be used until it's activated again." : "Voucher activated.");
+    if (status === "redeemed") {
+      const left = hasBalance(v.kind) && v.balance > 0 ? ` What's left (${voucherLeftLabel(v).replace(/ of .*/, "")}) is used up.` : "";
+      const reason = window.prompt(
+        `Mark ${v.code} as redeemed? It stops working, and the card shows REDEEMED.${left} How was it redeemed? (e.g. "Used at the desk for a walk-in, OR 1234")`
+      );
+      if (reason === null) return;
+      return run({ action: "status", status, reason }, "Voucher marked redeemed.");
+    }
+    if (v.status === "redeemed" && !window.confirm(`Undo redeemed on ${v.code}? It works again, with what it had left given back.`)) return;
+    run({ action: "status", status }, status === "paused" ? "Voucher paused — it can't be used until it's activated again."
+      : v.status === "redeemed" ? "Redeemed undone — the voucher works again." : "Voucher activated.");
   };
   const balanceChanged = hasBalance(v.kind) && balance !== "" && Number(balance) !== v.balance;
 
@@ -565,7 +612,7 @@ function VoucherPage({
         <span className={STATE_BADGE[v.state]}>{voucherStateLabel(v.state)}</span>
         <strong>{voucherLeftLabel(v)}</strong>
         <span className="muted">
-          {voucherKindLabel(v.kind)} · {formatPeso(v.given)} taken off bookings so far · created by {v.createdBy || "staff"}{" "}
+          {voucherKindLabel(v.kind)}{v.kind === "ondeck_session" ? "" : ` · ${formatPeso(v.given)} used so far`} · created by {v.createdBy || "staff"}{" "}
           {new Date(v.createdAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium" })}{v.batch ? ` · batch ${v.batch}` : ""}
         </span>
       </div>
@@ -574,9 +621,13 @@ function VoucherPage({
         <button type="button" className="btn secondary" onClick={async () => {
           try { await navigator.clipboard.writeText(link); setCopied(true); } catch { window.prompt("Copy the voucher's link:", link); }
         }}>{copied ? "✓ Link copied" : "🔗 Copy link"}</button>
-        {manage && v.status !== "active" && <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("active")}>▶ Activate</button>}
+        {manage && v.status === "redeemed" && <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("active")}>↩ Undo redeemed</button>}
+        {manage && (v.status === "paused" || v.status === "void") && <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("active")}>▶ Activate</button>}
         {manage && v.status === "active" && <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("paused")}>⏸ Pause</button>}
-        {manage && v.status !== "void" && <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setStatus("void")}>⊘ Void</button>}
+        {manage && (v.status === "active" || v.status === "paused") && (
+          <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("redeemed")}>✓ Mark redeemed</button>
+        )}
+        {manage && (v.status === "active" || v.status === "paused") && <button type="button" className="btn secondary danger-text" disabled={busy} onClick={() => setStatus("void")}>⊘ Void</button>}
         {manage && (
           <button type="button" className="btn secondary danger-text" disabled={busy} onClick={async () => {
             const r = await deleteVouchers([v]);
@@ -604,8 +655,9 @@ function VoucherPage({
               {hasBalance(v.kind) ? (
                 <div className="row field">
                   <div>
-                    <label htmlFor="v-bal">{v.kind === "free_hours" ? "Hours left" : "Pesos left (₱)"}</label>
-                    <input id="v-bal" type="number" min={0} step={v.kind === "free_hours" ? 0.5 : 0.01} value={balance} onChange={(e) => setBalance(e.target.value)} />
+                    <label htmlFor="v-bal">{v.kind === "free_hours" ? "Hours left" : v.kind === "ondeck_session" ? "Sessions left" : "Pesos left (₱)"}</label>
+                    <input id="v-bal" type="number" min={0} step={v.kind === "free_hours" ? 0.5 : v.kind === "ondeck_session" ? 1 : 0.01}
+                      value={balance} onChange={(e) => setBalance(e.target.value)} />
                   </div>
                   {balanceChanged && (
                     <div>
@@ -653,22 +705,30 @@ function VoucherPage({
       <section className="stack">
         <h3 style={{ margin: 0 }}>Used on</h3>
         {data.uses.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>Not used on any booking yet.</p>
+          <p className="muted" style={{ margin: 0 }}>{v.kind === "ondeck_session" ? "Not used at On Deck yet." : "Not used on any booking yet."}</p>
         ) : (
           <div className="table-wrap">
             <table className="list">
-              <thead><tr><th>Booking</th><th>Court &amp; date</th><th>Took off</th><th>When</th><th></th></tr></thead>
+              <thead><tr><th>Where</th><th>Details</th><th>Took off</th><th>When</th><th></th></tr></thead>
               <tbody>
                 {data.uses.map((u) => (
                   <tr key={u.id} className={u.restoredAt || u.dropped ? "muted" : undefined}>
                     <td>
-                      <button type="button" className="link-btn mono" onClick={() => onOpenBooking(u.bookingCode)}>{u.bookingCode}</button>
+                      {u.source === "ondeck" ? "📋 NVBC On Deck"
+                        : u.source === "desk" ? "✓ Marked redeemed"
+                        : <button type="button" className="link-btn mono" onClick={() => onOpenBooking(u.bookingCode)}>{u.bookingCode}</button>}
                     </td>
-                    <td>{u.court ?? "—"}{u.date ? ` · ${formatDateLong(u.date)}` : ""}</td>
-                    <td>{formatPeso(u.amount)}{u.hours ? ` (${u.hours} h)` : ""}</td>
+                    <td>
+                      {u.source === "booking" ? <>{u.court ?? "—"}{u.date ? ` · ${formatDateLong(u.date)}` : ""}</> : u.details || "—"}
+                    </td>
+                    <td>{useTook(u)}</td>
                     <td>{new Date(u.usedAt).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })} · {u.usedBy}</td>
                     <td>
-                      {u.dropped ? "Full price charged (booking restored)" : u.removed ? "Given back (removed by staff)" : u.restoredAt ? "Given back (booking cancelled)" : ""}
+                      {u.dropped ? "Full price charged (booking restored)"
+                        : !u.restoredAt ? ""
+                        : u.source === "ondeck" ? "Given back (undone at On Deck)"
+                        : u.source === "desk" ? "Given back (redeemed undone)"
+                        : u.removed ? "Given back (removed by staff)" : "Given back (booking cancelled)"}
                     </td>
                   </tr>
                 ))}

@@ -9,6 +9,7 @@ import {
   defaultTerms,
   formatVoucherCode,
   hasBalance,
+  isOnDeckSport,
   isVoucherKind,
   isVoucherStatus,
   normalizeVoucherCode,
@@ -36,7 +37,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().replace(/[ \t]+/g, " ").slice(0, max) : "");
 const peso = (n: number) => "₱" + n.toLocaleString("en-PH", { maximumFractionDigits: 2 });
 
-type Row = {
+export type Row = {
   id: string; code: string; kind: VoucherKind; value: string; max_discount: string | null; balance: string;
   max_uses: number; uses: number; status: VoucherStatus; valid_from: string | null; expires_on: string | null;
   sports: string[]; title: string; issued_to: string; note: string; terms: string; batch: string;
@@ -49,7 +50,7 @@ export type AdminVoucher = Voucher & {
   given: number; // pesos taken off bookings so far (not counting given back)
 };
 
-const toVoucher = (r: Row): Voucher => ({
+export const toVoucher = (r: Row): Voucher => ({
   code: r.code, kind: r.kind, value: Number(r.value), maxDiscount: r.max_discount === null ? null : Number(r.max_discount),
   balance: Number(r.balance), maxUses: r.max_uses, uses: r.uses, status: r.status, validFrom: r.valid_from,
   expiresOn: r.expires_on, sports: r.sports ?? [], title: r.title, issuedTo: r.issued_to, terms: r.terms,
@@ -65,7 +66,7 @@ const toAdmin = (r: Row & { given?: string | null }, today: string): AdminVouche
 
 const GIVEN_SQL = `(SELECT COALESCE(sum(u.amount), 0) FROM voucher_uses u WHERE u.voucher_id = v.id AND u.restored_at IS NULL AND NOT u.dropped) AS given`;
 
-async function logVoucher(id: string, by: string, action: string, details = "", client?: PoolClient) {
+export async function logVoucher(id: string, by: string, action: string, details = "", client?: PoolClient) {
   await (client ?? db()).query(
     `INSERT INTO voucher_events (voucher_id, actor, action, details) VALUES ($1, $2, $3, $4)`,
     [id, by.slice(0, 60) || "Staff", action, details.slice(0, 500)]
@@ -99,9 +100,9 @@ export async function vouchersByIds(ids: string[]): Promise<AdminVoucher[]> {
 }
 
 export type VoucherUse = {
-  id: number; bookingCode: string; bookingId: string | null; date: string | null; court: string | null;
-  amount: number; hours: number; usedBy: string; usedAt: string; restoredAt: string | null; removed: boolean; dropped: boolean;
-  bookingStatus: string | null;
+  id: number; source: "booking" | "ondeck" | "desk"; bookingCode: string; bookingId: string | null; date: string | null; court: string | null;
+  amount: number; hours: number; sessions: number; details: string; usedBy: string; usedAt: string; restoredAt: string | null;
+  removed: boolean; dropped: boolean; bookingStatus: string | null;
 };
 export type VoucherEvent = { at: string; actor: string; action: string; details: string };
 
@@ -112,8 +113,8 @@ export async function voucherDetail(id: string): Promise<Result<{ voucher: Admin
   if (!rows[0]) return fail(404, "Voucher not found.");
   const [uses, events] = await Promise.all([
     db().query<VoucherUse>(
-      `SELECT u.id, u.booking_code AS "bookingCode", u.booking_id AS "bookingId", b.booking_date AS date, c.name AS court,
-              u.amount::float8 AS amount, u.hours::float8 AS hours, u.used_by AS "usedBy", u.used_at AS "usedAt",
+      `SELECT u.id, u.source, u.booking_code AS "bookingCode", u.booking_id AS "bookingId", b.booking_date AS date, c.name AS court,
+              u.amount::float8 AS amount, u.hours::float8 AS hours, u.sessions, u.details, u.used_by AS "usedBy", u.used_at AS "usedAt",
               u.restored_at AS "restoredAt", u.removed, u.dropped, b.status AS "bookingStatus"
          FROM voucher_uses u LEFT JOIN bookings b ON b.id = u.booking_id LEFT JOIN courts c ON c.id = b.court_id
         WHERE u.voucher_id = $1 ORDER BY u.used_at DESC, u.id`,
@@ -137,6 +138,8 @@ function readFields(input: Record<string, unknown>, kind: VoucherKind): Fields |
   if (validFrom === undefined || expiresOn === undefined) return "Please enter valid dates.";
   if (validFrom && expiresOn && expiresOn < validFrom) return "The expiry date must be on or after the start date.";
   const sports = Array.isArray(input.sports) ? [...new Set(input.sports.filter(isActivity))] : [];
+  if (kind === "ondeck_session" && (sports.length !== 1 || !isOnDeckSport(sports[0])))
+    return "Choose what it's for: Pickleball Open Play or Badminton Queueing.";
   const maxUses = kind === "fixed" || kind === "percent" ? Number(input.maxUses ?? 1) : 1;
   if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 1000) return "Uses must be a whole number from 1 to 1,000.";
   const cap = input.maxDiscount === "" || input.maxDiscount === null || input.maxDiscount === undefined ? null : Number(input.maxDiscount);
@@ -145,17 +148,21 @@ function readFields(input: Record<string, unknown>, kind: VoucherKind): Fields |
   return {
     title: text(input.title, 60), issuedTo: text(input.issuedTo, 80), note: text(input.note, 300),
     terms: terms || defaultTerms(kind), validFrom, expiresOn,
-    sports: sports.length === allActivities().length ? [] : sports, // all of them: any sport (and new ones later)
+    // All of them: any sport (and new ones later). An On Deck voucher keeps its one sport.
+    sports: kind !== "ondeck_session" && sports.length === allActivities().length ? [] : sports,
     maxUses, maxDiscount: kind === "percent" ? (cap === null ? null : round2(cap)) : null,
   };
 }
 
-/** What a voucher of this kind is worth, checked: hours in half hours, pesos, or a percent. */
+const MAX_SESSIONS = 50;
+
+/** What a voucher of this kind is worth, checked: hours in half hours, pesos, a percent, or sessions. */
 function readValue(kind: VoucherKind, raw: unknown): number | string {
   const n = Number(raw);
   if (kind === "free_hours")
     return Number.isFinite(n) && n >= 0.5 && n <= 100 && Number.isInteger(n * 2) ? n : "Free hours must be 0.5 to 100, in half hours.";
   if (kind === "percent") return Number.isFinite(n) && n >= 1 && n <= 100 ? round2(n) : "The percentage must be from 1 to 100.";
+  if (kind === "ondeck_session") return Number.isInteger(n) && n >= 1 && n <= MAX_SESSIONS ? n : `Sessions must be a whole number from 1 to ${MAX_SESSIONS}.`;
   return Number.isFinite(n) && n >= 1 && n <= 100_000 ? round2(n) : "Enter an amount from ₱1 to ₱100,000.";
 }
 
@@ -189,7 +196,7 @@ export async function createVouchers(input: Record<string, unknown>, by: string)
       if (!rows[0]) continue; // the same code already exists (very unlikely): draw another
       ids.push(rows[0].id);
       await logVoucher(rows[0].id, by, "Created",
-        `${voucherKindLabel(kind)} · ${voucherValueLabel({ kind, value, maxDiscount: f.maxDiscount })}${batch ? ` · batch ${batch} (${quantity})` : ""}`, client);
+        `${voucherKindLabel(kind)} · ${voucherValueLabel({ kind, value, maxDiscount: f.maxDiscount, sports: f.sports })}${batch ? ` · batch ${batch} (${quantity})` : ""}`, client);
     }
     await client.query("COMMIT");
     return { ok: true, data: { ids } };
@@ -223,6 +230,8 @@ export async function updateVoucher(id: string, input: Record<string, unknown>, 
       title: cur.title, issuedTo: cur.issued_to, note: cur.note, terms: cur.terms, validFrom: cur.valid_from, expiresOn: cur.expires_on,
       sports: cur.sports, maxUses: cur.max_uses, maxDiscount: cur.max_discount,
       ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)),
+      // What an On Deck voucher is for is printed on it, like its value: it can't be changed.
+      ...(cur.kind === "ondeck_session" ? { sports: cur.sports } : {}),
     }, cur.kind);
     if (typeof f === "string") {
       await client.query("ROLLBACK");
@@ -235,10 +244,16 @@ export async function updateVoucher(id: string, input: Record<string, unknown>, 
     let balance = Number(cur.balance);
     if (hasBalance(cur.kind) && input.balance !== undefined && input.balance !== "" && Number(input.balance) !== balance) {
       const b = Number(input.balance);
-      const ok = cur.kind === "free_hours" ? Number.isInteger(b * 2) && b >= 0 && b <= 100 : Number.isFinite(b) && b >= 0 && b <= 100_000;
+      const ok =
+        cur.kind === "free_hours" ? Number.isInteger(b * 2) && b >= 0 && b <= 100
+        : cur.kind === "ondeck_session" ? Number.isInteger(b) && b >= 0 && b <= MAX_SESSIONS
+        : Number.isFinite(b) && b >= 0 && b <= 100_000;
       if (!ok) {
         await client.query("ROLLBACK");
-        return fail(400, cur.kind === "free_hours" ? "Hours left must be 0 to 100, in half hours." : "Enter a valid balance.");
+        return fail(400,
+          cur.kind === "free_hours" ? "Hours left must be 0 to 100, in half hours."
+          : cur.kind === "ondeck_session" ? `Sessions left must be a whole number from 0 to ${MAX_SESSIONS}.`
+          : "Enter a valid balance.");
       }
       balance = round2(b);
     }
@@ -259,7 +274,7 @@ export async function updateVoucher(id: string, input: Record<string, unknown>, 
       changes.push(["Max discount", `${cur.max_discount ? peso(Number(cur.max_discount)) : "none"} → ${f.maxDiscount ? peso(f.maxDiscount) : "none"}`]);
     if (Number(cur.balance) !== balance) {
       const reason = text(input.balanceReason, 120);
-      const fmt = (n: number) => (cur.kind === "free_hours" ? `${n} h` : peso(n));
+      const fmt = (n: number) => (cur.kind === "free_hours" ? `${n} h` : cur.kind === "ondeck_session" ? `${n} session(s)` : peso(n));
       changes.push(["Balance", `${fmt(Number(cur.balance))} → ${fmt(balance)}${reason ? ` (${reason})` : ""}`]);
     }
     if (cur.terms !== f.terms) changes.push(["Terms", "updated"]);
@@ -275,41 +290,91 @@ export async function updateVoucher(id: string, input: Record<string, unknown>, 
   }
 }
 
-/** Active, paused (can't be used for now) or void (blocked, e.g. lost). */
+/** A voucher's balance as text: "₱100", "1.5 h", "2 session(s)". */
+const balanceText = (kind: VoucherKind, n: number) =>
+  kind === "free_hours" ? `${n} h` : kind === "ondeck_session" ? `${n} session${n === 1 ? "" : "s"}` : peso(n);
+
+/**
+ * Active, paused (can't be used for now), void (blocked, e.g. lost) or redeemed (used up outside
+ * the app, e.g. handed in at the desk). Redeeming takes what's left off the voucher, recorded as a
+ * use; setting it back to active or paused gives that back.
+ */
 export async function setVoucherStatus(id: string, status: unknown, by: string, reason: unknown): Promise<Result<{ id: string }>> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return fail(400, "Invalid voucher.");
   if (!isVoucherStatus(status)) return fail(400, "Unknown status.");
-  const { rows } = await db().query<{ old: VoucherStatus }>(
-    `UPDATE vouchers v SET status = $2, updated_at = now() FROM vouchers o WHERE v.id = $1 AND o.id = v.id RETURNING o.status AS old`,
-    [id, status]
-  );
-  if (!rows[0]) return fail(404, "Voucher not found.");
-  if (rows[0].old !== status) {
+  const client = await db().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<Row>(`SELECT * FROM vouchers WHERE id = $1 FOR UPDATE`, [id]);
+    const cur = rows[0];
+    if (!cur) {
+      await client.query("ROLLBACK");
+      return fail(404, "Voucher not found.");
+    }
+    if (cur.status === status) {
+      await client.query("ROLLBACK");
+      return { ok: true, data: { id } };
+    }
     const why = text(reason, 200);
-    await logVoucher(id, by, { active: "Activated", paused: "Paused", void: "Voided" }[status], why);
+    let details = why;
+    if (status === "redeemed" && hasBalance(cur.kind) && Number(cur.balance) > 0) {
+      // What's left is used up here: recorded like a use, so it can be given back.
+      const left = Number(cur.balance);
+      await client.query(
+        `INSERT INTO voucher_uses (voucher_id, application, source, amount, hours, sessions, used_by, details)
+         VALUES ($1, $2, 'desk', $3, $4, $5, $6, $7)`,
+        [id, randomUUID(), cur.kind === "cash" ? left : 0, cur.kind === "free_hours" ? left : 0,
+          cur.kind === "ondeck_session" ? left : 0, by.slice(0, 60) || "Staff", why]
+      );
+      await client.query(`UPDATE vouchers SET balance = 0 WHERE id = $1`, [id]);
+      details = `${balanceText(cur.kind, left)} used up${why ? ` · ${why}` : ""}`;
+    }
+    if (cur.status === "redeemed" && status !== "void") {
+      // No longer redeemed: what redeeming took off goes back on.
+      const { rows: back } = await client.query<{ amount: string; hours: string; sessions: number }>(
+        `UPDATE voucher_uses SET restored_at = now(), removed = TRUE
+          WHERE voucher_id = $1 AND source = 'desk' AND restored_at IS NULL
+          RETURNING amount, hours, sessions`,
+        [id]
+      );
+      const total = back.reduce((s, u) => s + (cur.kind === "cash" ? Number(u.amount) : cur.kind === "free_hours" ? Number(u.hours) : u.sessions), 0);
+      if (total > 0) {
+        await client.query(`UPDATE vouchers SET balance = balance + $2 WHERE id = $1`, [id, round2(total)]);
+        details = `${balanceText(cur.kind, round2(total))} given back${why ? ` · ${why}` : ""}`;
+      }
+    }
+    await client.query(`UPDATE vouchers SET status = $2, updated_at = now() WHERE id = $1`, [id, status]);
+    const action = { active: "Activated", paused: "Paused", void: "Voided", redeemed: "Marked redeemed" }[status];
+    await logVoucher(id, by, cur.status === "redeemed" && status === "active" ? "Redeemed undone" : action, details, client);
+    await client.query("COMMIT");
+    return { ok: true, data: { id } };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
   }
-  return { ok: true, data: { id } };
 }
 
 /**
- * Deletes vouchers for good (e.g. made by mistake). One still on a booking (not cancelled, or
- * already played) is kept, so the booking's price stays explained — void it instead. Bookings
- * that were cancelled lose their link to it.
+ * Deletes vouchers for good (e.g. made by mistake). One that's been used (still on a booking that
+ * isn't cancelled, used at On Deck, or marked redeemed) is kept, so its record stays — void it
+ * instead. Bookings that were cancelled lose their link to it.
  */
-export async function deleteVouchers(rawIds: unknown, by: string): Promise<Result<{ deleted: string[]; kept: { code: string; bookings: number }[] }>> {
+export async function deleteVouchers(rawIds: unknown, by: string): Promise<Result<{ deleted: string[]; kept: { code: string; used: number }[] }>> {
   const ids = (Array.isArray(rawIds) ? rawIds : []).filter((id): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id));
   if (!ids.length) return fail(400, "Choose the vouchers to delete.");
   const client = await db().connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query<{ id: string; code: string; on_bookings: number }>(
+    const { rows } = await client.query<{ id: string; code: string; used: number }>(
       `SELECT v.id, v.code,
-              (SELECT count(*)::int FROM voucher_uses u WHERE u.voucher_id = v.id AND u.restored_at IS NULL AND NOT u.dropped) AS on_bookings
+              (SELECT count(*)::int FROM voucher_uses u WHERE u.voucher_id = v.id AND u.restored_at IS NULL AND NOT u.dropped) AS used
          FROM vouchers v WHERE v.id = ANY($1::uuid[]) FOR UPDATE OF v`,
       [ids]
     );
-    const kept = rows.filter((r) => r.on_bookings > 0).map((r) => ({ code: r.code, bookings: r.on_bookings }));
-    const gone = rows.filter((r) => r.on_bookings === 0);
+    const kept = rows.filter((r) => r.used > 0).map((r) => ({ code: r.code, used: r.used }));
+    const gone = rows.filter((r) => r.used === 0);
     if (gone.length) await client.query(`DELETE FROM vouchers WHERE id = ANY($1::uuid[])`, [gone.map((r) => r.id)]);
     await client.query("COMMIT");
     if (gone.length) console.log(`Vouchers deleted by ${by}: ${gone.map((r) => r.code).join(", ")}`);

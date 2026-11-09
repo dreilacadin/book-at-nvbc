@@ -931,3 +931,24 @@ ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_hours JSONB;
 -- price, e.g. {"periods": [{"days": [1,2,3,4,5], "from": 8, "to": 15}], "prices": {"badminton": 300}}.
 -- Days 0 = Sunday … 6 = Saturday; half-hour times; a sport without a price has no off-peak. NULL = off.
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS off_peak JSONB;
+
+-- v41: NVBC On Deck vouchers, and "redeemed" --------------------------------------------------------
+-- ondeck_session: free Pickleball Open Play or Badminton Queueing sessions, used at NVBC On Deck (the
+-- sister app), which checks and redeems them through /api/ondeck/vouchers. value/balance: sessions;
+-- sports: the one sport it's for. Status 'redeemed': staff marked it used up outside the app (e.g.
+-- handed in at the desk); its balance is taken off in a voucher_uses row (source 'desk'), so undoing
+-- it gives the same balance back.
+-- ('ondeck_session' and 'redeemed' are listed in full so re-running this file never rejects rows.)
+ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_kind_check;
+ALTER TABLE vouchers ADD CONSTRAINT vouchers_kind_check
+  CHECK (kind IN ('free_hours', 'fixed', 'percent', 'cash', 'ondeck_session'));
+ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_status_check;
+ALTER TABLE vouchers ADD CONSTRAINT vouchers_status_check CHECK (status IN ('active', 'paused', 'void', 'redeemed'));
+-- Where a use happened: 'booking' (a court booking), 'ondeck' (a session at On Deck) or 'desk'
+-- (marked redeemed by staff). sessions: On Deck sessions it used. ref: On Deck's own id for the
+-- redemption, so retrying the same one never spends twice. details: e.g. the player's name.
+ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'booking';
+ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS sessions INT NOT NULL DEFAULT 0;
+ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS ref TEXT;
+ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS voucher_uses_ref_idx ON voucher_uses (voucher_id, ref) WHERE ref IS NOT NULL;
