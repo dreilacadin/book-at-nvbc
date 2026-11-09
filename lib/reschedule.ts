@@ -2,8 +2,8 @@ import { db, getSettings } from "./db";
 import { findBlockConflict } from "./blocks";
 import { blocksOn } from "./court-blocks";
 import { CUSTOMER, logBooking } from "./booking-history";
-import { minutesUntilStart, RELEASE_MINUTES } from "./booking-policy";
-import { formatDateLong, formatRange, halfHours, publicName, SLOT_HOURS } from "./format";
+import { activeCashHours, awaitingPayment, cashAllowed, cashHoursNote, inCashHours, minutesUntilStart, RELEASE_MINUTES, type CashHours } from "./booking-policy";
+import { formatDateLong, formatHour, formatRange, halfHours, publicName, SLOT_HOURS } from "./format";
 import { notifyStaff } from "./notify";
 import { computePrice, planForCourt, rateFor, ratesForDate, type RateType } from "./pricing";
 import { courtAllowed, sportEmoji, sportLabel } from "./sports";
@@ -24,6 +24,7 @@ type Current = {
   start_hour: number; end_hour: number; amount: number; rate_type: RateType; status: string; phase: string | null;
   reschedule_count: number; group_id: string | null; members: number; membership_expires: string | null;
   coaching_status: string | null;
+  payment_method: string; payment_status: string;
   voucher_discount: number; voucher_expires: string | null; // a voucher on it: what it took off, and until when it's valid
 };
 
@@ -32,7 +33,7 @@ async function current(code: string): Promise<Current | null> {
     `SELECT b.id, b.cancel_code AS code, b.player_name AS name, b.court_id, c.name AS court_name,
             COALESCE(b.activity, c.sport) AS activity, b.booking_date AS date, b.start_hour::float8 AS start_hour,
             b.end_hour::float8 AS end_hour, b.amount::float8 AS amount, b.rate_type, b.status, b.phase, b.reschedule_count, b.group_id,
-            b.coaching_status, b.voucher_discount::float8 AS voucher_discount,
+            b.coaching_status, b.payment_method, b.payment_status, b.voucher_discount::float8 AS voucher_discount,
             (SELECT expires_on FROM vouchers WHERE id = b.voucher_id) AS voucher_expires,
             (SELECT count(*)::int FROM bookings g WHERE g.group_id = b.id AND g.status <> 'cancelled') AS members,
             m.expires_on AS membership_expires
@@ -58,6 +59,17 @@ function blocker(b: Current, settings: Awaited<ReturnType<typeof getSettings>>):
   return null;
 }
 
+/**
+ * An unpaid cash booking made during the cash hours (not a coach's) can only move to a time it could
+ * be booked for with cash now: today, within the cash hours, starting soon. Staff's cash bookings at
+ * other times aren't limited.
+ */
+function cashHoursOnly(b: Current, settings: Awaited<ReturnType<typeof getSettings>>): CashHours {
+  const h = activeCashHours(settings);
+  return b.rate_type !== "coach" && b.payment_method === "cash" && awaitingPayment(b.payment_status) && inCashHours(h, b.start_hour, b.end_hour)
+    ? h : null;
+}
+
 export type MoveOption = { courtId: number; courtName: string; start: number };
 
 /**
@@ -71,9 +83,13 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
   const today = nowAtFacility();
   const lastDate = addDays(today.date, settings.booking_window_days);
   const why = blocker(b, settings);
+  const cash = cashHoursOnly(b, settings);
   const base = {
     rules: { hours: settings.reschedule_hours, max: settings.reschedule_max, used: b.reschedule_count, firstDate: today.date, lastDate },
     blocked: why,
+    cashOnly: cash
+      ? `You're paying cash at the front desk, so it can only move to a time today from ${formatHour(cash.from)} to ${formatHour(cash.to)}, starting within ${cash.ahead === 0.5 ? "30 minutes" : cash.ahead === 1 ? "1 hour" : `${cash.ahead} hours`}.`
+      : null,
   };
   if (why || rawDate === undefined) return { ok: true as const, data: { ...base, options: [] as MoveOption[] } };
   if (!isValidDate(rawDate) || rawDate < today.date || daysBetween(today.date, rawDate) > settings.booking_window_days)
@@ -107,6 +123,7 @@ export async function rescheduleOptions(code: string, rawDate: unknown) {
       if (halfHours(start, start + hours - SLOT_HOURS).some((h) => busy.has(`${c.id}:${h}`))) continue;
       if (findBlockConflict(blocks, c.id, date, start, start + hours)) continue;
       if (overlapsClosure(closedTimes, start, start + hours)) continue; // closed for part of the day
+      if (cash && !cashAllowed(cash, date, start, start + hours, today)) continue; // paying cash: as if booked with cash now
       options.push({ courtId: c.id, courtName: c.name, start });
     }
   }
@@ -146,6 +163,9 @@ export async function rescheduleByCode(code: string, input: Record<string, unkno
     return fail(400, `NVBC is closed then (${holiday!.name}: ${closureTimeText(holiday!)}).`);
   if (b.rate_type === "member" && b.membership_expires && b.membership_expires < date)
     return fail(400, "Your membership ends before that date, so the member rate can't be used then.");
+  const cash = cashHoursOnly(b, settings);
+  if (cash && !cashAllowed(cash, date, start, start + hours, today))
+    return fail(400, `${cashHoursNote(cash, date, start, start + hours, today)} Please pick another time, or pay online first.`);
 
   const client = await db().connect();
   try {

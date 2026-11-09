@@ -8,6 +8,7 @@ type Option = { courtId: number; courtName: string; start: number };
 type Options = {
   rules: { hours: number; max: number; used: number; firstDate: string; lastDate: string };
   blocked: string | null;
+  cashOnly?: string | null; // paying cash: only within the cash hours
   options: Option[];
   note?: string;
 };
@@ -94,6 +95,7 @@ export default function RescheduleBooking({
           <p className="hint" style={{ margin: 0 }}>
             Move to another free time of the same length and price, up to {info.rules.hours} hour{info.rules.hours === 1 ? "" : "s"} before
             the start. {left === 1 ? "You can do this once more." : `You can do this ${left} more times.`}
+            {info.cashOnly && ` ${info.cashOnly}`}
           </p>
           <div className="date-strip resched-dates" role="group" aria-label="Choose a date">
             {datesBetween(info.rules.firstDate, info.rules.lastDate).map((d) => {

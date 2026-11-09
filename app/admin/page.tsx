@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
+import { CASH_AHEAD_DEFAULT, RELEASE_MINUTES } from "@/lib/booking-policy";
 import {
   formatPeso,
   MAX_EXTRA_GCASH,
@@ -429,6 +430,7 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
   const toggleCoachMethod = (m: PaymentMethod, on: boolean) =>
     set("coach_payment_methods", on ? [...new Set([...s.coach_payment_methods, m])] : s.coach_payment_methods.filter((x) => x !== m));
   const hourOptions = Array.from({ length: 25 }, (_, h) => h);
+  const halfHourOptions = Array.from({ length: 49 }, (_, i) => i / 2);
 
   return (
     <form
@@ -559,9 +561,58 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
             ))}
           </div>
           <p className="hint" style={{ margin: "6px 0 0" }}>
-            For bookings at the Coach rate with a coach code. Everyone else pays online — cash is only ever for coaches.
-            Reserved times that coaches can book are always paid online.
+            For bookings at the Coach rate with a coach code. Everyone else pays online, except during the cash hours
+            below. Reserved times that coaches can book are always paid online.
           </p>
+        </div>
+
+        <div className="field" style={{ marginTop: 14 }}>
+          <label id="cash-hours-label">Cash hours for everyone</label>
+          {s.payment_methods.includes("cash") ? (
+            <>
+              <div role="group" aria-labelledby="cash-hours-label" className="closure-hours" style={{ display: "flex", gap: 8 }}>
+                <label style={{ fontWeight: 400, display: "inline-flex", gap: 6, alignItems: "center", margin: 0 }}>
+                  <input type="checkbox" checked={!!s.cash_hours}
+                    onChange={(e) => set("cash_hours", e.target.checked ? { from: 13, to: 17, ahead: CASH_AHEAD_DEFAULT } : null)} />
+                  Let everyone pay cash at the front desk{s.cash_hours ? " for bookings from" : " at certain times"}
+                </label>
+                {s.cash_hours && (
+                  <>
+                    <select aria-label="Cash hours: from" value={s.cash_hours.from}
+                      onChange={(e) => {
+                        const from = Number(e.target.value);
+                        set("cash_hours", { ...s.cash_hours!, from, to: Math.max(s.cash_hours!.to, Math.min(24, from + 1)) });
+                      }}>
+                      {halfHourOptions.slice(0, -1).map((t) => <option key={t} value={t}>{formatHour(t)}</option>)}
+                    </select>
+                    <span>to</span>
+                    <select aria-label="Cash hours: to" value={s.cash_hours.to}
+                      onChange={(e) => set("cash_hours", { ...s.cash_hours!, to: Number(e.target.value) })}>
+                      {halfHourOptions.filter((t) => t > s.cash_hours!.from).map((t) => (
+                        <option key={t} value={t}>{t === 24 ? "Midnight" : formatHour(t)}</option>
+                      ))}
+                    </select>
+                    <span>, booked up to</span>
+                    <select aria-label="Cash hours: how long before the start" value={s.cash_hours.ahead}
+                      onChange={(e) => set("cash_hours", { ...s.cash_hours!, ahead: Number(e.target.value) })}>
+                      {[0.5, 1, 1.5, 2, 3, 4].map((h) => (
+                        <option key={h} value={h}>{h === 0.5 ? "30 minutes" : h === 1 ? "1 hour" : `${h} hours`}</option>
+                      ))}
+                    </select>
+                    <span>before the start</span>
+                  </>
+                )}
+              </div>
+              <p className="hint" style={{ margin: "6px 0 0" }}>
+                Like paying as a walk-in, every day: customers can choose Cash only on the day itself, when the booking
+                starts within the time above and is all inside these hours. Example (1–5 PM, 1 hour): at 12:30 PM someone
+                can book 1–3 PM with cash; at 8:00 AM they pay online. Cash bookings are Reserved, and released if not
+                paid {RELEASE_MINUTES} minutes before they start. Coaches pay as set above, at any time.
+              </p>
+            </>
+          ) : (
+            <p className="hint" style={{ margin: 0 }}>Turn on Cash above to let everyone pay cash at certain times.</p>
+          )}
         </div>
 
         {s.payment_methods.includes("gcash") && (

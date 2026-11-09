@@ -1,4 +1,5 @@
 // Payment and refund rules for bookings. Shared by the server and the browser (no Node imports).
+import { formatHour } from "./format.ts";
 
 /** Unpaid bookings are released this many minutes before they start. */
 export const RELEASE_MINUTES = 10;
@@ -138,4 +139,53 @@ export function startedUnverified(
   now: Now
 ): boolean {
   return b.status === "pending" && b.payment_status === "for_verification" && !b.phase && minutesUntilStart(b.date, b.start_hour, now) <= 0;
+}
+
+/**
+ * Cash hours (Settings → Payment methods): times when everyone, not only coaches, may pay cash at
+ * the front desk, e.g. 1:00–5:00 PM for peak times. Like a walk-in: only for a booking made the same
+ * day, at most `ahead` hours before it starts (so an unpaid cash booking holds a court for at most
+ * that long). Hours of the day, in half-hour steps. Null = off.
+ */
+export type CashHours = { from: number; to: number; ahead: number } | null;
+/** How long before the start cash can be chosen, unless staff set otherwise. */
+export const CASH_AHEAD_DEFAULT = 1;
+
+/** Cash hours as stored or sent by the admin page; "invalid" if they don't make sense. */
+export function parseCashHours(v: unknown): CashHours | "invalid" {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "object") return "invalid";
+  const { from, to, ahead = CASH_AHEAD_DEFAULT } = v as Record<string, unknown>;
+  const half = (h: unknown, min: number, max: number): h is number =>
+    typeof h === "number" && Number.isInteger(h * 2) && h >= min && h <= max;
+  return half(from, 0, 24) && half(to, 0, 24) && from < to && half(ahead, 0.5, 12) ? { from, to, ahead } : "invalid";
+}
+
+/** The cash hours in use: only while Cash is switched on under Payment methods. */
+export const activeCashHours = (s: { payment_methods: string[]; cash_hours: CashHours }): CashHours =>
+  s.payment_methods.includes("cash") ? s.cash_hours : null;
+
+/** Whether a booking from `start` to `end` is within the cash hours (all of it). */
+export const inCashHours = (h: CashHours, start: number, end: number): boolean => !!h && start >= h.from && end <= h.to;
+
+/**
+ * Whether a customer booking now may be paid in cash: within the cash hours, today, and starting
+ * at most `ahead` hours from now.
+ */
+export const cashAllowed = (h: CashHours, date: string, start: number, end: number, now: Now): boolean =>
+  !!h && inCashHours(h, start, end) && date === now.date && minutesUntilStart(date, start, now) <= h.ahead * 60;
+
+const aheadText = (hours: number) =>
+  hours === 0.5 ? "30 minutes" : hours === 1 ? "1 hour" : `${hours} hours`;
+
+/**
+ * Why cash can't be chosen for this booking (shown under "How will you pay?" and when booking), or
+ * null when it can — or when there are no cash hours.
+ */
+export function cashHoursNote(h: CashHours, date: string, start: number, end: number, now: Now): string | null {
+  if (!h || cashAllowed(h, date, start, end, now)) return null;
+  const rule = `Cash at the front desk is for same-day bookings from ${formatHour(h.from)} to ${formatHour(h.to)}, made up to ${aheadText(h.ahead)} before the start.`;
+  if (inCashHours(h, start, end) && date === now.date)
+    return `${rule} For this time, you can choose cash from ${formatHour(start - h.ahead)}.`;
+  return rule;
 }

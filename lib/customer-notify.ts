@@ -5,7 +5,7 @@ import { emailSender, sendEmail } from "./mailer";
 import { googleCalendarUrl, icsFile, type CalendarBooking } from "./calendar";
 import { sportLabel } from "./sports";
 import { pushConfig, setupVapid } from "./notify";
-import { customerNotice, isEmail, REMINDER_MINUTES, type CustomerNoticeKind, type NoticeBooking } from "./customer-messages";
+import { customerNotice, isEmail, REMINDER_MINUTES, type CustomerNoticeKind, type NoticeBooking, type ReleaseReason } from "./customer-messages";
 
 // Notifications for customers about their own booking: payment confirmed, payment rejected, and
 // "your court time is coming up". Sent by push (to devices that asked on the booking page) and by
@@ -59,7 +59,7 @@ function calendarFor(r: Row): { ics: CalendarBooking; google: CalendarBooking } 
   };
 }
 
-function noticeFor(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string } = {}) {
+function noticeFor(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; released?: ReleaseReason } = {}) {
   const b: NoticeBooking = {
     code: r.code, name: r.name, courtName: r.court_name, date: r.date, startHour: r.start_hour, endHour: r.end_hour,
     amount: Number(r.amount), paymentStatus: r.payment_status, paymentMethod: r.payment_method, status: r.status,
@@ -71,6 +71,7 @@ function noticeFor(kind: CustomerNoticeKind, r: Row, extra: { message?: string; 
   };
   return customerNotice(kind, b, {
     link: siteOrigin() + bookingPath(r.code), payByClock: r.pay_by ? manilaClock(r.pay_by) : undefined, message: extra.message, from: extra.from,
+    released: extra.released, bookLink: siteOrigin() + "/",
   });
 }
 
@@ -100,7 +101,7 @@ async function pushTo(r: Row, n: { title: string; body: string }): Promise<numbe
   return sent.reduce<number>((a, x) => a + x, 0);
 }
 
-async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; email?: boolean } = {}): Promise<void> {
+async function deliver(kind: CustomerNoticeKind, r: Row, extra: { message?: string; from?: string; email?: boolean; released?: ReleaseReason } = {}): Promise<void> {
   const n = noticeFor(kind, r, extra);
   await pushTo(r, n);
   if (r.customer_email && extra.email !== false && emailSender()) {
@@ -167,6 +168,27 @@ export function notifyCustomer(bookingId: string, kind: "confirmed" | "rejected"
   later(async () => {
     const { rows } = await db().query<Row>(`SELECT ${ROW_SQL} FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1`, [bookingId]);
     if (rows[0]) await deliver(kind, rows[0]);
+  });
+}
+
+/**
+ * Tells customers their booking was released for not being paid in time (push to the devices that
+ * turned on updates, and email if they gave one), so they know why it's gone. One per booking code:
+ * `released` has each group's first booking and why it was released.
+ */
+export function notifyCustomersReleased(released: { id: string; why: ReleaseReason }[]): void {
+  if (!released.length) return;
+  later(async () => {
+    const { rows } = await db().query<Row & { released_courts: string | null }>(
+      `SELECT ${ROW_SQL},
+              -- ROW_SQL lists the courts still booked; here, the ones just released
+              (SELECT string_agg(gc.name, ' + ' ORDER BY gc.sort_order, gc.id) FROM bookings g JOIN courts gc ON gc.id = g.court_id
+                WHERE (g.id = b.id OR g.group_id = b.id) AND g.cancelled_by = 'system') AS released_courts
+         FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = ANY($1::uuid[])`,
+      [released.map((x) => x.id)]
+    );
+    for (const r of rows)
+      await deliver("released", { ...r, court_name: r.released_courts ?? r.court_name }, { released: released.find((x) => x.id === r.id)!.why });
   });
 }
 

@@ -1,12 +1,17 @@
 // What customers are told about their booking, by push notification and email. Pure (no Node
 // imports), so it can be tested.
 import { formatDateLong, formatRange } from "./format.ts";
+import { RELEASE_MINUTES } from "./booking-policy.ts";
 
 export type CustomerNoticeKind =
-  | "confirmed" | "rejected" | "upcoming" | "message" | "refunded" | "coaching_accepted" | "coaching_declined" | "pay_reminder";
+  | "confirmed" | "rejected" | "upcoming" | "message" | "refunded" | "coaching_accepted" | "coaching_declined" | "pay_reminder" | "released";
 
 /** The "coming up" reminder goes out this long before the start. */
 export const REMINDER_MINUTES = 60;
+
+/** Why an unpaid booking was released: its payment time ran out, a payment staff couldn't accept wasn't
+ * replaced in time, or it wasn't paid before the start (e.g. cash at the desk). */
+export type ReleaseReason = "window" | "rejected" | "start";
 
 export type NoticeBooking = {
   code: string;
@@ -43,7 +48,11 @@ const pesos = (n: number) => `₱${n.toLocaleString("en-PH", { maximumFractionDi
 export function customerNotice(
   kind: CustomerNoticeKind,
   b: NoticeBooking,
-  opts: { link: string; payByClock?: string; message?: string; from?: string }
+  opts: {
+    link: string; payByClock?: string; message?: string; from?: string;
+    released?: ReleaseReason;
+    bookLink?: string; // the booking page, to book again
+  }
 ): CustomerNotice {
   const when = `${formatDateLong(b.date)}, ${formatRange(b.startHour, b.endHour)}`;
   const where = `${b.courtName}, ${when}`;
@@ -124,6 +133,22 @@ export function customerNotice(
       text:
         `Hi ${firstName(b.name)},\n\nA friendly reminder to pay ${pesos(b.amount)} for your booking:\n\n${where}\nBooking code: ${b.code}\n\n` +
         `Please pay ${how}:\n${opts.link}\n\nNV Badminton Center`,
+    };
+  }
+
+  if (kind === "released") {
+    // Not paid in time: released automatically so others can book the court.
+    const why = opts.released === "window" ? "we didn't receive your payment in time after booking"
+      : opts.released === "rejected" ? "we didn't receive a payment we could accept in time"
+      : `it wasn't paid by ${RELEASE_MINUTES} minutes before the start`;
+    return {
+      title: "Booking released — not paid in time",
+      body: `${b.courtName}, ${formatRange(b.startHour, b.endHour)} on ${formatDateLong(b.date)} was released because ${why}. You're welcome to book again.`,
+      subject: `Your booking was released (${b.code})`,
+      text:
+        `Hi ${firstName(b.name)},\n\nYour booking was released because ${why}, so the court is open for other players again:\n\n` +
+        `${where}\nBooking code: ${b.code}\n\nYou're welcome to book again` +
+        `${opts.bookLink ? `:\n${opts.bookLink}` : "."}\n\nIf you already paid, please reply on your booking page or contact the front desk:\n${opts.link}\n\nNV Badminton Center`,
     };
   }
 

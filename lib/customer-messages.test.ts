@@ -74,3 +74,15 @@ test("pay_reminder: the amount and how to pay (cash at the desk, otherwise onlin
   const cash = customerNotice("pay_reminder", { ...b, paymentMethod: "cash", paymentStatus: "unpaid", status: "reserved" }, { link });
   assert.match(cash.body, /^Please pay ₱600 at the front desk/);
 });
+
+test("released: why (payment time ran out, or not paid before the start), with links to book again and to the booking", () => {
+  const window = customerNotice("released", b, { link: "https://x/my-booking#NV-ABC123", released: "window", bookLink: "https://x/" });
+  assert.equal(window.title, "Booking released — not paid in time");
+  assert.match(window.body, /was released because we didn't receive your payment in time after booking/);
+  assert.match(window.text, /book again:\nhttps:\/\/x\/\n/);
+  assert.match(window.text, /If you already paid.*\nhttps:\/\/x\/my-booking#NV-ABC123/);
+  assert.match(window.subject, /NV-ABC123/);
+  const start = customerNotice("released", { ...b, paymentMethod: "cash", status: "reserved" }, { link: "L", released: "start" });
+  assert.match(start.body, /wasn't paid by 10 minutes before the start/);
+  assert.match(start.text, /book again\.\n/); // no booking-page link given
+});

@@ -32,7 +32,7 @@ import { normalizeVoucherCode, splitDiscount, voucherPath, voucherProblem, type 
 import ShareBooking from "./ShareBooking";
 import VoucherOnBooking from "./VoucherOnBooking";
 import { loadMembership } from "@/lib/saved-membership";
-import { minutesUntilStart, PAY_EXTEND_MINUTES, PAY_WINDOW_MINUTES, RELEASE_MINUTES } from "@/lib/booking-policy";
+import { cashAllowed, cashHoursNote, minutesUntilStart, PAY_EXTEND_MINUTES, PAY_WINDOW_MINUTES, RELEASE_MINUTES, type CashHours } from "@/lib/booking-policy";
 import BookingPolicy, { payByLabel } from "./BookingPolicy";
 import AddToCalendar from "./AddToCalendar";
 import BookingAlerts from "./BookingAlerts";
@@ -73,6 +73,7 @@ type Availability = {
   };
   paymentMethods: PaymentMethod[];
   coachPaymentMethods: PaymentMethod[]; // how coaches (coach rate + coach code) may pay, set in /admin
+  cashHours: CashHours; // everyone may also pay cash for bookings within these hours (Settings)
   // A coach logged in on this device: their name and code, whether they pay after the session, and
   // their clients (suggestions for the Client box).
   coach: { name: string; code: string; payLater: boolean; clients: KnownClient[] } | null;
@@ -640,12 +641,18 @@ function BookingDialog({
   // Unpaid bookings are released RELEASE_MINUTES before the start: too late to book online.
   const startsSoon = minutesUntilStart(data.date, selection.hour, { date: data.today, time: data.currentHour }) <= RELEASE_MINUTES;
   // Online payment for everyone; coaches (coach rate + coach code) pay as set in /admin, which can
-  // include cash at the desk — but not for reserved times coaches can book.
+  // include cash at the desk — but not for reserved times coaches can book. Everyone else may pay
+  // cash too during the cash hours, like a walk-in: today, starting soon (the server checks again).
   const onlineMethods = data.paymentMethods.filter((m) => m !== "cash");
-  const allowedMethods = rateType === "coach" ? data.coachPaymentMethods.filter((m) => !coachOnly || m !== "cash") : onlineMethods;
+  const nowHere = { date: data.today, time: data.currentHour };
+  const cashHoursOk = cashAllowed(data.cashHours, data.date, selection.hour, selection.hour + hours, nowHere);
+  const cashNote = rateType === "coach" ? null : cashHoursNote(data.cashHours, data.date, selection.hour, selection.hour + hours, nowHere);
+  const allowedMethods = rateType === "coach" ? data.coachPaymentMethods.filter((m) => !coachOnly || m !== "cash")
+    : cashHoursOk ? (["cash", ...onlineMethods] as PaymentMethod[]) : onlineMethods;
   const methodChoices = PAYMENT_METHODS.filter((m) => allowedMethods.includes(m.id));
   const cashOk = allowedMethods.includes("cash");
-  const firstChoice = methodChoices[0]?.id;
+  // Customers start on an online method (Cash is there to pick during cash hours); coaches on the first.
+  const firstChoice = (rateType === "coach" ? methodChoices[0] : methodChoices.find((m) => m.id !== "cash") ?? methodChoices[0])?.id;
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(firstChoice ?? "cash");
   useEffect(() => {
     if (firstChoice && !methodChoices.some((m) => m.id === paymentMethod)) setPaymentMethod(firstChoice);
@@ -1112,7 +1119,7 @@ function BookingDialog({
                         onClick={() => setPaymentMethod(m.id)}
                       >
                         <strong>{m.label}</strong>
-                        <small>{m.id === "cash" ? "Coaches: pay at the front desk" : m.hint}</small>
+                        <small>{m.id === "cash" ? "Pay at the front desk" : m.hint}</small>
                       </button>
                     ))}
                   </div>
@@ -1124,6 +1131,8 @@ function BookingDialog({
                       : `After booking, you'll have ${PAY_WINDOW_MINUTES} minutes to pay and send your receipt or reference number (you can add ${PAY_EXTEND_MINUTES} more minutes once if you need to).`}
                     {coachOnly
                       ? ` Cash isn't available for ${coachOnly} times.`
+                      : cashNote
+                      ? ` ${cashNote}`
                       : !cashOk && data.coachPaymentMethods.includes("cash") && p.rateTypes.includes("coach") && " Cash is only for coaches (coach rate + coach code)."}
                   </p>
                   {noWayToPay && (

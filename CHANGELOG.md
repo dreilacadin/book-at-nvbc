@@ -24,6 +24,21 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Pay cash as a walk-in.** During NVBC's cash hours (for example 1–5 PM), you
+  can choose **Cash** and pay at the front desk, like a walk-in: for a booking
+  today that starts soon (for example within the hour) and is all within those
+  hours. Booking earlier, or for another day? Pay online. Your slot is Reserved:
+  pay at least 10 minutes before you start, or it's released for other players.
+- **Released bookings tell you why.** If a booking is released because it wasn't
+  paid in time, you get a notification (if you turned on updates) and an email
+  (if you gave one) saying so, with a link to book again.
+- **Staff:** **Cash hours for everyone** under Settings → Payment methods: let
+  everyone, not only coaches, pay cash at the desk for same-day bookings within
+  the times you set, made up to a set time before the start (1 hour unless you
+  change it). Off until you turn it on; needs Cash switched on.
+- **Database:** settings: the cash hours (`cash_hours`).
+- **Internal:** `/api/cron/reminders` also releases unpaid bookings, so releases
+  (and their notices) are on time at quiet times.
 - **Share your booking.** **Share this booking**, right after booking and on My
   booking, gives you a link to send to the people playing with you. They see the date, time and court (and
   can add it to their calendar), and it stays up to date if the booking moves.

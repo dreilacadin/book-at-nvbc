@@ -122,6 +122,7 @@ export type Settings = {
   coach_code: string;
   payment_methods: PaymentMethod[];
   coach_payment_methods: PaymentMethod[]; // how coaches may pay (only the methods switched on count)
+  cash_hours: { from: number; to: number; ahead: number } | null; // when everyone may pay cash at the desk (while Cash is on)
   gcash_name: string;
   gcash_number: string;
   gcash_more: GcashAccount[]; // extra GCash accounts
