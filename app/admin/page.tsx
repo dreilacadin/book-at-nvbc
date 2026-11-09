@@ -3,9 +3,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import { CASH_AHEAD_DEFAULT, RELEASE_MINUTES } from "@/lib/booking-policy";
+import { WEEKDAYS as WEEK_MON_FIRST } from "@/lib/blocks";
 import {
   formatPeso,
   MAX_EXTRA_GCASH,
+  MAX_OFF_PEAK_PERIODS,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   paymentLabel,
@@ -14,6 +16,7 @@ import {
   rateTypeLabel,
   type BookingStatus,
   type CourtPrices,
+  type OffPeak,
   type PaymentMethod,
   type PaymentStatus,
   type RateType,
@@ -494,6 +497,8 @@ function SettingsTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
         </p>
       </fieldset>
 
+      <OffPeakSettings s={s} set={set} />
+
       <ActivitiesSettings s={s} set={set} courts={courts} savedIds={savedIds} />
 
       <fieldset>
@@ -820,6 +825,113 @@ function PriceTable({
   );
 }
 
+/**
+ * Settings → Off-peak prices: times of the week (several periods, each with its days and hours)
+ * when each sport's Regular price is lower. Member and Coach prices don't change.
+ */
+function OffPeakSettings({ s, set }: { s: Settings; set: <K extends keyof Settings>(k: K, v: Settings[K]) => void }) {
+  const op = s.off_peak;
+  const times = Array.from({ length: 49 }, (_, i) => i / 2);
+  const save = (next: OffPeak | null) => set("off_peak", next);
+  const setPeriod = (i: number, patch: Partial<OffPeak["periods"][number]>) =>
+    save({ ...op!, periods: op!.periods.map((p, j) => (j === i ? { ...p, ...patch } : p)) });
+  const sports = [...SPORTS, ...s.activities].filter((sp) => s.rate_plans[sp.id]);
+  return (
+    <fieldset>
+      <legend>Off-peak prices</legend>
+      <label className="check" style={{ marginBottom: 8 }}>
+        <input type="checkbox" checked={!!op}
+          onChange={(e) => save(e.target.checked ? { periods: [{ days: [1, 2, 3, 4, 5], from: 8, to: 15 }], prices: {} } : null)} />
+        Charge a lower Regular price at certain times
+      </label>
+      {op && (
+        <>
+          {op.periods.map((p, i) => (
+            <div key={i} className="activity-row">
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {WEEK_MON_FIRST.map((d) => (
+                  <label key={d.id} className="check">
+                    <input type="checkbox" checked={p.days.includes(d.id)}
+                      onChange={(e) => setPeriod(i, { days: e.target.checked ? [...p.days, d.id].sort() : p.days.filter((x) => x !== d.id) })} />
+                    {d.short}
+                  </label>
+                ))}
+              </div>
+              <span className="closure-hours" style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                <select aria-label={`Off-peak period ${i + 1}: from`} value={p.from}
+                  onChange={(e) => {
+                    const from = Number(e.target.value);
+                    setPeriod(i, { from, to: Math.max(p.to, Math.min(24, from + 1)) });
+                  }}>
+                  {times.slice(0, -1).map((t) => <option key={t} value={t}>{formatHour(t)}</option>)}
+                </select>
+                <span>to</span>
+                <select aria-label={`Off-peak period ${i + 1}: to`} value={p.to} onChange={(e) => setPeriod(i, { to: Number(e.target.value) })}>
+                  {times.filter((t) => t > p.from).map((t) => <option key={t} value={t}>{t === 24 ? "Midnight" : formatHour(t)}</option>)}
+                </select>
+                {op.periods.length > 1 && (
+                  <button type="button" className="btn small secondary danger-text"
+                    onClick={() => save({ ...op, periods: op.periods.filter((_, j) => j !== i) })}>Remove</button>
+                )}
+              </span>
+              {p.days.length === 0 && <p className="error" style={{ margin: "6px 0 0" }}>Tick at least one day.</p>}
+            </div>
+          ))}
+          {op.periods.length < MAX_OFF_PEAK_PERIODS && (
+            <button type="button" className="btn small secondary"
+              onClick={() => save({ ...op, periods: [...op.periods, { days: [6, 0], from: 8, to: 12 }] })}>+ Add another time</button>
+          )}
+
+          <div className="table-wrap" style={{ marginTop: 12 }}>
+            <table className="list price-grid">
+              <thead>
+                <tr><th></th><th>Off-peak price</th><th>Usual Regular price</th></tr>
+              </thead>
+              <tbody>
+                {sports.map((sp) => {
+                  const plan = s.rate_plans[sp.id];
+                  const value = op.prices[sp.id] as number | "" | undefined;
+                  const usual = plan.weekendRates && plan.weekend.regular !== plan.weekday.regular
+                    ? `${formatPeso(plan.weekday.regular)} weekdays, ${formatPeso(plan.weekend.regular)} weekends`
+                    : formatPeso(plan.weekday.regular);
+                  // Members could end up paying more than off-peak non-members.
+                  const member = plan.memberRates ? Math.min(plan.weekday.member, plan.weekendRates ? plan.weekend.member : Infinity) : null;
+                  return (
+                    <tr key={sp.id}>
+                      <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>{sp.emoji} {sp.label}</td>
+                      <td>
+                        <input type="number" min={0} step="0.01" placeholder="No off-peak"
+                          aria-label={`${sp.label} off-peak price per hour`}
+                          value={value ?? ""}
+                          onChange={(e) => {
+                            const prices = { ...op.prices } as Record<string, number | "">;
+                            if (e.target.value === "") delete prices[sp.id];
+                            else prices[sp.id] = Number(e.target.value);
+                            save({ ...op, prices: prices as Record<string, number> });
+                          }} />
+                        {typeof value === "number" && member !== null && value < member && (
+                          <div className="hint">Below the member price ({formatPeso(member)}): members can book at Regular then.</div>
+                        )}
+                      </td>
+                      <td className="muted">{usual}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="hint" style={{ margin: "8px 0 0" }}>
+            ₱ per court per hour, on every court for that sport, on the days ticked (holidays too). Only the Regular rate
+            changes. Member and Coach prices stay the same. A booking that runs past off-peak pays each part at its own
+            price, e.g. off-peak until 3 PM: 2–4 PM = 1 hour off-peak + 1 hour at the usual price. Leave a price blank for
+            no off-peak on that sport. New prices apply to new bookings only.
+          </p>
+        </>
+      )}
+    </fieldset>
+  );
+}
+
 const slug = (label: string) =>
   label.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 28);
 
@@ -921,6 +1033,10 @@ function ActivitiesSettings({
       set("rate_plans", plans);
       set("activity_courts", sharedCourts);
       set("court_rates", courtRates);
+      if (s.off_peak && oldId !== id && s.off_peak.prices[oldId] !== undefined) {
+        const { [oldId]: price, ...rest } = s.off_peak.prices;
+        set("off_peak", { ...s.off_peak, prices: { ...rest, [id]: price } });
+      }
       return;
     }
     set("activities", list);

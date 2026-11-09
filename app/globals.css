@@ -230,6 +230,9 @@ table.grid { border-collapse: separate; border-spacing: 0; width: 100%; min-widt
   font-size: 13px; color: var(--muted); padding: 4px 10px; width: 1%; z-index: 1;
   border-right: 1px solid var(--border);
 }
+/* Off-peak times (Settings → Prices): a yellow bar beside the time. */
+.grid .time.offpeak { box-shadow: inset -4px 0 0 var(--accent); color: var(--text); }
+.swatch.offpeak { background: var(--accent); border-color: var(--accent); }
 .grid tr:last-child td, .grid tr:last-child th { border-bottom: 0; }
 .slot {
   width: 100%; min-height: 36px; border-radius: 8px; border: 1px solid transparent;
@@ -980,6 +983,7 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 @media (max-width: 640px) { .holiday-add { grid-template-columns: 1fr 1fr; } }
 .holiday-banner { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; background: var(--brand-soft); font-weight: 600; font-size: 15px; }
 .holiday-banner.closed { background: var(--booked); color: var(--text); }
+.holiday-banner.offpeak { border-left: 4px solid var(--accent); font-weight: 500; }
 
 /* Reports (owner/managers) */
 .report-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }

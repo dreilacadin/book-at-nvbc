@@ -10,8 +10,9 @@ import {
   type ActiveStatus,
   type BookingStatus,
   isWeekend,
+  offPeakOn,
   planForCourt,
-  rateFor,
+  priceFor,
   ratesForDate,
   rateTypesFor,
   rateTypeLabel,
@@ -223,6 +224,8 @@ export async function getAvailability(date: string, requestedSport?: string, vie
       rates: ratesForDate(settings.rate_plans[sport], date, isHoliday), // courts with their own prices have `rates`
       rateTypes: rateTypesFor(settings.rate_plans[sport]),
       weekend: settings.rate_plans[sport].weekendRates && (isHoliday || isWeekend(date)),
+      // The sport's off-peak times on this date and their Regular price (null: none).
+      offPeak: offPeakOn(settings.off_peak, sport, date),
       // A holiday (open, or only partly closed) is priced like a weekend.
       holiday: holiday?.kind === "holiday" && !closedAllDay(holiday, settings.open_hour, settings.close_hour) ? holiday.name : null,
       memberCodeRequired: true, // the member rate needs an active member code (NVBC-XXXX-XXXX)
@@ -600,10 +603,12 @@ export async function createBooking(
       }
       rateType = "regular"; // staff picked member/coach for a sport without them: charge the standard rate
     }
-    // Each court's price: a shared court may have its own prices for this activity.
+    // Each court's price: a shared court may have its own prices for this activity. Hours in the
+    // sport's off-peak times cost its off-peak price at the Regular rate.
+    const offPeak = offPeakOn(settings.off_peak, sport, date);
     const priceOn = (id: number) => {
       const rates = ratesForDate(planForCourt(settings, sport, id)!, date, holiday?.kind === "holiday");
-      return noCharge ? computePrice(0, hours) : computePrice(rateFor(rates, rateType), hours, rates.regular);
+      return noCharge ? computePrice(0, hours) : priceFor(rates, rateType, offPeak, startHour, endHour);
     };
     const prices = new Map(allIds.map((id) => [id, priceOn(id)]));
     const price = prices.get(courtId)!;
@@ -1393,10 +1398,11 @@ export async function updateBooking(id: string, input: BookingEdit, by = "Staff"
     const cur = await client.query<{
       status: BookingStatus; payment_status: PaymentStatus; court_name: string; booking_date: string; start_hour: number;
       end_hour: number; player_name: string; contact: string; notes: string; rate_type: string; hourly_rate: number;
-      amount: number; payment_method: string; payment_ref: string; voucher_discount: number;
+      amount: number; payment_method: string; payment_ref: string; voucher_discount: number; activity: string;
     }>(
       `SELECT b.status, b.payment_status, c.name AS court_name, b.booking_date, b.start_hour, b.end_hour, b.player_name,
-              b.contact, b.notes, b.rate_type, b.hourly_rate, b.amount, b.payment_method, b.payment_ref, b.voucher_discount
+              b.contact, b.notes, b.rate_type, b.hourly_rate, b.amount, b.payment_method, b.payment_ref, b.voucher_discount,
+              COALESCE(b.activity, c.sport) AS activity
          FROM bookings b JOIN courts c ON c.id = b.court_id WHERE b.id = $1 FOR UPDATE OF b`,
       [id]
     );
@@ -1415,8 +1421,16 @@ export async function updateBooking(id: string, input: BookingEdit, by = "Staff"
       return fail(400, "That court doesn't exist.");
     }
 
+    // At the current price for this court and time, charge it exactly: with off-peak hours the
+    // hourly rate is an average (₱366.67 × 3 h would be ₱1,100.01, not ₱1,100).
+    const settings = await getSettings();
+    const plan = planForCourt(settings, b.activity, courtId);
+    const current = plan && priceFor(
+      ratesForDate(plan, date, (await holidayOn(date))?.kind === "holiday"), rateType, offPeakOn(settings.off_peak, b.activity, date), startHour, endHour
+    );
+    const total = current && Math.abs(current.hourlyRate - price.hourlyRate) < 0.005 ? current.total : price.total;
     // A voucher on it still takes its share off the new price.
-    const amount = Math.max(0, Math.round((price.total - Number(b.voucher_discount)) * 100) / 100);
+    const amount = Math.max(0, Math.round((total - Number(b.voucher_discount)) * 100) / 100);
     const status = activeBookingStatus(paymentMethod, b.payment_status, amount);
     await client.query(
       `UPDATE bookings SET court_id = $2, booking_date = $3, start_hour = $4, end_hour = $5,

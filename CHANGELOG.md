@@ -24,6 +24,18 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Off-peak prices.** At NVBC's quieter times, the Regular price can be lower.
+  Off-peak times are marked with a yellow bar on the booking grid, with the price
+  above it. A booking that runs past off-peak is charged off-peak for those hours
+  and the usual price for the rest, shown line by line before you confirm.
+  Member and Coach prices stay the same.
+- **Staff:** **Off-peak prices** under Settings: add one or more times of the week
+  (days and hours, e.g. Mon–Fri 8 AM–3 PM) and a lower Regular price per sport
+  or activity (blank = no off-peak). It covers every court for that sport, and
+  holidays too when their weekday is ticked. Off until you turn it on. Online
+  time changes stay at the same price, so a booking isn't moved between off-peak
+  and peak times. In Edit booking, **Use current price** includes off-peak.
+- **Database:** settings: the off-peak times and prices (`off_peak`).
 - **Pay cash as a walk-in.** During NVBC's cash hours (for example 1–5 PM), you
   can choose **Cash** and pay at the front desk, like a walk-in: for a booking
   today that starts soon (for example within the hour) and is all within those

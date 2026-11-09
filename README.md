@@ -32,6 +32,7 @@ What's new or changed: see [CHANGELOG.md](CHANGELOG.md) — also shown to the pu
 - **Refund policy** (shown when booking and when cancelling): payments by GCash, QR Ph or bank transfer are refundable if the booking is cancelled at least 12 hours before the start time; later cancellations are non-refundable.
 - Direct links to a sport work: `/?sport=badminton` or `/?sport=pickleball`.
 - **Prices**: each sport has its own **Regular** (non-member), **Member** and **Coach** price per court per hour, set in /admin → Settings — optionally with different weekend (Sat–Sun) prices. Member and Coach prices can each be switched off per sport; with both off, the sport has one standard rate for everyone. Players pick which one they're booking as and see the total (and how much they save vs. regular) before they confirm.
+- **Off-peak prices** (Settings → Off-peak prices): set one or more off-peak times (days of the week and hours, e.g. Mon–Fri 8 AM–3 PM) and a lower Regular price per sport. Member and Coach prices don't change, and holidays get off-peak too when their weekday is ticked. Off-peak hours are marked on the booking grid, and a booking that runs past off-peak pays each part at its own price (the booking's hourly rate is then the average).
 - **Payments**: players see the amount and how to pay (your GCash number, your QR Ph code, or your BPI account) right after booking, then enter the payment reference number, upload a screenshot of the receipt, or both. Staff see it in /admin → Bookings marked **For verification** (with a 📷 Screenshot link), check it against the GCash/bank app, and switch it to **Paid**.
 
 Built with Next.js (App Router) + PostgreSQL. No other services needed.
@@ -98,7 +99,7 @@ The app also accepts `POSTGRES_URL` and prefixed names like `STORAGE_DATABASE_UR
 
 Open /admin → **Settings**:
 
-1. **Prices** — set the Non-member, Member and Coach price per court per hour for badminton and pickleball (they start as placeholders). Tick **Separate weekend prices** to charge different prices on Saturdays and Sundays, and untick **Member price** or **Coach price** to stop offering that rate for the sport (untick both for one standard rate).
+1. **Prices** — set the Non-member, Member and Coach price per court per hour for badminton and pickleball (they start as placeholders). Tick **Separate weekend prices** to charge different prices on Saturdays and Sundays, and untick **Member price** or **Coach price** to stop offering that rate for the sport (untick both for one standard rate). Under **Off-peak prices**, add the quiet times of the week and a lower Regular price for each sport (leave a sport blank for no off-peak).
 2. **Member code / Coach code (optional)** — if you fill these in, players must type the code to get the member/coach price. Give the code only to your members/coaches and change it if it spreads. If you leave them blank, anyone can choose Member/Coach and staff check at the desk (the booking list shows who booked at which rate).
 3. **Payment methods** — tick the ones you accept and fill in your GCash number (use **+ Add another GCash number** for up to 4 more; players can pay to any of them), BPI account, and upload your QR Ph code (a screenshot from your bank/GCash merchant app is fine). A method stays hidden from players until its details are filled in.
 4. **Payment note (optional)** — e.g. "Please pay within 2 hours of booking."
@@ -141,7 +142,7 @@ Each booking has its own conversation. Customers write from **My booking**; staf
 
 - **Activities** (Settings → Activities and shared courts): let a sport use other courts (e.g. pickleball on badminton courts) and add activities like Zumba with their own courts and prices. Each appears as a tab on Book a court; one court can only hold one booking at a time, whatever it's for. A ticked court can have **Own prices** for that sport or activity (otherwise it uses the sport's prices).
 - **Group bookings:** in the booking form, players can add more courts free at the same time. They share one code, QR and payment; the extra courts point to the first booking (`group_id`).
-- **Rescheduling** (Settings → Rescheduling): customers can move a booking on My booking to a free court/time of the same sport, length and price, up to N hours before the start, M times (0 = off). Group bookings go through staff.
+- **Rescheduling** (Settings → Rescheduling): customers can move a booking on My booking to a free court/time of the same sport, length and price (so not between off-peak and peak times), up to N hours before the start, M times (0 = off). Group bookings go through staff.
 - **Waitlist:** tapping a taken slot lets players ask to be notified (push and/or email). When a booking is cancelled, released or moved, everyone waiting for a now-free time hears at once.
 - **Calendar:** confirmation and reminder emails carry an .ics file and a Google Calendar link; the confirmation and My booking have "Add to calendar".
 

@@ -13,8 +13,12 @@ import {
   isPaymentStatus,
   isRateType,
   isWeekend,
+  offPeakHours,
+  offPeakOn,
+  parseOffPeak,
   paymentLabel,
   planForCourt,
+  priceFor,
   rateFor,
   ratesForDate,
   rateTypeLabel,
@@ -248,4 +252,65 @@ test("toCourtRates: keeps activities and court ids, fills missing prices", () =>
     { pickleball: { "4": { weekendRates: false, weekday: { regular: 500, member: 500, coach: 500 }, weekend: { regular: 500, member: 500, coach: 500 } } } }
   );
   assert.deepEqual(toCourtRates(null, isActivity), {});
+});
+
+test("parseOffPeak: periods and per-sport prices; blank prices mean no off-peak for that sport", () => {
+  assert.equal(parseOffPeak(null), null);
+  assert.equal(parseOffPeak({ periods: [], prices: { badminton: 300 } }), null); // no periods: off
+  assert.deepEqual(
+    parseOffPeak({ periods: [{ days: [5, 1, 1, "2"], from: 8, to: 15.5 }], prices: { badminton: "300", pickleball: "", zumba: 250.555 } }),
+    { periods: [{ days: [1, 2, 5], from: 8, to: 15.5 }], prices: { badminton: 300, zumba: 250.56 } }
+  );
+  // Unknown activities are dropped.
+  assert.deepEqual(parseOffPeak({ periods: [{ days: [0], from: 6, to: 9 }], prices: { gone: 100 } }, (id) => id !== "gone"),
+    { periods: [{ days: [0], from: 6, to: 9 }], prices: {} });
+  for (const bad of [
+    { periods: [{ days: [], from: 8, to: 10 }] }, // no days
+    { periods: [{ days: [1], from: 10, to: 10 }] }, // ends at the start
+    { periods: [{ days: [1], from: 8.25, to: 10 }] }, // not a half hour
+    { periods: [{ days: [1], from: 8, to: 25 }] },
+    { periods: [{ days: [1], from: 8, to: 10 }], prices: { badminton: -5 } },
+    { periods: [{ days: [1], from: 8, to: 10 }], prices: { badminton: "abc" } },
+    "yes",
+  ]) assert.equal(parseOffPeak(bad), "invalid", JSON.stringify(bad));
+});
+
+test("offPeakOn: the sport's off-peak times on that weekday, overlapping periods merged", () => {
+  const op = {
+    periods: [
+      { days: [1, 2, 3, 4, 5], from: 8, to: 12 },
+      { days: [1], from: 11, to: 15 }, // overlaps on Mondays
+      { days: [6], from: 6, to: 9 },
+    ],
+    prices: { badminton: 300 },
+  };
+  assert.deepEqual(offPeakOn(op, "badminton", "2026-11-09"), { price: 300, ranges: [[8, 15]] }); // Monday
+  assert.deepEqual(offPeakOn(op, "badminton", "2026-11-10"), { price: 300, ranges: [[8, 12]] }); // Tuesday
+  assert.deepEqual(offPeakOn(op, "badminton", "2026-11-14"), { price: 300, ranges: [[6, 9]] }); // Saturday
+  assert.equal(offPeakOn(op, "badminton", "2026-11-15"), null); // Sunday: none
+  assert.equal(offPeakOn(op, "pickleball", "2026-11-09"), null); // no off-peak price
+  assert.equal(offPeakOn(null, "badminton", "2026-11-09"), null);
+  assert.equal(offPeakHours({ price: 300, ranges: [[8, 12], [14, 16]] }, 11, 15), 2); // 11–12 and 14–15
+  assert.equal(offPeakHours(null, 8, 10), 0);
+});
+
+test("priceFor: each part at its own price at the Regular rate; Member and Coach unchanged", () => {
+  const rates = { regular: 400, member: 320, coach: 280 };
+  const op = { price: 300, ranges: [[8, 15]] as [number, number][] };
+  // All off-peak.
+  assert.deepEqual(priceFor(rates, "regular", op, 9, 11), { hourlyRate: 300, regularRate: 300, hours: 2, total: 600, savings: 0, offPeakHours: 2 });
+  // 2:00–5:00 PM: one hour off-peak, two at the usual price.
+  const mixed = priceFor(rates, "regular", op, 14, 17);
+  assert.equal(mixed.total, 1100);
+  assert.equal(mixed.offPeakHours, 1);
+  assert.equal(mixed.hourlyRate, 366.67); // the average
+  // Half hours.
+  assert.equal(priceFor(rates, "regular", op, 14.5, 16).total, 150 + 400);
+  // Outside off-peak: as before.
+  assert.deepEqual(priceFor(rates, "regular", op, 16, 18), { ...computePrice(400, 2), offPeakHours: 0 });
+  assert.deepEqual(priceFor(rates, "regular", null, 9, 11), { ...computePrice(400, 2), offPeakHours: 0 });
+  // Members pay the member price; savings are against the Regular price including off-peak.
+  assert.deepEqual(priceFor(rates, "member", op, 9, 11), { hourlyRate: 320, regularRate: 300, hours: 2, total: 640, savings: 0, offPeakHours: 0 });
+  assert.equal(priceFor(rates, "member", op, 14, 17).savings, 1100 - 960);
+  assert.equal(priceFor(rates, "coach", op, 16, 18).total, 560);
 });

@@ -925,3 +925,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS bookings_share_token_idx ON bookings (share_to
 -- Settings → Payment methods: times when everyone (not only coaches) may pay cash at the front desk,
 -- e.g. {"from": 13, "to": 17} for 1–5 PM. Hours of the day in half-hour steps; NULL = off.
 ALTER TABLE settings ADD COLUMN IF NOT EXISTS cash_hours JSONB;
+
+-- v40: off-peak prices ------------------------------------------------------------------------------
+-- Settings → Prices: times of the week when the Regular price is replaced by each sport's off-peak
+-- price, e.g. {"periods": [{"days": [1,2,3,4,5], "from": 8, "to": 15}], "prices": {"badminton": 300}}.
+-- Days 0 = Sunday … 6 = Saturday; half-hour times; a sport without a price has no off-peak. NULL = off.
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS off_peak JSONB;
