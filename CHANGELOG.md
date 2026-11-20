@@ -294,6 +294,8 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Changed
 
+- **Staff:** Stringing: a picked-up racket shows who released it at the desk
+  and when, in the **Picked up** list and on the order ("released by …").
 - Tidier links at the top of the page: **Book a court**, **My booking**,
   **Stringing** and **Membership** all fit on a phone (none hidden off the
   edge), and **Changelog** moved to the page footer.
@@ -331,6 +333,9 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Fixed
 
+- **Staff:** Strings & stock: **Edit** on a string looked like it did nothing,
+  because its form is below the list. It now scrolls to the form and marks
+  the string as "Editing…".
 - Coaches who pay after their session were told to pay by a deadline before it
   (or "before the timer runs out"). The booking now says to pay after the
   session, and that the slot is kept for you.

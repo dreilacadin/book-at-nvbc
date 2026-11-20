@@ -275,7 +275,7 @@ export default function StringingTab({
                       {r.status === "checked_in" && <span className="hint">checked in {when(r.created_at)}</span>}
                       {r.status === "in_progress" && <span className="hint">by {r.started_by} · {when(r.started_at)}</span>}
                       {r.status === "done" && <span className="hint">done by {r.done_by} · {when(r.done_at)}</span>}
-                      {r.status === "picked_up" && <span className="hint">picked up {when(r.picked_up_at)}</span>}
+                      {r.status === "picked_up" && <span className="hint">released by {r.picked_up_by} · {when(r.picked_up_at)}</span>}
                     </span>
                   </span>
                 </button>
@@ -566,7 +566,7 @@ function OrderModal({ id, me, tagQr, onAuthError, onClose }: { id: string; me: s
                       r.grommets_single + r.grommets_double)} />
                     <span className="hint">
                       {[r.received_at && `Received by ${r.received_by}, ${when(r.received_at)}`, r.started_at && `started by ${r.started_by}, ${when(r.started_at)}`,
-                        r.done_at && `done by ${r.done_by}, ${when(r.done_at)}`, r.picked_up_at && `picked up (${r.picked_up_by}), ${when(r.picked_up_at)}`,
+                        r.done_at && `done by ${r.done_by}, ${when(r.done_at)}`, r.picked_up_at && `picked up, released by ${r.picked_up_by}, ${when(r.picked_up_at)}`,
                         r.cancelled_at && `cancelled by ${r.cancelled_by}, ${when(r.cancelled_at)}`].filter(Boolean).join(" · ")}
                     </span>
                     <div className="actions start" style={{ marginTop: 10 }}>
@@ -800,6 +800,16 @@ function StringsPage({ manage, onAuthError, onBack }: { manage: boolean; onAuthE
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // The string form sits below the list, so Edit brings it into view (it looked like nothing happened).
+  function editString(s: StringItem) {
+    setForm({ id: s.id, brand: s.brand, model: s.model, colors: s.colors.join(", "), price: String(s.price), stock: {}, active: s.active });
+    requestAnimationFrame(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      formRef.current?.querySelector<HTMLInputElement>("#ss-b")?.focus({ preventScroll: true });
+    });
+  }
 
   const load = useCallback(async () => {
     try {
@@ -907,7 +917,7 @@ function StringsPage({ manage, onAuthError, onBack }: { manage: boolean; onAuthE
                           <button type="button" className="btn small" disabled={busy} onClick={() => openStock(s, "add")}>+ Delivery</button>
                           <button type="button" className="btn small secondary" disabled={busy} onClick={() => openStock(s, "set")}>Count</button>
                           <button type="button" className="link-btn" onClick={() => showMoves(s.id)}>{moves?.id === s.id ? "Hide history" : "History"}</button>
-                          <button type="button" className="link-btn" onClick={() => setForm({ id: s.id, brand: s.brand, model: s.model, colors: s.colors.join(", "), price: String(s.price), stock: {}, active: s.active })}>Edit</button>
+                          <button type="button" className="link-btn" onClick={() => editString(s)}>{form.id === s.id ? "Editing…" : "Edit"}</button>
                           {manage && (
                             <button type="button" className="link-btn danger-text" onClick={async () => (await confirmDialog(`Remove ${stringName(s)}? If rackets used it, it's hidden from customers instead.`, { confirmLabel: "Remove", danger: true })) &&
                               run({ action: "string-delete", id: s.id }, `${stringName(s)} removed.`)}>Remove</button>
@@ -978,7 +988,7 @@ function StringsPage({ manage, onAuthError, onBack }: { manage: boolean; onAuthE
         )
       )}
 
-      <form className="card stack" onSubmit={async (e) => {
+      <form ref={formRef} className="card stack" onSubmit={async (e) => {
         e.preventDefault();
         const colors = typedColors(form.colors);
         const stock = Object.fromEntries((colors.length ? colors : [""]).map((c) => [c, form.stock[c] ?? ""]));
