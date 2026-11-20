@@ -38,6 +38,7 @@ import ProofViewer from "./ProofViewer";
 import QrScanner from "./QrScanner";
 import { useCanManage } from "./role";
 import { api, type AdminBooking, type Court, type PaymentReuse } from "./shared";
+import { alertDialog, confirmDialog } from "@/components/Dialogs";
 
 /** Refund wording for cancelling this booking now (online payments: 12-hour rule). */
 export function refundNote(b: AdminBooking): string {
@@ -378,9 +379,9 @@ function RejectPayment({ b, busy, onReject, onCancel }: { b: AdminBooking; busy:
   const soon = minutesUntilStart(b.date, b.start_hour, nowAtFacility()) <= RELEASE_MINUTES + 1;
   const reach = [b.alert_devices > 0 ? "push notification" : "", b.customer_email ? "email" : ""].filter(Boolean).join(" and ");
   return (
-    <form className="reject-box" onSubmit={(e) => {
+    <form className="reject-box" onSubmit={async (e) => {
       e.preventDefault();
-      if (soon && !window.confirm(`This booking starts within ${RELEASE_MINUTES} minutes, so rejecting the payment releases the slot right away. Reject anyway?`)) return;
+      if (soon && !(await confirmDialog(`This booking starts within ${RELEASE_MINUTES} minutes, so rejecting the payment releases the slot right away. Reject anyway?`))) return;
       onReject(note.trim());
     }}>
       <strong>Reject this payment</strong>
@@ -499,12 +500,12 @@ export function AdminBookingCard({
       }
     })();
   }, [verifying, b, saveChecks]);
-  const confirmPayment = () => {
+  const confirmPayment = async () => {
     if (verifying) {
       const warn = checksLeft
         ? [`${checksLeft} check${checksLeft > 1 ? "s aren't" : " isn't"} ticked yet.`, b.payment_reuse.length ? "This reference number or screenshot was also sent for another booking." : ""].filter(Boolean)
         : [];
-      if (warn.length && !window.confirm(`${warn.join("\n")}\n\nConfirm ${b.name}'s payment of ${formatPeso(b.amount)} anyway?`)) return;
+      if (warn.length && !(await confirmDialog(`${warn.join("\n")}\n\nConfirm ${b.name}'s payment of ${formatPeso(b.amount)} anyway?`))) return;
     }
     run({ action: "payment", id: b.id, status: "paid", method });
   };
@@ -523,7 +524,7 @@ export function AdminBookingCard({
     try {
       const r = await api<{ coaching?: string | null }>("/api/admin/bookings", body);
       // Restored, but its coaching session couldn't come back (the coach is busy or inactive now).
-      if (r && typeof r.coaching === "string") window.alert(`Booking restored. ${r.coaching}`);
+      if (r && typeof r.coaching === "string") void alertDialog(`Booking restored. ${r.coaching}`);
       onChanged();
     } catch (e) {
       onAuthError(e);
@@ -546,14 +547,14 @@ export function AdminBookingCard({
   const released = shown === "released";
   const release = releaseNote(b);
   const played = phase ? `\n\nThis booking is marked ${phaseLabel(phase).toLowerCase()} — it has already been played.` : "";
-  const cancel = () => window.confirm(`Cancel ${b.name}'s booking (${b.code})?${refundNote(b)}${played}`) && run({ action: "cancel", id: b.id });
+  const cancel = async () => (await confirmDialog(`Cancel ${b.name}'s booking (${b.code})?${refundNote(b)}${played}`, { confirmLabel: "Yes, cancel", cancelLabel: "Keep", danger: true })) && run({ action: "cancel", id: b.id });
   const setPhase = (p: Phase | null) => run({ action: "phase", id: b.id, phase: p });
-  const restore = (p: Phase | null) =>
-    window.confirm(
+  const restore = async (p: Phase | null) =>
+    (await confirmDialog(
       `Restore ${b.name}'s booking (${b.code}) as ${p ? phaseLabel(p) : "upcoming"}? It takes its time slot back and won't be released for non-payment again.`
-    ) && run({ action: "restore", id: b.id, phase: p });
-  const remove = () =>
-    window.confirm(`Permanently delete ${b.name}'s cancelled booking (${b.code})? This can't be undone.`) && run({ action: "delete", id: b.id });
+    )) && run({ action: "restore", id: b.id, phase: p });
+  const remove = async () =>
+    (await confirmDialog(`Permanently delete ${b.name}'s cancelled booking (${b.code})? This can't be undone.`, { confirmLabel: "Delete", danger: true })) && run({ action: "delete", id: b.id });
   const remind = async () => {
     try {
       await api("/api/admin/members", { action: "remind", id: b.expired_member_id });
@@ -652,8 +653,8 @@ export function AdminBookingCard({
               {unpaid && b.status !== "cancelled" && (
                 <>
                   {" "}
-                  <button type="button" className="link-btn" disabled={busy} onClick={() =>
-                    window.confirm(`Remove voucher ${b.voucher_code} from ${b.group_code}? The booking goes back to its full price and the voucher gets its value back.`) &&
+                  <button type="button" className="link-btn" disabled={busy} onClick={async () =>
+                    (await confirmDialog(`Remove voucher ${b.voucher_code} from ${b.group_code}? The booking goes back to its full price and the voucher gets its value back.`, { confirmLabel: "Remove", danger: true })) &&
                     run({ action: "remove-voucher", id: b.id })}>Remove</button>
                 </>
               )}
@@ -755,8 +756,8 @@ export function AdminBookingCard({
         <div className={b.coach_code_misuse ? "rejected-note" : "group-note"}>
           🧑‍🏫 Booked with {b.coach_id ? <>coach <strong>{b.coach_name}</strong>&apos;s own code</> : <>the <strong>shared coach code</strong></>}
           {b.coach_code_misuse && <> — <strong>flagged: code used by someone else</strong></>}.{" "}
-          <button type="button" className="link-btn" disabled={busy} onClick={() => {
-            if (b.coach_code_misuse || window.confirm(`Flag this booking: the coach code was used by someone who isn't ${b.coach_name ?? "a coach"}? It's counted on the coach in the Coaches tab. Consider charging the regular rate at the desk${b.coach_id ? " and giving the coach a new code" : ""}.`))
+          <button type="button" className="link-btn" disabled={busy} onClick={async () => {
+            if (b.coach_code_misuse || (await confirmDialog(`Flag this booking: the coach code was used by someone who isn't ${b.coach_name ?? "a coach"}? It's counted on the coach in the Coaches tab. Consider charging the regular rate at the desk${b.coach_id ? " and giving the coach a new code" : ""}.`, { confirmLabel: "Flag" })))
               run({ action: "coach-misuse", id: b.id, on: !b.coach_code_misuse });
           }}>{b.coach_code_misuse ? "Remove flag" : "Flag misuse"}</button>
         </div>
@@ -770,7 +771,7 @@ export function AdminBookingCard({
             <>
               {" "}
               <button type="button" className="link-btn" disabled={busy}
-                onClick={() => window.confirm(`Put ${b.coaching_coach}'s coaching session back on this booking? ${b.coaching_coach} will be told.`) && run({ action: "restore-coaching", id: b.id })}>
+                onClick={async () => (await confirmDialog(`Put ${b.coaching_coach}'s coaching session back on this booking? ${b.coaching_coach} will be told.`, { confirmLabel: "Restore" })) && run({ action: "restore-coaching", id: b.id })}>
                 Put coaching back
               </button>
             </>
@@ -814,8 +815,8 @@ export function AdminBookingCard({
                 </select>
               </label>
               {minutesUntilStart(b.date, b.start_hour, nowAtFacility()) <= 0 && (
-                <button className="btn small secondary" disabled={busy} onClick={() => {
-                  if (b.no_show || window.confirm(`Mark ${b.name} as a no-show? Staff will see it when they book again.`))
+                <button className="btn small secondary" disabled={busy} onClick={async () => {
+                  if (b.no_show || (await confirmDialog(`Mark ${b.name} as a no-show? Staff will see it when they book again.`, { confirmLabel: "Mark" })))
                     run({ action: "noshow", id: b.id, on: !b.no_show });
                 }}>
                   {b.no_show ? "Undo no-show" : "🚫 Mark no-show"}
@@ -921,7 +922,7 @@ function PayReminder({ b, onSent, onAuthError }: { b: AdminBooking; onSent: () =
   const email = b.coach_id ? "their coach account email" : b.customer_email; // used when no device gets the push
   async function send() {
     const due = formatPeso(b.group_size > 1 ? b.group_total : b.amount);
-    if (!window.confirm(`Send ${b.coach_id ? b.coach_name ?? "the coach" : b.name} ${devices ? "a push notification" : "an email"} to pay ${due} for ${b.group_code}?`)) return;
+    if (!(await confirmDialog(`Send ${b.coach_id ? b.coach_name ?? "the coach" : b.name} ${devices ? "a push notification" : "an email"} to pay ${due} for ${b.group_code}?`, { confirmLabel: "Send" }))) return;
     setBusy(true);
     setNote(null);
     try {

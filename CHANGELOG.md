@@ -24,6 +24,53 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Racket stringing.** Check in your racket for stringing by scanning the QR
+  code at the front desk, or from **Stringing** at the top of every page.
+  Choose your racket, the string (buy one from NVBC or bring your own), the
+  tension (24–30 lbs, or a custom setting like 24 × 26), pre-stretch (5–20%,
+  optional), Standard or ⚡ Rush, your collection date, and grommets. You can
+  add more than one racket, and see the price as you go, laid out like a
+  receipt. Pay online (GCash and others) or with cash at the desk. Your
+  rackets' page shows each step (received, stringing, ready, picked up) and
+  updates by itself while it's open, plus anything the stringer noticed about
+  your racket (e.g. a slight crack in the frame). You get a notification or
+  email when it's ready, and can rate the stringing service after pickup.
+  Your details and last rackets are remembered on your phone for next time.
+- **Staff:** **Stringing** tab:
+  - **The queue:** rackets to receive, waiting, being strung, ready and picked
+    up, with rush and late rackets marked. After **Start** or **Done** it
+    follows the racket to the next step, and remembers the step you're on.
+  - **Receiving:** one tap. Who received it is whoever is logged in (it can't
+    be changed), and you can take payment at the same time. Write the racket's
+    number on a blank tag (A4, 18 per page: a big number and Paid / Not yet
+    paid / Rush boxes) — everything else is found by searching the number.
+    Once you have a label printer, switch on **Print tags with QR codes** to
+    print each tag on receiving, with a QR code that opens the racket.
+  - **Checking in:** check in walk-ins without data; returning customers fill
+    in from their mobile number.
+  - **Online payments:** check them, with a warning if a reference or
+    screenshot was used before.
+  - **SMS:** copy ready-made "ready" and "thank you" texts (also from the
+    **💬 SMS** button next to **Picked up**).
+  - **Strings & stock:** every staff member can add the strings NVBC sells and
+    their stock, counted per colour (sets, one per racket). A string bought at
+    check-in comes off that colour's stock and goes back if the racket is
+    cancelled. Add a delivery or set the count for all the colours at once,
+    with a history of every change. Customers can't choose a string or colour
+    that's out of stock.
+- **Staff:** **Stringer** accounts (Staff → Access) see only the stringing
+  queue: tap **Start** and **Done** (or scan a tag), and add **📝 Remarks**
+  about a racket (a crack, a loose grip…) that the desk and the customer see. Owners and managers set
+  the labour, rush and grommet prices, turnaround days and QR tags, and get a
+  **Stringer report** (rackets each stringer finished, for paying them per
+  racket) with customer feedback.
+- **Database:** racket stringing: `stringing_strings`, `stringing_stock`
+  (sets per string and colour), `stringing_stock_moves`, `stringing_orders`, `stringing_rackets` (with
+  `prestretch` and `remarks`), `stringing_events`, `stringing_push_subscriptions`, the
+  `stringing_tag_seq` tag numbers, `settings.stringing` (prices and the QR
+  tag setting), and the `stringer` staff role. The older step that sets the
+  staff roles now allows `stringer` too, so setting up the database again
+  doesn't fail once a Stringer account exists.
 - **Free On Deck session vouchers.** NVBC can now give vouchers for a free
   **Pickleball Open Play** or **Badminton Queueing** session at NVBC On Deck
   (ondeck.nvbc.app). Show the voucher or its QR code to the On Deck staff when
@@ -247,6 +294,19 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Changed
 
+- Tidier links at the top of the page: **Book a court**, **My booking**,
+  **Stringing** and **Membership** all fit on a phone (none hidden off the
+  edge), and **Changelog** moved to the page footer.
+- **Staff:** Tidier dashboard tabs. On a phone they're now a grid of tiles with
+  icons, so every tab shows at once (none cut off at the edge). The dashboard
+  also remembers which tab you're on, so reloading the page keeps you there
+  (the address shows it, e.g. **/admin?tab=stringing**).
+- **Staff:** More breathing space in the dashboard and the stringing screens.
+- **Staff:** Questions like "Delete this?", "Why are you rejecting this
+  payment?" and new passwords now open in the site's own pop-up instead of the
+  browser's grey box, with clear buttons (red for deleting and cancelling).
+  Typing **DELETE** to delete a member now keeps the Delete button off until
+  it's typed.
 - **Staff:** A simpler booking card. One **Payment** box shows the court fee,
   any voucher (with Remove), what's left to pay and what was sent, then the
   checks. A reference or screenshot used on another booking is now one of the

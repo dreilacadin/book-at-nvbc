@@ -13,14 +13,14 @@ export type AdminUser = {
   created_at: string;
   last_login_at: string | null;
   created_by: string;
-  role: "manager" | "staff";
+  role: "manager" | "staff" | "stringer";
 };
 
 type Result<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
 const fail = (status: number, error: string) => ({ ok: false as const, status, error });
 
 const COLUMNS = `id, username, display_name, is_active, token_version, created_at, last_login_at, created_by, role`;
-const isRole = (v: unknown): v is AdminUser["role"] => v === "manager" || v === "staff";
+const isRole = (v: unknown): v is AdminUser["role"] => v === "manager" || v === "staff" || v === "stringer";
 
 // A fixed hash to compare against when the username doesn't exist, so a wrong username takes
 // as long as a wrong password (no hint about which usernames exist).
@@ -72,7 +72,7 @@ export async function createAdmin(input: Record<string, unknown>, createdBy: str
   if (!name) return fail(400, "Enter the person's name.");
   if (!password) return fail(400, "Passwords need at least 8 characters.");
   const role = input.role === undefined ? "staff" : input.role;
-  if (!isRole(role)) return fail(400, "Choose Manager or Staff.");
+  if (!isRole(role)) return fail(400, "Choose Manager, Staff or Stringer.");
   try {
     const { rows } = await db().query<AdminUser>(
       `INSERT INTO admin_users (username, display_name, password_hash, created_by, role)
@@ -95,7 +95,7 @@ export async function updateAdmin(id: unknown, input: Record<string, unknown>, m
   const active = typeof input.active === "boolean" ? input.active : undefined;
   if (active === false && n === me) return fail(400, "You can't disable your own account.");
   const role = input.role === undefined ? undefined : input.role;
-  if (role !== undefined && !isRole(role)) return fail(400, "Choose Manager or Staff.");
+  if (role !== undefined && !isRole(role)) return fail(400, "Choose Manager, Staff or Stringer.");
   if (role !== undefined && n === me) return fail(400, "You can't change your own role.");
   const { rows } = await db().query<AdminUser>(
     `UPDATE admin_users SET display_name = COALESCE($2, display_name),

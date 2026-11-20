@@ -5,6 +5,7 @@ import { BLOCK_LABELS, describeRepeat, WEEKDAYS, type CourtBlock } from "@/lib/b
 import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import { SPORTS } from "@/lib/sports";
 import { api, todayManila, type Court } from "./shared";
+import { confirmDialog } from "@/components/Dialogs";
 
 /** Staff: take courts out of public booking at set times — Open Play, Queueing, Reserved, … */
 export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]; onAuthError: (e: unknown) => void }) {
@@ -28,7 +29,7 @@ export default function ReservedTimes({ courts, onAuthError }: { courts: Court[]
   }, [load]);
 
   async function remove(b: CourtBlock) {
-    if (!window.confirm(`Remove "${b.label}" (${summary(b, courts)})? Those times become bookable again.`)) return;
+    if (!(await confirmDialog(`Remove "${b.label}" (${summary(b, courts)})? Those times become bookable again.`, { confirmLabel: "Remove", danger: true }))) return;
     try {
       await api("/api/admin/blocks", { action: "delete", id: b.id });
       setNotice("");

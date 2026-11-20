@@ -28,6 +28,7 @@ import type { AdminVoucher, VoucherEvent, VoucherUse } from "@/lib/vouchers";
 import QrScanner from "./QrScanner";
 import { useCanManage } from "./role";
 import { api, todayManila } from "./shared";
+import { confirmDialog, copyDialog, promptDialog } from "@/components/Dialogs";
 
 // Admin → Vouchers: the list (search, scan, filter, print), creating vouchers, and each voucher's
 // own page (status, dates, terms, balance, the bookings it was used on, and its history).
@@ -43,7 +44,7 @@ const dateOrNone = (d: string | null) => (d ? formatDateLong(d) : "No expiry");
 /** Deletes vouchers after a confirm; a message for staff, or null if they cancelled. */
 async function deleteVouchers(vouchers: { id: string; code: string }[]): Promise<{ ok: boolean; text: string; deleted: number } | null> {
   const what = vouchers.length === 1 ? vouchers[0].code : `${vouchers.length} vouchers`;
-  if (!window.confirm(`Delete ${what} for good? Printed copies stop working, and this can't be undone. (A voucher that's been used is kept — void it or mark it redeemed instead.)`))
+  if (!(await confirmDialog(`Delete ${what} for good? Printed copies stop working, and this can't be undone. (A voucher that's been used is kept — void it or mark it redeemed instead.)`, { confirmLabel: "Delete", danger: true })))
     return null;
   try {
     const r = await api<{ deleted: string[]; kept: { code: string; used: number }[] }>("/api/admin/vouchers", { action: "delete", ids: vouchers.map((v) => v.id) });
@@ -350,7 +351,7 @@ function CreateVouchers({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (qty > 1 && f.issuedTo && !window.confirm(`Create ${qty} vouchers all issued to ${f.issuedTo}?`)) return;
+    if (qty > 1 && f.issuedTo && !(await confirmDialog(`Create ${qty} vouchers all issued to ${f.issuedTo}?`, { confirmLabel: "Create" }))) return;
     setBusy(true);
     setError("");
     try {
@@ -582,23 +583,25 @@ function VoucherPage({
       setBusy(false);
     }
   }
-  const setStatus = (status: VoucherStatus) => {
+  const setStatus = async (status: VoucherStatus) => {
     if (status === "void") {
-      const reason = window.prompt(
-        `Void ${v.code}? It stops working right away (bookings it's already on keep their discount). Why? (e.g. "Lost", "Replaced by VCH-…")`
+      const reason = await promptDialog(
+        "It stops working right away (bookings it's already on keep their discount). Why?",
+        { title: `Void ${v.code}?`, placeholder: "e.g. Lost, or Replaced by VCH-…", confirmLabel: "Void", danger: true, maxLength: 300 }
       );
       if (reason === null) return;
       return run({ action: "status", status, reason }, "Voucher voided.");
     }
     if (status === "redeemed") {
       const left = hasBalance(v.kind) && v.balance > 0 ? ` What's left (${voucherLeftLabel(v).replace(/ of .*/, "")}) is used up.` : "";
-      const reason = window.prompt(
-        `Mark ${v.code} as redeemed? It stops working, and the card shows REDEEMED.${left} How was it redeemed? (e.g. "Used at the desk for a walk-in, OR 1234")`
+      const reason = await promptDialog(
+        `It stops working, and the card shows REDEEMED.${left} How was it redeemed?`,
+        { title: `Mark ${v.code} as redeemed?`, placeholder: "e.g. Used at the desk for a walk-in, OR 1234", confirmLabel: "Mark redeemed", maxLength: 300 }
       );
       if (reason === null) return;
       return run({ action: "status", status, reason }, "Voucher marked redeemed.");
     }
-    if (v.status === "redeemed" && !window.confirm(`Undo redeemed on ${v.code}? It works again, with what it had left given back.`)) return;
+    if (v.status === "redeemed" && !(await confirmDialog(`Undo redeemed on ${v.code}? It works again, with what it had left given back.`, { confirmLabel: "Undo" }))) return;
     run({ action: "status", status }, status === "paused" ? "Voucher paused — it can't be used until it's activated again."
       : v.status === "redeemed" ? "Redeemed undone — the voucher works again." : "Voucher activated.");
   };
@@ -619,7 +622,7 @@ function VoucherPage({
       <div className="actions" style={{ margin: 0 }}>
         <button type="button" className="btn" onClick={() => openPrint([v.id])}>🖨 Print</button>
         <button type="button" className="btn secondary" onClick={async () => {
-          try { await navigator.clipboard.writeText(link); setCopied(true); } catch { window.prompt("Copy the voucher's link:", link); }
+          try { await navigator.clipboard.writeText(link); setCopied(true); } catch { void copyDialog("Copy the voucher's link:", link); }
         }}>{copied ? "✓ Link copied" : "🔗 Copy link"}</button>
         {manage && v.status === "redeemed" && <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("active")}>↩ Undo redeemed</button>}
         {manage && (v.status === "paused" || v.status === "void") && <button type="button" className="btn secondary" disabled={busy} onClick={() => setStatus("active")}>▶ Activate</button>}

@@ -14,6 +14,7 @@ import {
 } from "@/lib/member-import";
 import { MEMBER_TYPES, MEMBERSHIP_DAYS, memberTypeLabel, type MemberType } from "@/lib/membership";
 import { api, todayManila } from "./shared";
+import { confirmDialog } from "@/components/Dialogs";
 
 type Outcome =
   | { row: number; result: "imported"; fullName: string; memberCode: string; token: string; email: string; mobile: string; expiresOn: string }
@@ -440,7 +441,7 @@ export default function ImportMembers({ onDone, onAuthError }: { onDone: () => v
         ) : (
           <button className="btn" disabled={busy || !counts?.approve || undecided.length > 0}
             title={undecided.length ? "Choose Skip or Import anyway for each possible duplicate first" : undefined}
-            onClick={() => window.confirm(`Approve and import ${counts!.approve} ticked member${counts!.approve === 1 ? "" : "s"} as paid NVBC members?`) && run(false)}>
+            onClick={async () => (await confirmDialog(`Approve and import ${counts!.approve} ticked member${counts!.approve === 1 ? "" : "s"} as paid NVBC members?`, { confirmLabel: "Approve" })) && run(false)}>
             {busy ? "Importing…"
               : undecided.length ? `Decide on ${undecided.length} possible duplicate${undecided.length === 1 ? "" : "s"} first`
               : `Approve & import ${counts?.approve ?? 0} member${counts?.approve === 1 ? "" : "s"}`}

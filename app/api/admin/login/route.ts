@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkPassword, getAdmin, OWNER, setAdminCookie } from "@/lib/admin-auth";
+import { checkPassword, getStringingStaff, OWNER, setAdminCookie } from "@/lib/admin-auth";
 import { normalizeUsername, verifyLogin } from "@/lib/admin-users";
 import { readJson, serverError } from "@/lib/http";
 import { clearHits, clientIp, recordHit, tooMany } from "@/lib/throttle";
@@ -15,10 +15,12 @@ const LIMITS = [
 
 export const dynamic = "force-dynamic";
 
-// Who's logged in (used by /admin and by the booking page's staff mode).
+// Who's logged in (used by /admin and by the booking page's staff mode). A stringer account isn't
+// "logged in" as staff; /admin shows them the stringing queue instead ({ stringer: { name } }).
 export async function GET(req: NextRequest) {
   try {
-    const me = await getAdmin(req);
+    const me = await getStringingStaff(req);
+    if (me?.role === "stringer") return NextResponse.json({ loggedIn: false, stringer: { name: me.name, id: me.id } });
     return NextResponse.json(me ? { loggedIn: true, name: me.name, username: me.username, id: me.id, role: me.role } : { loggedIn: false });
   } catch (e) {
     return serverError(e);
