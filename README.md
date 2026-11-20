@@ -102,6 +102,8 @@ Open **`https://<your-site>.vercel.app/status`**. It checks each step and tells 
 
 The app also accepts `POSTGRES_URL` and prefixed names like `STORAGE_DATABASE_URL`, so connecting Neon through Vercel's **Storage** tab (Neon integration) works too. Note that the Neon integration gives **Preview** deployments their own database branch — set up the tables on the branch Production uses (`main`), and test bookings on the production URL. Full errors are in Vercel → your project → **Logs**.
 
+**Cleaning up preview database branches.** The Neon integration doesn't delete a preview's database branch when its git branch is deleted, so `.github/workflows/neon-cleanup.yml` deletes `preview/<git branch>` when its pull request is merged or closed. To turn it on, in GitHub → **Settings → Secrets and variables → Actions** add the variable `NEON_PROJECT_ID` (Neon → Project → Settings) and the secret `NEON_API_KEY` (Neon → Settings → API keys). Branches left from before need deleting once by hand in Neon → **Branches**.
+
 ## Setting up prices and payments (do this first)
 
 Open /admin → **Settings**:
