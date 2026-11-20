@@ -9,6 +9,7 @@ export const NOTIFY_KINDS = [
   { id: "booking_moved", label: "Bookings rescheduled by customers", icon: "🔁" },
   { id: "coach_applied", label: "New coach applications", icon: "🧑‍🏫" },
   { id: "coach_session", label: "Coaches: arrived, or not paid after their session", icon: "🎓" },
+  { id: "stringing", label: "Racket stringing: check-ins, payments and feedback", icon: "🏸" },
 ] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]["id"];
 export const ALL_KINDS: NotifyKind[] = NOTIFY_KINDS.map((k) => k.id);
@@ -30,6 +31,7 @@ export function eventLink(e: Pick<AdminEvent, "booking_code" | "membership_id" |
   if (e.booking_code) return `/admin?booking=${encodeURIComponent(e.booking_code)}`;
   if (e.kind === "member_applied") return "/admin?tab=members";
   if (e.kind === "coach_applied") return "/admin?tab=coaches";
+  if (e.kind === "stringing") return "/admin?tab=stringing";
   return "/admin";
 }
 

@@ -13,6 +13,7 @@ import { api, todayManila, type AdminMember } from "./shared";
 import ProofViewer from "./ProofViewer";
 import { useCanManage } from "./role";
 import FullScreenLoader from "@/components/FullScreenLoader";
+import { confirmDialog, promptDialog } from "@/components/Dialogs";
 
 type Filter = "action" | "active" | "expired" | "forfeited" | "rejected" | "all";
 type Act = (body: Record<string, unknown>, confirmText?: string) => Promise<boolean>;
@@ -58,7 +59,7 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
   }, [load]);
 
   const act: Act = async (body, confirmText) => {
-    if (confirmText && !window.confirm(confirmText)) return false;
+    if (confirmText && !(await confirmDialog(confirmText))) return false;
     try {
       await api("/api/admin/members", body);
       setError("");
@@ -265,8 +266,10 @@ export default function MembersTab({ onAuthError }: { onAuthError: (e: unknown) 
                                 onClick={() => act({ action: "approve", id: m.id }, `Approve ${m.full_name} as an NVBC ${memberTypeLabel(m.member_type)} member for 365 days from today?`)}>
                                 Approve
                               </button>
-                              <button className="btn small secondary" onClick={() => {
-                                const reason = window.prompt(`Decline ${m.full_name}'s application? Optional note (staff only):`, "");
+                              <button className="btn small secondary" onClick={async () => {
+                                const reason = await promptDialog("Optional note (staff only):", {
+                                  title: `Decline ${m.full_name}'s application?`, confirmLabel: "Decline", danger: true, maxLength: 500,
+                                });
                                 if (reason !== null) act({ action: "reject", id: m.id, reason });
                               }}>
                                 Decline
@@ -316,10 +319,10 @@ function renewText(m: AdminMember, today: string) {
 function ExpiredActions({ m, act }: { m: AdminMember; act: Act }) {
   return (
     <>
-      <button className="btn small secondary danger-text" onClick={() => {
-        const reason = window.prompt(
-          `Forfeit ${m.full_name}'s membership? Their member code stops working. The front desk can reactivate it later.\n\nOptional note (staff only):`,
-          ""
+      <button className="btn small secondary danger-text" onClick={async () => {
+        const reason = await promptDialog(
+          "Their member code stops working. The front desk can reactivate it later.\n\nOptional note (staff only):",
+          { title: `Forfeit ${m.full_name}'s membership?`, confirmLabel: "Forfeit", danger: true, maxLength: 500 }
         );
         if (reason !== null) act({ action: "forfeit", id: m.id, reason });
       }}>
@@ -436,16 +439,12 @@ function MemberLookup({
 /** Asks for confirmation (typing DELETE for anyone beyond a declined application), then deletes. */
 async function deleteMember(m: AdminMember, act: Act): Promise<boolean> {
   if (m.status === "rejected") return act({ action: "delete", id: m.id }, `Permanently delete ${m.full_name}'s declined application?`);
-  const typed = window.prompt(
-    `Permanently delete ${m.full_name}${m.member_code ? ` (${m.member_code})` : ""}?\n\n` +
-      "Their member code and member page stop working, and this can't be undone. Their past bookings are kept.\n" +
-      "If they're just not renewing, use Forfeit instead.\n\nType DELETE to confirm:"
+  const typed = await promptDialog(
+    "Their member code and member page stop working, and this can't be undone. Their past bookings are kept.\n" +
+      "If they're just not renewing, use Forfeit instead.\n\nType DELETE to confirm:",
+    { title: `Permanently delete ${m.full_name}${m.member_code ? ` (${m.member_code})` : ""}?`, placeholder: "DELETE", match: "DELETE", confirmLabel: "Delete", danger: true }
   );
   if (typed === null) return false;
-  if (typed.trim().toUpperCase() !== "DELETE") {
-    window.alert("Not deleted — you need to type DELETE.");
-    return false;
-  }
   return act({ action: "delete", id: m.id });
 }
 

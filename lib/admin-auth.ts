@@ -8,15 +8,16 @@ const MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
 
 /**
  * Who is logged in: a staff account, or the owner (ADMIN_PASSWORD, for recovery). role: the owner
- * and managers have full access; "staff" accounts do day-to-day work only (see canManage).
+ * and managers have full access; "staff" accounts do day-to-day work only (see canManage);
+ * "stringer" accounts only see the racket stringing queue (see getStringingStaff).
  */
-export type AdminRole = "owner" | "manager" | "staff";
+export type AdminRole = "owner" | "manager" | "staff" | "stringer";
 export type AdminSession = { id: number | null; username: string; name: string; role: AdminRole };
 
 export const OWNER: AdminSession = { id: null, username: "owner", name: "Owner", role: "owner" };
 
 /** Settings, court setup, staff accounts, deleting bookings/members, imports, bulk emails, activity log. */
-export const canManage = (me: AdminSession) => me.role !== "staff";
+export const canManage = (me: AdminSession) => me.role === "owner" || me.role === "manager";
 
 export function forbidden() {
   return NextResponse.json({ error: "Only the owner or a manager can do this." }, { status: 403 });
@@ -56,8 +57,20 @@ export function issueToken(who: number | null, version: number): string {
   return `${id}.${version}.${exp}.${sign(`admin:${id}:${version}:${exp}`)}`;
 }
 
-/** The logged-in admin, or null. Staff accounts are re-checked (still active, same version). */
+/**
+ * The logged-in owner, manager or staff member, or null. Stringer accounts get null here: they may
+ * only use the stringing pages (getStringingStaff).
+ */
 export async function getAdmin(req: NextRequest): Promise<AdminSession | null> {
+  const me = await getSession(req);
+  return me && me.role !== "stringer" ? me : null;
+}
+
+/** Anyone logged in, stringers included: for the stringing pages only. */
+export const getStringingStaff = (req: NextRequest) => getSession(req);
+
+/** The logged-in account, or null. Staff accounts are re-checked (still active, same version). */
+async function getSession(req: NextRequest): Promise<AdminSession | null> {
   const token = req.cookies.get(ADMIN_COOKIE)?.value;
   if (!token) return null;
   const [id, version, exp, sig] = token.split(".");

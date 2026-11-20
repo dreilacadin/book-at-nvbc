@@ -11,6 +11,7 @@ import {
   type ReminderVars,
 } from "@/lib/reminder-email";
 import { api, todayManila, type AdminMember } from "./shared";
+import { confirmDialog } from "@/components/Dialogs";
 
 export type EmailStatus = { ready: true; from: string } | { ready: false };
 
@@ -123,8 +124,8 @@ export default function EmailReminders({
   }
 
   async function sendAll() {
-    if (unknownTags.length && !window.confirm(`The message has unknown placeholders (${unknownTags.join(", ")}) that will be sent as typed. Send anyway?`)) return;
-    if (!window.confirm(`Email ${chosen.length} expired member${chosen.length === 1 ? "" : "s"} from ${email?.ready ? email.from : ""}? Each gets their own email.`)) return;
+    if (unknownTags.length && !(await confirmDialog(`The message has unknown placeholders (${unknownTags.join(", ")}) that will be sent as typed. Send anyway?`))) return;
+    if (!(await confirmDialog(`Email ${chosen.length} expired member${chosen.length === 1 ? "" : "s"} from ${email?.ready ? email.from : ""}? Each gets their own email.`, { confirmLabel: "Send" }))) return;
     setError("");
     setNotice("");
     setResults(null);

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { formatDateLong, formatHour, formatRange, halfHours } from "@/lib/format";
 import { CASH_AHEAD_DEFAULT, RELEASE_MINUTES } from "@/lib/booking-policy";
 import { WEEKDAYS as WEEK_MON_FIRST } from "@/lib/blocks";
@@ -36,10 +36,31 @@ import ScholarsTab from "./ScholarsTab";
 import Overview from "./Overview";
 import ReservedTimes from "./ReservedTimes";
 import VouchersTab from "./VouchersTab";
+import StringingTab from "./StringingTab";
+import { readTag } from "@/lib/stringing";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { setCustomActivities, SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
 import { RoleContext, type AdminRole } from "./role";
 import FullScreenLoader from "@/components/FullScreenLoader";
+import { alertDialog, confirmDialog } from "@/components/Dialogs";
+
+// The dashboard's tabs, in order. `manage`: owners and managers only (staff accounts don't see setup,
+// reports or scholars' details).
+const TABS = [
+  { id: "overview", label: "Overview", icon: "🏠" },
+  { id: "bookings", label: "Bookings", icon: "📅" },
+  { id: "members", label: "Members", icon: "🪪" },
+  { id: "scholars", label: "Scholars", icon: "🎓", manage: true },
+  { id: "vouchers", label: "Vouchers", icon: "🎟️" },
+  { id: "stringing", label: "Stringing", icon: "🏸" },
+  { id: "coaches", label: "Coaches", icon: "🧑‍🏫", manage: true },
+  { id: "reports", label: "Reports", icon: "📊", manage: true },
+  { id: "courts", label: "Courts", icon: "🏟️", manage: true },
+  { id: "staff", label: "Staff", icon: "👥" },
+  { id: "settings", label: "Settings", icon: "⚙️", manage: true },
+] as const satisfies readonly { id: string; label: string; icon: string; manage?: boolean }[];
+type TabId = (typeof TABS)[number]["id"];
+const isTab = (v: string | null): v is TabId => TABS.some((t) => t.id === v);
 
 const shortDate = (d: string | null) =>
   d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
@@ -47,7 +68,10 @@ const shortDate = (d: string | null) =>
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
-  const [tab, setTab] = useState<"overview" | "bookings" | "members" | "scholars" | "vouchers" | "coaches" | "reports" | "courts" | "staff" | "settings">("overview");
+  const [tab, setTab] = useState<TabId>("overview");
+  const tabRead = useRef(false); // the tab in the address has been read (so it can now be kept there)
+  const [stringer, setStringer] = useState<{ name: string } | null>(null); // a stringer account: only the stringing queue
+  const [openTag, setOpenTag] = useState<number | null>(null); // /admin?tag=127 (a racket tag's QR code)
   const [openVoucher, setOpenVoucher] = useState<string | null>(null); // /admin?voucher=<id>
   const [bookingsDate, setBookingsDate] = useState(todayManila);
   const [bookingsOpen, setBookingsOpen] = useState<string | null>(null); // booking to open when the Bookings tab shows
@@ -60,16 +84,27 @@ export default function AdminPage() {
     const q = new URLSearchParams(window.location.search);
     const code = q.get("booking");
     if (code) setOpenCode(code);
-    if (q.get("tab") === "members") setTab("members");
-    if (q.get("tab") === "coaches") setTab("coaches");
-    if (q.get("tab") === "vouchers") setTab("vouchers");
+    const t = q.get("tab");
+    if (isTab(t)) setTab(t);
+    const tag = readTag(q.get("tag") ?? "");
+    if (tag !== null) {
+      setOpenTag(tag);
+      setTab("stringing");
+    }
     const voucher = q.get("voucher");
     if (voucher) {
       setOpenVoucher(voucher);
       setTab("vouchers");
     }
-    if (code || voucher || q.get("tab")) window.history.replaceState(null, "", "/admin");
+    tabRead.current = true;
   }, []);
+
+  // Keep the open tab in the address (/admin?tab=stringing), so a reload stays on it. This also
+  // clears one-off links like ?booking= or ?tag= once they've been opened.
+  useEffect(() => {
+    if (!tabRead.current) return;
+    window.history.replaceState(null, "", tab === "overview" ? "/admin" : `/admin?tab=${tab}`);
+  }, [tab]);
 
   const reloadOpenBooking = useCallback(async () => {
     if (!openCode) return setOpenBooking(null);
@@ -86,8 +121,9 @@ export default function AdminPage() {
   }, [loggedIn, reloadOpenBooking]);
 
   useEffect(() => {
-    api<{ loggedIn: boolean; name?: string; id?: number | null; role?: AdminRole }>("/api/admin/login")
+    api<{ loggedIn: boolean; name?: string; id?: number | null; role?: AdminRole; stringer?: { name: string } }>("/api/admin/login")
       .then((r) => {
+        setStringer(r.stringer ?? null);
         setLoggedIn(r.loggedIn);
         setMe(r.loggedIn ? { name: r.name ?? "", id: r.id ?? null, role: r.role ?? "staff" } : null);
       })
@@ -111,18 +147,31 @@ export default function AdminPage() {
   }, [loggedIn]);
 
   if (loggedIn === null) return <FullScreenLoader />;
+  if (stringer)
+    return (
+      <div className="stack">
+        <div className="admin-head">
+          <h1>🏸 Stringing</h1>
+          <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span className="muted" style={{ fontSize: 14 }}>Logged in as <strong>{stringer.name}</strong> <span className="badge grey">Stringer</span></span>
+            <button className="btn small secondary" onClick={async () => { await api("/api/admin/logout", {}); setStringer(null); setLoggedIn(false); }}>Log out</button>
+          </span>
+        </div>
+        <StringingTab stringer me={stringer.name} openTag={openTag} onAuthError={(e) => { if (e instanceof AuthError) { setStringer(null); setLoggedIn(false); } }} />
+      </div>
+    );
   if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
 
   const role: AdminRole = me?.role ?? "staff";
   const manage = role !== "staff";
   // Staff accounts don't see Courts (setup), Settings or Scholars (minors' details).
-  const tabs = (["overview", "bookings", "members", "scholars", "vouchers", "coaches", "reports", "courts", "staff", "settings"] as const).filter(
-    (t) => manage || (t !== "courts" && t !== "settings" && t !== "reports" && t !== "coaches" && t !== "scholars")
-  );
+  const tabs = TABS.filter((t) => manage || !("manage" in t));
+  // A tab this account can't open (e.g. ?tab=settings for a staff account) shows the overview.
+  const shown: TabId = tabs.some((t) => t.id === tab) ? tab : "overview";
 
   return (
     <RoleContext.Provider value={role}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div className="admin-head">
         <h1>Staff dashboard</h1>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {me && (
@@ -143,14 +192,15 @@ export default function AdminPage() {
         </button>
         </span>
       </div>
-      <div className="tabs" role="tablist">
+      <div className="tabs admin-tabs" role="tablist">
         {tabs.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => { setTab(t); setBookingsOpen(null); setOpenVoucher(null); }}>
-            {t[0].toUpperCase() + t.slice(1)}
+          <button key={t.id} role="tab" aria-selected={shown === t.id} onClick={() => { setTab(t.id); setBookingsOpen(null); setOpenVoucher(null); setOpenTag(null); }}>
+            <span className="tab-icon" aria-hidden>{t.icon}</span>
+            {t.label}
           </button>
         ))}
       </div>
-      {tab === "overview" && (
+      {shown === "overview" && (
         <Overview
           onOpenDay={(d, bookingId) => {
             setBookingsDate(d);
@@ -160,16 +210,17 @@ export default function AdminPage() {
           onAuthError={onAuthError}
         />
       )}
-      {tab === "bookings" && (
+      {shown === "bookings" && (
         <BookingsTab initialDate={bookingsDate} initialOpen={bookingsOpen} onDateChange={setBookingsDate} onAuthError={onAuthError} />
       )}
-      {tab === "members" && <MembersTab onAuthError={onAuthError} />}
-      {tab === "scholars" && manage && <ScholarsTab onAuthError={onAuthError} />}
-      {tab === "vouchers" && <VouchersTab key={openVoucher ?? "list"} onAuthError={onAuthError} openId={openVoucher} onOpenBooking={setOpenCode} />}
-      {tab === "reports" && manage && <Reports onAuthError={onAuthError} />}
-      {tab === "coaches" && manage && <CoachesTab onAuthError={onAuthError} />}
-      {tab === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}
-      {tab === "staff" && (
+      {shown === "members" && <MembersTab onAuthError={onAuthError} />}
+      {shown === "scholars" && manage && <ScholarsTab onAuthError={onAuthError} />}
+      {shown === "vouchers" && <VouchersTab key={openVoucher ?? "list"} onAuthError={onAuthError} openId={openVoucher} onOpenBooking={setOpenCode} />}
+      {shown === "stringing" && <StringingTab me={me?.name ?? "Staff"} openTag={openTag} onAuthError={onAuthError} />}
+      {shown === "reports" && manage && <Reports onAuthError={onAuthError} />}
+      {shown === "coaches" && manage && <CoachesTab onAuthError={onAuthError} />}
+      {shown === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}
+      {shown === "staff" && (
         <>
           <StaffTab onAuthError={onAuthError} />
           {manage && <ActivityLog onOpenBooking={setOpenCode} onAuthError={onAuthError} />}
@@ -188,7 +239,7 @@ export default function AdminPage() {
           </div>
         </div>
       )}
-      {tab === "settings" && manage && <SettingsTab onAuthError={onAuthError} />}
+      {shown === "settings" && manage && <SettingsTab onAuthError={onAuthError} />}
     </RoleContext.Provider>
   );
 }
@@ -1048,9 +1099,9 @@ function ActivitiesSettings({
     set("activities", [...s.activities, { id, label: "", emoji: "🎯" }]);
     set("rate_plans", { ...s.rate_plans, [id]: { memberRates: false, coachRates: false, weekendRates: false, ...blank } });
   };
-  const remove = (i: number) => {
+  const remove = async (i: number) => {
     const a = s.activities[i];
-    if (!window.confirm(`Remove ${a.label || "this activity"}? It disappears from Book a court when you save.`)) return;
+    if (!(await confirmDialog(`Remove ${a.label || "this activity"}? It disappears from Book a court when you save.`, { confirmLabel: "Remove", danger: true }))) return;
     set("activities", s.activities.filter((_, j) => j !== i));
   };
 
@@ -1202,7 +1253,7 @@ function HolidaysSettings() {
     if (!saved) return;
     const row = saved.find((h) => h.date === form.date);
     if (row?.closed && row.bookings > 0)
-      window.alert(`${row.bookings} booking(s) are already on ${shortDate(row.date)}. Closing only stops new online bookings — please contact those players (Bookings tab).`);
+      void alertDialog(`${row.bookings} booking(s) are already on ${shortDate(row.date)}. Closing only stops new online bookings — please contact those players (Bookings tab).`);
     setForm({ date: "", name: "", closed: false, yearly: false });
     setHoursChoice({ mode: "all", from: 8, to: 12 });
   }
@@ -1227,7 +1278,7 @@ function HolidaysSettings() {
               {h.yearly && <span className="badge">Every year</span>}
               {h.bookings > 0 && <span className="hint">{h.bookings} booking{h.bookings > 1 ? "s" : ""}</span>}
               <button type="button" className="link-btn" disabled={busy}
-                onClick={() => window.confirm(`Remove ${h.name} (${shortDate(h.date)})?`) && call({ action: "remove", date: h.date })}>Remove</button>
+                onClick={async () => (await confirmDialog(`Remove ${h.name} (${shortDate(h.date)})?`, { confirmLabel: "Remove", danger: true })) && call({ action: "remove", date: h.date })}>Remove</button>
             </div>
           ))}
         </div>

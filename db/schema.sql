@@ -481,8 +481,10 @@ CREATE INDEX IF NOT EXISTS throttle_hits_idx ON throttle_hits (bucket, key, at);
 -- Staff account roles: 'manager' = full access (like the owner login); 'staff' = day-to-day work
 -- (no settings, court setup, staff accounts, deleting bookings/members, imports or bulk emails).
 ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'staff';
+-- (The full list of roles, as in v42: this runs again on every setup, so it must allow every role
+-- that can exist, or a Stringer account would make the setup fail.)
 ALTER TABLE admin_users DROP CONSTRAINT IF EXISTS admin_users_role_check;
-ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff'));
+ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff', 'stringer'));
 -- Payment screenshots are kept only until staff confirm or reject the payment (or the booking is
 -- cancelled). The fingerprint stays, so reuse of the same screenshot is still spotted: it becomes
 -- a plain column, set when a screenshot is sent.
@@ -952,3 +954,160 @@ ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS sessions INT NOT NULL DEFAULT 
 ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS ref TEXT;
 ALTER TABLE voucher_uses ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX IF NOT EXISTS voucher_uses_ref_idx ON voucher_uses (voucher_id, ref) WHERE ref IS NOT NULL;
+
+-- v42: racket stringing -----------------------------------------------------------------------------
+-- "Book a racket for stringing": customers check in their rackets (/string, from the QR code at the
+-- desk) or staff do it for them; staff receive them at the desk (tag printed with its number), a
+-- stringer starts and finishes them, and staff hand them back. Admin → Stringing.
+
+-- Stringer accounts see only the stringing queue (see getStringingStaff in lib/admin-auth.ts).
+ALTER TABLE admin_users DROP CONSTRAINT IF EXISTS admin_users_role_check;
+ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff', 'stringer'));
+
+-- Prices and turnaround: {"labor": 200, "rush": 150, "grommetSingle": 10, "grommetDouble": 20,
+-- "standardDays": [3, 5], "rushDays": [1, 2]}. NULL = those defaults (see lib/stringing.ts).
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS stringing JSONB;
+
+-- Strings NVBC sells, with their colours and price (added to the labour when a customer buys one).
+CREATE TABLE IF NOT EXISTS stringing_strings (
+  id          SERIAL PRIMARY KEY,
+  brand       TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  colors      TEXT[] NOT NULL DEFAULT '{}',
+  price       NUMERIC(10,2) NOT NULL CHECK (price >= 0),
+  active      BOOLEAN NOT NULL DEFAULT TRUE,      -- off: no longer offered (kept for old rackets)
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One check-in: the customer, and the payment for all its rackets (paid at drop-off, usually).
+-- token: the secret part of the customer's status page link (/string/<token>).
+CREATE TABLE IF NOT EXISTS stringing_orders (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token                 TEXT NOT NULL UNIQUE,
+  name                  TEXT NOT NULL,
+  mobile                TEXT NOT NULL,                 -- 09XXXXXXXXX
+  email                 TEXT NOT NULL DEFAULT '',
+  total                 NUMERIC(10,2) NOT NULL DEFAULT 0, -- all its rackets that aren't cancelled
+  payment_method        TEXT NOT NULL DEFAULT 'cash',
+  payment_status        TEXT NOT NULL DEFAULT 'unpaid' CHECK (payment_status IN ('unpaid', 'for_verification', 'paid', 'waived', 'rejected')),
+  payment_ref           TEXT NOT NULL DEFAULT '',
+  payment_ref_key       TEXT GENERATED ALWAYS AS (upper(regexp_replace(payment_ref, '[^A-Za-z0-9]', '', 'g'))) STORED,
+  payment_proof         TEXT NOT NULL DEFAULT '',     -- screenshot (data: URL), deleted once checked
+  payment_proof_hash    TEXT NOT NULL DEFAULT '',     -- kept, to spot a reused screenshot
+  paid_amount_reported  NUMERIC(10,2),
+  payment_sent_at       TIMESTAMPTZ,
+  paid_amount           NUMERIC(10,2) NOT NULL DEFAULT 0, -- what staff confirmed was paid
+  paid_at               TIMESTAMPTZ,
+  paid_by               TEXT,
+  rejected_note         TEXT NOT NULL DEFAULT '',
+  created_by            TEXT NOT NULL DEFAULT '',     -- '' = the customer; else the staff member
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  thanked_at            TIMESTAMPTZ,                  -- the "thank you" went out (all picked up)
+  feedback_rating       INT CHECK (feedback_rating BETWEEN 1 AND 5),
+  feedback_comment      TEXT NOT NULL DEFAULT '',
+  feedback_at           TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS stringing_orders_mobile_idx ON stringing_orders (mobile);
+CREATE INDEX IF NOT EXISTS stringing_orders_ref_key_idx ON stringing_orders (payment_ref_key) WHERE payment_ref_key <> '';
+CREATE INDEX IF NOT EXISTS stringing_orders_proof_hash_idx ON stringing_orders (payment_proof_hash) WHERE payment_proof_hash <> '';
+
+-- Tag numbers: short and easy to write on a tag, e.g. #127.
+CREATE SEQUENCE IF NOT EXISTS stringing_tag_seq START 101;
+
+-- Each racket: what to do, its price, and who did each step when.
+CREATE TABLE IF NOT EXISTS stringing_rackets (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id         UUID NOT NULL REFERENCES stringing_orders(id) ON DELETE CASCADE,
+  tag              INT NOT NULL UNIQUE DEFAULT nextval('stringing_tag_seq'),
+  racket           TEXT NOT NULL,
+  string_id        INT REFERENCES stringing_strings(id) ON DELETE SET NULL, -- bought from NVBC
+  string_name      TEXT NOT NULL,                     -- as chosen (NVBC's, or the customer's own)
+  string_color     TEXT NOT NULL DEFAULT '',
+  own_string       BOOLEAN NOT NULL DEFAULT FALSE,
+  tension_main     NUMERIC(3,1) NOT NULL,
+  tension_cross    NUMERIC(3,1) NOT NULL,
+  rush             BOOLEAN NOT NULL DEFAULT FALSE,
+  due_on           DATE NOT NULL,                     -- the collection date
+  grommets_single  INT NOT NULL DEFAULT 0,
+  grommets_double  INT NOT NULL DEFAULT 0,
+  notes            TEXT NOT NULL DEFAULT '',
+  labor_fee        NUMERIC(10,2) NOT NULL DEFAULT 0,
+  rush_fee         NUMERIC(10,2) NOT NULL DEFAULT 0,
+  string_price     NUMERIC(10,2) NOT NULL DEFAULT 0,
+  grommet_fee      NUMERIC(10,2) NOT NULL DEFAULT 0,
+  total            NUMERIC(10,2) NOT NULL DEFAULT 0,
+  status           TEXT NOT NULL DEFAULT 'checked_in'
+                   CHECK (status IN ('checked_in', 'received', 'in_progress', 'done', 'picked_up', 'cancelled')),
+  received_by      TEXT, received_at  TIMESTAMPTZ,
+  started_by       TEXT, started_at   TIMESTAMPTZ,
+  done_by          TEXT, done_at      TIMESTAMPTZ,     -- the stringer (counted in the stringer report)
+  picked_up_by     TEXT, picked_up_at TIMESTAMPTZ,
+  cancelled_by     TEXT, cancelled_at TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS stringing_rackets_order_idx ON stringing_rackets (order_id);
+CREATE INDEX IF NOT EXISTS stringing_rackets_status_idx ON stringing_rackets (status, due_on);
+CREATE INDEX IF NOT EXISTS stringing_rackets_done_idx ON stringing_rackets (done_at) WHERE done_at IS NOT NULL;
+
+-- Who did what (received, started, done, picked up, edits, payments), shown on the order.
+CREATE TABLE IF NOT EXISTS stringing_events (
+  id         BIGSERIAL PRIMARY KEY,
+  order_id   UUID NOT NULL REFERENCES stringing_orders(id) ON DELETE CASCADE,
+  at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor      TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  details    TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS stringing_events_order_idx ON stringing_events (order_id, at);
+
+-- Customer devices that asked to be told when their rackets are ready (from the status page).
+CREATE TABLE IF NOT EXISTS stringing_push_subscriptions (
+  order_id    UUID NOT NULL REFERENCES stringing_orders(id) ON DELETE CASCADE,
+  endpoint    TEXT NOT NULL,
+  p256dh      TEXT NOT NULL,
+  auth        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (order_id, endpoint)
+);
+
+-- v43: string stock (per colour), pre-stretch, remarks --------------------------------------------
+-- Sets of each string in stock, per colour (one set per racket; color '' for a string without
+-- colours): taken off when a customer buys one at check-in, put back when a racket is cancelled or
+-- its check-in deleted; staff add deliveries or set a count. No row = none in stock.
+CREATE TABLE IF NOT EXISTS stringing_stock (
+  string_id   INT NOT NULL REFERENCES stringing_strings(id) ON DELETE CASCADE,
+  color       TEXT NOT NULL DEFAULT '',
+  stock       INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (string_id, color)
+);
+CREATE TABLE IF NOT EXISTS stringing_stock_moves (
+  id          BIGSERIAL PRIMARY KEY,
+  string_id   INT NOT NULL REFERENCES stringing_strings(id) ON DELETE CASCADE,
+  color       TEXT NOT NULL DEFAULT '',
+  at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor       TEXT NOT NULL,
+  change      INT NOT NULL,            -- +10 delivered, -1 sold, …
+  stock_after INT NOT NULL,            -- of that colour
+  reason      TEXT NOT NULL DEFAULT ''
+);
+ALTER TABLE stringing_stock_moves ADD COLUMN IF NOT EXISTS color TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS stringing_stock_moves_string_idx ON stringing_stock_moves (string_id, at DESC);
+-- Databases from before stock was counted per colour (one number per string, in stringing_strings):
+-- that number goes to the string's first colour.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = current_schema() AND table_name = 'stringing_strings' AND column_name = 'stock') THEN
+    INSERT INTO stringing_stock (string_id, color, stock)
+      SELECT id, COALESCE(colors[1], ''), stock FROM stringing_strings WHERE stock <> 0 ON CONFLICT DO NOTHING;
+    UPDATE stringing_stock_moves m SET color = COALESCE(s.colors[1], '') FROM stringing_strings s WHERE s.id = m.string_id;
+    ALTER TABLE stringing_strings DROP COLUMN stock;
+  END IF;
+END $$;
+-- What the stringer (or the desk) noticed about a racket, e.g. "slight crack near the throat"; the
+-- customer sees it on their status page.
+ALTER TABLE stringing_rackets ADD COLUMN IF NOT EXISTS remarks TEXT NOT NULL DEFAULT '';
+-- Pre-stretch (% stretched before tensioning): NULL = none.
+ALTER TABLE stringing_rackets ADD COLUMN IF NOT EXISTS prestretch SMALLINT;
+DO $$ BEGIN
+  ALTER TABLE stringing_rackets ADD CONSTRAINT stringing_rackets_prestretch_check CHECK (prestretch IS NULL OR prestretch IN (5, 10, 15, 20));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

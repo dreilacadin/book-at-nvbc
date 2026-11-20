@@ -11,14 +11,19 @@ self.addEventListener("push", (event) => {
     data = { title: "NVBC", body: event.data ? event.data.text() : "" };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || "NVBC", {
-      body: data.body || "",
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
-      tag: data.tag || undefined, // a newer notification about the same booking replaces the older one
-      renotify: !!data.tag,
-      data: { url: data.url || "/admin" },
-    })
+    Promise.all([
+      self.registration.showNotification(data.title || "NVBC", {
+        body: data.body || "",
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        tag: data.tag || undefined, // a newer notification about the same booking replaces the older one
+        renotify: !!data.tag,
+        data: { url: data.url || "/admin" },
+      }),
+      // Pages already open (e.g. a racket's status page) refresh straight away.
+      self.clients.matchAll({ type: "window", includeUncontrolled: true })
+        .then((wins) => wins.forEach((w) => w.postMessage({ type: "nvbc-push", url: data.url || "" }))),
+    ])
   );
 });
 

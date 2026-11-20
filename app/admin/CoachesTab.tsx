@@ -8,6 +8,7 @@ import { formatDateLong, formatRange } from "@/lib/format";
 import { sportEmoji, sportLabel } from "@/lib/sports";
 import ProofViewer from "./ProofViewer";
 import { api, todayManila } from "./shared";
+import { confirmDialog } from "@/components/Dialogs";
 
 type AdminCoach = {
   id: string; full_name: string; nickname: string; gender: Gender | ""; gender_self: string; birthday: string | null;
@@ -83,8 +84,8 @@ export default function CoachesTab({ onAuthError }: { onAuthError: (e: unknown) 
           <button type="button" className="btn small" onClick={async () => {
             try { await navigator.clipboard.writeText(data.signupUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* select and copy by hand */ }
           }}>{copied ? "Copied ✓" : "Copy"}</button>
-          <button type="button" className="btn small secondary" onClick={() =>
-            window.confirm("Make a new sign-up link? The current link stops working.") && act({ action: "new-signup-link" }, "New sign-up link made.")}>New link</button>
+          <button type="button" className="btn small secondary" onClick={async () =>
+            (await confirmDialog("Make a new sign-up link? The current link stops working.", { confirmLabel: "Yes" })) && act({ action: "new-signup-link" }, "New sign-up link made.")}>New link</button>
         </div>
         {data.sharedCode.set && (
           <label className="check-row">
@@ -145,7 +146,7 @@ function CoachDetail({ c, act, onAuthError }: {
   const today = todayManila();
   const upcoming = (bookings ?? []).filter((b) => b.date >= today && b.status !== "cancelled").sort((a, b) => a.date.localeCompare(b.date) || a.start_hour - b.start_hour);
   const past = (bookings ?? []).filter((b) => !upcoming.includes(b));
-  const status = (to: string, msg: string, confirm?: string) => (!confirm || window.confirm(confirm)) && act({ action: "status", id: c.id, to }, msg);
+  const status = async (to: string, msg: string, confirm?: string) => (!confirm || (await confirmDialog(confirm))) && act({ action: "status", id: c.id, to }, msg);
 
   return (
     <div className="coach-detail stack">

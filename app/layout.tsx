@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
 import ThemeToggle, { THEME_SCRIPT } from "@/components/ThemeToggle";
+import DialogHost from "@/components/Dialogs";
 
 export const metadata: Metadata = {
   title: "NVBC Courts — Court Reservation System",
@@ -42,8 +43,8 @@ export default function RootLayout({
             <nav className="nav">
               <Link href="/">Book a court</Link>
               <Link href="/my-booking">My booking</Link>
+              <Link href="/string">Stringing</Link>
               <Link href="/membership">Membership</Link>
-              <Link href="/changelog">Changelog</Link>
             </nav>
             <ThemeToggle />
           </div>
@@ -51,10 +52,12 @@ export default function RootLayout({
         <main>
           <div className="container">{children}</div>
         </main>
+        <DialogHost />
         <footer className="site-footer">
           <div className="container">
             <span>© NV Badminton Center</span>
             <span className="footer-links">
+              <Link href="/changelog">Changelog</Link>
               <Link href="/coach">Coach login</Link>
               <Link href="/admin">Staff login</Link>
             </span>

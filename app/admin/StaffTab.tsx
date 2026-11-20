@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import FullScreenLoader from "@/components/FullScreenLoader";
 import { api } from "./shared";
+import { confirmDialog, promptDialog } from "@/components/Dialogs";
 
 type StaffUser = {
   id: number;
@@ -12,7 +13,7 @@ type StaffUser = {
   created_at: string;
   last_login_at: string | null;
   created_by: string;
-  role: "manager" | "staff";
+  role: "manager" | "staff" | "stringer";
 };
 type Me = { id: number | null; username: string; name: string; role: "owner" | "manager" | "staff" };
 
@@ -20,6 +21,13 @@ const when = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
     : "Never";
+
+const ROLE_LABEL: Record<StaffUser["role"], string> = { manager: "Manager", staff: "Staff", stringer: "Stringer" };
+const ROLE_HINT: Record<StaffUser["role"], string> = {
+  staff: "Day-to-day work: bookings, payments, members, messages, stringing and reserved times. No settings, prices, courts, staff accounts, deleting, imports or bulk emails.",
+  manager: "Full access, like the owner: also settings, prices, payment accounts, courts, staff accounts, deleting, imports, bulk emails and the activity log.",
+  stringer: "Only the racket stringing queue: see the rackets waiting, and mark them started and done (counted in the stringer report). Nothing else.",
+};
 
 /** Staff accounts: each person logs in with their own username and password. */
 export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) => void }) {
@@ -68,11 +76,12 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
     setBusy(false);
   }
 
-  function resetPassword(u: StaffUser) {
-    const pw = window.prompt(
+  async function resetPassword(u: StaffUser) {
+    const pw = await promptDialog(
       u.id === me?.id
         ? "Your new password (at least 8 characters):"
-        : `New password for ${u.display_name} (at least 8 characters). They'll be logged out and must use the new password.`
+        : `New password for ${u.display_name} (at least 8 characters). They'll be logged out and must use the new password.`,
+      { title: u.id === me?.id ? "Change my password" : "Reset password", password: true, required: true, confirmLabel: "Save password" }
     );
     if (pw) act({ action: "password", id: u.id, password: pw }, `Password changed for ${u.display_name}.`);
   }
@@ -83,7 +92,7 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
   return (
     <div className="stack" style={{ maxWidth: 820 }}>
       <p className="muted" style={{ margin: 0 }}>
-        Everyone on the team gets their own login, as <strong>Manager</strong> (full access) or <strong>Staff</strong> (day-to-day work). Logged-in staff also see full names on the <strong>Book a court</strong> page
+        Everyone on the team gets their own login, as <strong>Manager</strong> (full access), <strong>Staff</strong> (day-to-day work) or <strong>Stringer</strong> (only the racket stringing queue). Logged-in staff also see full names on the <strong>Book a court</strong> page
         and can open, confirm, edit or cancel bookings right from the grid. Disabling or deleting an account logs that person
         out immediately.
       </p>
@@ -115,7 +124,7 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
                 </td>
                 <td style={{ fontFamily: "ui-monospace, monospace" }}>{u.username}</td>
                 <td>
-                  <span className={`badge ${u.role === "manager" ? "" : "grey"}`}>{u.role === "manager" ? "Manager" : "Staff"}</span>
+                  <span className={`badge ${u.role === "manager" ? "" : "grey"}`}>{ROLE_LABEL[u.role]}</span>
                 </td>
                 <td style={{ fontSize: 13 }}>{when(u.last_login_at)}</td>
                 <td>
@@ -126,16 +135,19 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
                   ) : (
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {u.id !== me?.id && (
-                      <button className="btn small secondary" onClick={() => {
-                        const next = u.role === "manager" ? "staff" : "manager";
-                        if (window.confirm(next === "manager"
-                          ? `Make ${u.display_name} a Manager? Managers can change settings, prices, courts and staff accounts, delete bookings and members, import members and send bulk emails.`
-                          : `Make ${u.display_name} Staff? They'll keep day-to-day access (bookings, payments, members, messages) but lose settings, courts, staff accounts and deleting.`))
-                          act({ action: "update", id: u.id, role: next }, `${u.display_name} is now ${next === "manager" ? "a Manager" : "Staff"}.`);
-                      }}>{u.role === "manager" ? "Make staff" : "Make manager"}</button>
+                      <select className="btn small secondary" aria-label={`${u.display_name}'s access`} value={u.role} style={{ width: "auto" }}
+                        onChange={async (e) => {
+                          const next = e.target.value as StaffUser["role"];
+                          if ((await confirmDialog(`Make ${u.display_name} ${next === "manager" ? "a Manager" : next === "stringer" ? "a Stringer" : "Staff"}? ${ROLE_HINT[next]}`, { confirmLabel: "Yes" })))
+                            act({ action: "update", id: u.id, role: next }, `${u.display_name} is now ${next === "manager" ? "a Manager" : next === "stringer" ? "a Stringer" : "Staff"}.`);
+                        }}>
+                        <option value="staff">Staff</option>
+                        <option value="manager">Manager</option>
+                        <option value="stringer">Stringer</option>
+                      </select>
                     )}
-                    <button className="btn small secondary" onClick={() => {
-                      const name = window.prompt("Name:", u.display_name);
+                    <button className="btn small secondary" onClick={async () => {
+                      const name = await promptDialog("Name:", { title: "Rename", defaultValue: u.display_name, required: true, maxLength: 60, confirmLabel: "Save" });
                       if (name && name.trim() !== u.display_name) act({ action: "update", id: u.id, name }, "Name updated.");
                     }}>Rename</button>
                     <button className="btn small secondary" onClick={() => resetPassword(u)}>
@@ -148,8 +160,8 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
                       </button>
                     )}
                     {u.id !== me?.id && (
-                      <button className="btn small secondary danger-text" onClick={() =>
-                        window.confirm(`Delete ${u.display_name}'s account (${u.username})? They'll be logged out.`) &&
+                      <button className="btn small secondary danger-text" onClick={async () =>
+                        (await confirmDialog(`Delete ${u.display_name}'s account (${u.username})? They'll be logged out.`, { confirmLabel: "Delete", danger: true })) &&
                         act({ action: "delete", id: u.id }, "Account deleted.")}>
                         Delete
                       </button>
@@ -188,15 +200,12 @@ export default function StaffTab({ onAuthError }: { onAuthError: (e: unknown) =>
         </p>
         <div>
           <label>Access</label>
-          <div className="segmented" role="radiogroup" aria-label="Access" style={{ display: "inline-grid", gridTemplateColumns: "auto auto" }}>
+          <div className="segmented" role="radiogroup" aria-label="Access" style={{ display: "inline-grid", gridTemplateColumns: "auto auto auto" }}>
             <button type="button" role="radio" aria-checked={form.role === "staff"} onClick={() => setForm({ ...form, role: "staff" })}>Staff</button>
             <button type="button" role="radio" aria-checked={form.role === "manager"} onClick={() => setForm({ ...form, role: "manager" })}>Manager</button>
+            <button type="button" role="radio" aria-checked={form.role === "stringer"} onClick={() => setForm({ ...form, role: "stringer" })}>Stringer</button>
           </div>
-          <p className="hint" style={{ margin: "6px 0 0" }}>
-            {form.role === "staff"
-              ? "Day-to-day work: bookings, payments, members, messages and reserved times. No settings, prices, courts, staff accounts, deleting, imports or bulk emails."
-              : "Full access, like the owner: also settings, prices, payment accounts, courts, staff accounts, deleting, imports, bulk emails and the activity log."}
-          </p>
+          <p className="hint" style={{ margin: "6px 0 0" }}>{ROLE_HINT[form.role]}</p>
         </div>
         <div className="actions" style={{ marginTop: 0 }}>
           <button className="btn" disabled={busy}>{busy ? "Adding…" : "Add account"}</button>

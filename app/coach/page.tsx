@@ -39,6 +39,7 @@ import {
 } from "@/lib/sports";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { confirmDialog } from "@/components/Dialogs";
 
 type Coach = {
   id: string;
@@ -522,7 +523,7 @@ function OwnBookingActions({ b, payment, reload }: { b: Booking; payment: CoachP
   const stage = coachSessionStage(b, nowAtFacility());
   const unpaid = b.total > 0 && (b.payment_status === "unpaid" || b.payment_status === "rejected");
   const run = async (action: string, confirmText?: string) => {
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirmText && !(await confirmDialog(confirmText))) return;
     setBusy(true);
     setError("");
     try {

@@ -5,6 +5,7 @@ import { ageOn } from "@/lib/membership";
 import { SCHOLAR_BATCHES, scholarBatchLabel, scholarBatchWhen, SCHOLAR_SPORTS, scholarSportLabel, SCHOLAR_STATUSES, type ScholarStatus } from "@/lib/scholar";
 import type { ScholarRecord } from "@/lib/scholars";
 import { api, todayManila } from "./shared";
+import { confirmDialog } from "@/components/Dialogs";
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" });
 
@@ -171,7 +172,7 @@ function ApplicationCard({ a, onChanged, onAuthError }: { a: ScholarRecord; onCh
       {message && <div className="error" style={{ marginTop: 10 }}>{message}</div>}
       <div className="actions">
         <button className="btn secondary danger-text" type="button" disabled={busy}
-          onClick={() => window.confirm(`Delete ${a.full_name}'s application? This can't be undone.`) && act({ action: "delete" })}>Delete</button>
+          onClick={async () => (await confirmDialog(`Delete ${a.full_name}'s application? This can't be undone.`, { confirmLabel: "Delete", danger: true })) && act({ action: "delete" })}>Delete</button>
         <button className="btn" type="button" disabled={busy || !dirty} onClick={() => act({ action: "update", status, notes })}>Save</button>
       </div>
     </details>
