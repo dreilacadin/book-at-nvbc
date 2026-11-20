@@ -24,6 +24,9 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Internal:** A GitHub Action (`.github/workflows/neon-cleanup.yml`) deletes
+  a pull request's Neon preview database branch when the PR is merged or
+  closed. Needs the `NEON_PROJECT_ID` variable and `NEON_API_KEY` secret.
 - **Racket stringing.** Check in your racket for stringing by scanning the QR
   code at the front desk, or from **Stringing** at the top of every page.
   Choose your racket, the string (buy one from NVBC or bring your own), the

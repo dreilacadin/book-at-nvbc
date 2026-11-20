@@ -1,0 +1,34 @@
+# Deletes a pull request's Neon preview branch (preview/<git branch>) as soon as the PR is merged or
+# closed. The Neon–Vercel integration creates one database branch per preview deployment but doesn't
+# delete it when the git branch goes away, so without this they pile up in Neon.
+#
+# Needs, under Settings → Secrets and variables → Actions:
+#   - the repository variable NEON_PROJECT_ID (Neon → your project → Settings → Project ID)
+#   - the repository secret NEON_API_KEY (Neon → Settings → API keys; a project-scoped key is enough)
+# Until NEON_PROJECT_ID is set, the job is skipped.
+#
+# A PR that never got a preview deployment has no Neon branch, so the delete step fails. That step
+# is allowed to fail so the PR isn't marked with a red X; if preview branches still pile up, open
+# the run under Actions → "Neon preview cleanup" to see why (e.g. a wrong API key).
+name: Neon preview cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  delete-preview-branch:
+    # Skip PRs from forks (they can't read the secret) and repositories without the variable.
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.NEON_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Delete preview/${{ github.head_ref }}
+        uses: neondatabase/delete-branch-action@v3
+        continue-on-error: true
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/${{ github.head_ref }}
+          api_key: ${{ secrets.NEON_API_KEY }}
