@@ -10,6 +10,7 @@ import { emailSender, sendEmail } from "./mailer";
 import { notifyStaff, setupVapid } from "./notify";
 import { formatPeso, hasPaymentProof, isPaymentMethod, isProofImage, paymentLabel, type PaymentMethod, type PaymentStatus } from "./pricing";
 import {
+  checkTurnaround,
   earliestPickup,
   MAX_GROMMETS,
   mergeSuggestions,
@@ -176,7 +177,7 @@ export async function stringingOptions(): Promise<StringingOptions> {
     strings,
     rackets: mergeSuggestions(POPULAR_RACKETS, used.rows[0].racket),
     ownStrings: mergeSuggestions(strings.map(stringName), POPULAR_STRINGS, used.rows[0].string),
-    prices: settings.stringing,
+    prices: { ...settings.stringing, turnaroundChanged: null }, // who changed it is for staff
     methods: stringingMethods(settings),
     today: nowAtFacility().date,
   };
@@ -628,7 +629,8 @@ const STRINGER_VIEWS: QueueView[] = ["waiting", "in_progress", "ready"];
  * The rackets in one step of the queue (or matching a search: a tag number, name or mobile), and
  * how many are in each step. Stringers see only waiting, in progress and ready, without payments.
  */
-export async function stringingQueue(view: unknown, q: unknown, stringer: boolean): Promise<{ rackets: QueueRacket[]; counts: Record<QueueView, number>; tagQr: boolean }> {
+export type QueueTurnaround = Pick<StringingPrices, "standardDays" | "rushDays" | "turnaroundChanged">;
+export async function stringingQueue(view: unknown, q: unknown, stringer: boolean): Promise<{ rackets: QueueRacket[]; counts: Record<QueueView, number>; tagQr: boolean; turnaround: QueueTurnaround }> {
   const search = text(q, 60);
   const v: QueueView = QUEUE_VIEWS.includes(view as QueueView) && (!stringer || STRINGER_VIEWS.includes(view as QueueView)) ? (view as QueueView) : "waiting";
   const tag = /^#?\s*\d{1,7}$/.test(search) ? Number(search.replace(/\D/g, "")) : null;
@@ -671,6 +673,10 @@ export async function stringingQueue(view: unknown, q: unknown, stringer: boolea
       picked_up: c("picked_up"), cancelled: c("cancelled"),
     },
     tagQr: settings.stringing.tagQr,
+    turnaround: {
+      standardDays: settings.stringing.standardDays, rushDays: settings.stringing.rushDays,
+      turnaroundChanged: stringer ? null : settings.stringing.turnaroundChanged,
+    },
   };
 }
 
@@ -1086,18 +1092,33 @@ export async function deleteString(id: unknown): Promise<Result<{ deleted: boole
   return { ok: true, data: { deleted: true } };
 }
 
+/** Owner/managers: prices and the tag setting (the turnaround is saveTurnaround, from the queue). */
 export async function saveStringingPrices(input: unknown): Promise<Result<StringingPrices>> {
   const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const p = toStringingPrices(o);
   // toStringingPrices falls back to defaults; here a bad value is an error instead.
   for (const k of ["labor", "rush", "grommetSingle", "grommetDouble"] as const)
     if (Number(o[k]) !== p[k]) return fail(400, "Enter prices from ₱0 to ₱100,000.");
-  for (const k of ["standardDays", "rushDays"] as const)
-    if (JSON.stringify((o[k] as unknown[])?.map(Number)) !== JSON.stringify(p[k])) return fail(400, "Turnaround days must be whole numbers, the first not more than the second.");
   if (o.tagQr !== undefined && typeof o.tagQr !== "boolean") return fail(400, "Invalid tag setting.");
-  await db().query(`UPDATE settings SET stringing = $1::jsonb WHERE id = 1`, [JSON.stringify(p)]);
+  const { labor, rush, grommetSingle, grommetDouble, tagQr } = p;
+  return saveStringingSettings({ labor, rush, grommetSingle, grommetDouble, tagQr });
+}
+
+/** Staff at the desk: the Standard and Rush turnaround, which changes with how busy the stringers are. */
+export async function saveTurnaround(input: Record<string, unknown>, by: string): Promise<Result<StringingPrices>> {
+  const t = checkTurnaround(input);
+  if (typeof t === "string") return fail(400, t);
+  return saveStringingSettings({ ...t, turnaroundChanged: { by, at: new Date().toISOString() } });
+}
+
+// Merged into what's saved, so a price save and a turnaround change at the same time don't undo each other.
+async function saveStringingSettings(changes: Partial<StringingPrices>): Promise<Result<StringingPrices>> {
+  const { rows } = await db().query<{ stringing: unknown }>(
+    `UPDATE settings SET stringing = COALESCE(stringing, '{}'::jsonb) || $1::jsonb WHERE id = 1 RETURNING stringing`,
+    [JSON.stringify(changes)]
+  );
   settingsChanged();
-  return { ok: true, data: p };
+  return { ok: true, data: toStringingPrices(rows[0]?.stringing) };
 }
 
 export type StringerReport = {

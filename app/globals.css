@@ -1482,6 +1482,24 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .sf-down { color: var(--danger); }
 .sf-custom { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .sf-custom input { width: 90px; }
+.sf-turnaround { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--surface); }
+.sf-turnaround .hint { margin: 6px 0 0; }
+.sf-ta-now { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.sf-ta-now .btn { margin-left: auto; }
+.sf-ta-title { font-weight: 700; }
+.sf-turnaround.editing { display: flex; flex-direction: column; gap: 12px; }
+.sf-turnaround.editing .hint { margin: 0; line-height: 1.5; }
+.sf-ta-fields { display: flex; flex-wrap: wrap; gap: 12px 28px; }
+.sf-ta-fields .sf-custom input { width: 72px; }
+.sf-ta-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 12px; margin-top: 4px; }
+.sf-ta-actions > div { display: flex; gap: 10px; align-items: center; }
+.sf-ta-actions > div:last-child { margin-left: auto; }
+@media (max-width: 600px) {
+  /* Title and Change on one line, the two turnarounds under them. */
+  .sf-ta-title { flex: 1 1 auto; }
+  .sf-ta-now .btn { order: 1; }
+  .sf-ta-now > span:not(.sf-ta-title) { order: 2; }
+}
 .sf-mine { margin: 6px 0 0; padding-left: 18px; }
 .sf-ready { font-size: 15px; }
 .sf-status.cancelled, .sf-racket-card.cancelled, .sf-row.cancelled { opacity: .55; }

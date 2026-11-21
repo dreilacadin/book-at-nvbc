@@ -24,6 +24,13 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Staff:** Change the stringing **turnaround** from the top of the Stringing
+  queue when it gets busy (or quiet). It shows how many rackets are in the
+  queue. Set the Standard and Rush days, or use **+ 1 day** / **− 1 day** to
+  move them all at once. Staff and Scholars can change it too (it used to be
+  owner and managers only, under Strings & stock), and it shows who changed it
+  last. New check-ins use it at once; rackets already checked in keep their
+  collection date.
 - Password boxes have a **Show / Hide** button (the eye), so you can check
   what you typed: staff and coach logins, coach sign-up and password resets.
 - **Staff:** **Registration links** for new staff, Scholars and Stringers

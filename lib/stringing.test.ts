@@ -7,6 +7,7 @@ import {
   stockLines,
   stringColorName,
   DEFAULT_STRINGING_PRICES,
+  checkTurnaround,
   earliestPickup,
   mergeSuggestions,
   mobileTail,
@@ -40,6 +41,20 @@ test("prices: saved values, with defaults for missing or bad ones", () => {
   assert.equal(s.grommetSingle, 10);
   assert.deepEqual(s.standardDays, [2, 4]);
   assert.deepEqual(s.rushDays, [1, 2]); // 3 to 1 isn't a range
+});
+
+test("turnaround: a change from the desk", () => {
+  assert.deepEqual(checkTurnaround({ standardDays: ["5", "7"], rushDays: [2, 3] }), { standardDays: [5, 7], rushDays: [2, 3] });
+  assert.deepEqual(checkTurnaround({ standardDays: [0, 0], rushDays: [0, 0] }), { standardDays: [0, 0], rushDays: [0, 0] });
+  assert.match(checkTurnaround({ standardDays: [5, 3], rushDays: [1, 2] }) as string, /first not more/);
+  assert.match(checkTurnaround({ standardDays: ["", 3], rushDays: [1, 2] }) as string, /whole numbers/);
+  assert.match(checkTurnaround({ standardDays: [1.5, 3], rushDays: [1, 2] }) as string, /whole numbers/);
+  assert.match(checkTurnaround({ standardDays: [3, 61], rushDays: [1, 2] }) as string, /whole numbers/);
+  assert.match(checkTurnaround({ standardDays: [3, 5], rushDays: [4, 4] }) as string, /Rush can't take longer/);
+  assert.match(checkTurnaround({}) as string, /whole numbers/);
+  // Who changed it is kept with the saved settings.
+  assert.deepEqual(toStringingPrices({ turnaroundChanged: { by: "Jenn", at: "2026-11-21T06:00:00Z" } }).turnaroundChanged, { by: "Jenn", at: "2026-11-21T06:00:00Z" });
+  assert.equal(toStringingPrices({ turnaroundChanged: { by: 3 } }).turnaroundChanged, null);
 });
 
 test("turnaround: the earliest collection date", () => {

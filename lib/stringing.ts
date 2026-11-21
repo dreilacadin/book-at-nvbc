@@ -13,10 +13,13 @@ export type StringingPrices = {
   standardDays: [number, number]; // usual turnaround, e.g. 3–5 days
   rushDays: [number, number]; // rush turnaround, e.g. 1–2 days
   tagQr: boolean; // print QR codes on tags (for a label printer); off = simple tags with a big number
+  /** Who last changed the turnaround, and when (staff only; customers get null). */
+  turnaroundChanged: { by: string; at: string } | null;
 };
 
 export const DEFAULT_STRINGING_PRICES: StringingPrices = {
   labor: 200, rush: 150, grommetSingle: 10, grommetDouble: 20, standardDays: [3, 5], rushDays: [1, 2], tagQr: false,
+  turnaroundChanged: null,
 };
 
 const peso = (v: unknown, fallback: number) => {
@@ -37,7 +40,25 @@ export function toStringingPrices(v: unknown): StringingPrices {
     labor: peso(o.labor, d.labor), rush: peso(o.rush, d.rush), grommetSingle: peso(o.grommetSingle, d.grommetSingle),
     grommetDouble: peso(o.grommetDouble, d.grommetDouble), standardDays: days(o.standardDays, d.standardDays),
     rushDays: days(o.rushDays, d.rushDays), tagQr: o.tagQr === true,
+    turnaroundChanged: changed(o.turnaroundChanged),
   };
+}
+const changed = (v: unknown): StringingPrices["turnaroundChanged"] => {
+  const c = v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+  return c && typeof c.by === "string" && typeof c.at === "string" ? { by: c.by, at: c.at } : null;
+};
+
+/**
+ * A new turnaround (Admin → Stringing, at the top of the queue): whole days from 0 to 60, each
+ * "from" not more than its "to", and rush not slower than standard. A message if it isn't.
+ */
+export function checkTurnaround(o: { standardDays?: unknown; rushDays?: unknown }): Pick<StringingPrices, "standardDays" | "rushDays"> | string {
+  const read = (v: unknown) => (Array.isArray(v) && v.length === 2 && v.every((x) => x !== "" && x !== null) ? days(v, [-1, -1]) : [-1, -1]);
+  const standardDays = read(o.standardDays) as [number, number];
+  const rushDays = read(o.rushDays) as [number, number];
+  if (standardDays[0] < 0 || rushDays[0] < 0) return "Turnaround days are whole numbers from 0 to 60, the first not more than the second.";
+  if (rushDays[0] > standardDays[0] || rushDays[1] > standardDays[1]) return "Rush can't take longer than standard.";
+  return { standardDays, rushDays };
 }
 
 /** "3–5 days", "1 day". */
