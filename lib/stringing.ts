@@ -151,7 +151,7 @@ export const tagLabel = (tag: number) => `#${tag}`;
 export function readTag(v: unknown): number | null {
   if (typeof v === "number") return Number.isInteger(v) && v > 0 ? v : null;
   if (typeof v !== "string") return null;
-  const m = v.match(/(?:tag=|#|^\s*(?:tag\s*)?)(\d{1,7})\s*$/i);
+  const m = v.match(/(?:tag=|\/t\/|#|^\s*(?:tag\s*)?)(\d{1,7})\s*$/i);
   return m ? Number(m[1]) : null;
 }
 
@@ -169,6 +169,11 @@ export function normalizeMobile(v: unknown): string | null {
 export const mobileTail = (m: string) => (m.length >= 4 ? `•••• ${m.slice(-4)}` : m);
 
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || "there";
+/** "Ana Santos Reyes" → "Ana R." (for a tag). */
+export function shortName(name: string): string {
+  const [first = "", ...rest] = name.trim().split(/\s+/);
+  return rest.length ? `${first} ${rest.at(-1)![0]}.` : first;
+}
 
 // ---- Suggestions --------------------------------------------------------------------------------
 
