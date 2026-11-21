@@ -24,6 +24,19 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Staff:** Print racket tags on a **Marklife P12** label printer straight from
+  the staff page, over Bluetooth (Chrome on Android, or Chrome or Edge on a
+  computer). Set it up under Stringing → **🏷 Label printer**: connect, choose
+  the label type, size (30 × 12 mm unless you change it) and darkness, move
+  the print if it's a little off-centre, print a test label, and turn on **Print
+  racket tags on the label printer** for that phone. 🖨 Print tags then prints
+  a label for each racket (QR code, tag number, name, RUSH / PAID) instead of
+  the A4 page. With **Print tags with QR codes** on, receiving a racket prints
+  its tag too. Tells you if the printer runs out of labels or its cover is
+  open.
+- **Internal:** `/t/<tag>` forwards to `/admin?tag=<tag>`: the short link in
+  label QR codes, so they still scan on 12 mm labels. The tag scanner reads it
+  too.
 - **Staff:** Change the stringing **turnaround** from the top of the Stringing
   queue when it gets busy (or quiet). It shows how many rackets are in the
   queue. Set the Standard and Rush days, or use **+ 1 day** / **− 1 day** to

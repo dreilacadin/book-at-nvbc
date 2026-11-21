@@ -4,7 +4,7 @@ import Link from "next/link";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import FullScreenLoader from "@/components/FullScreenLoader";
-import { tagLabel } from "@/lib/stringing";
+import { shortName, tagLabel } from "@/lib/stringing";
 import type { TagRacket } from "@/lib/stringings";
 import { api, AuthError } from "../../shared";
 
@@ -59,10 +59,6 @@ export default function PrintTags() {
   if (!rackets) return <FullScreenLoader label="Getting the tags ready…" />;
   const tags: (TagRacket | null)[] = blank ? Array(PER_PAGE).fill(null) : rackets;
   const box = (on: boolean, label: string) => <span className="rtag-check"><span className={`rtag-box${on ? " on" : ""}`}>{on ? "✓" : ""}</span>{label}</span>;
-  const shortName = (n: string) => {
-    const [first, ...rest] = n.trim().split(/\s+/);
-    return rest.length ? `${first} ${rest.at(-1)![0]}.` : first;
-  };
 
   return (
     <div className="stack">

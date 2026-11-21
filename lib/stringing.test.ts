@@ -16,6 +16,7 @@ import {
   racketPrice,
   readPrestretch,
   readTag,
+  shortName,
   readTension,
   readyMessage,
   receivedMessage,
@@ -83,7 +84,15 @@ test("mobile numbers and tags", () => {
   assert.equal(readTag("127"), 127);
   assert.equal(readTag("tag 127"), 127);
   assert.equal(readTag("https://courts.nvbc.app/admin?tag=127"), 127);
+  assert.equal(readTag("https://courts.nvbc.app/t/127"), 127); // label-printer tags
+  assert.equal(readTag("https://courts.nvbc.app/t/abc"), null);
   assert.equal(readTag("VCH-ABCD-2345"), null);
+});
+
+test("short names for tags", () => {
+  assert.equal(shortName("Ana Santos Reyes"), "Ana R.");
+  assert.equal(shortName("  Ana  "), "Ana");
+  assert.equal(shortName(""), "");
 });
 
 test("suggestions: no duplicates (ignoring case and spacing), sorted", () => {

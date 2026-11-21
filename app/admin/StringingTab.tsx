@@ -20,9 +20,11 @@ import {
   type StringingPrices,
   type StringItem,
 } from "@/lib/stringing";
-import type { OrderDetail, QueueRacket, QueueTurnaround, QueueView, RacketRow, StringerReport, FeedbackRow, StockMove } from "@/lib/stringings";
+import type { OrderDetail, QueueRacket, QueueTurnaround, QueueView, RacketRow, StringerReport, FeedbackRow, StockMove, TagRacket } from "@/lib/stringings";
 import Receipt from "@/components/Receipt";
 import { addDays } from "@/lib/time";
+import { LabelPrintStatus, LabelPrinterButton } from "./LabelPrinter";
+import { labelPrinterOn, printTagLabels } from "./p12";
 import ProofViewer from "./ProofViewer";
 import QrScanner from "./QrScanner";
 import { useCanManage } from "./role";
@@ -57,7 +59,17 @@ function savedView(stringer: boolean): QueueView | null {
 
 type Sms = { mobile: string; ready: string; thanks: string };
 
-export const printTags = (q: string) => window.open(`/admin/stringing/tags?${q}`, "_blank", "noopener");
+/**
+ * Racket tags ("ids=a,b" or "order=<id>"): on this device's label printer when that's on, otherwise
+ * the A4 page in a new tab. Blank tags are always A4 (the number is written by hand).
+ */
+export function printTags(q: string) {
+  if (q !== "blank=1" && labelPrinterOn()) {
+    void printTagLabels(async () => (await api<{ rackets: TagRacket[] }>(`/api/admin/stringing?print=1&${q}`)).rackets);
+    return;
+  }
+  window.open(`/admin/stringing/tags?${q}`, "_blank", "noopener");
+}
 const when = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 
@@ -216,8 +228,10 @@ export default function StringingTab({
           <button type="button" className="btn small secondary" onClick={() => setPage("strings")}>🧵 Strings &amp; stock</button>
           {manage && <button type="button" className="btn small secondary" onClick={() => setPage("report")}>📊 Stringer report</button>}
           <a className="btn small secondary" href="/string" target="_blank" rel="noopener">🔗 Customer page</a>
+          <LabelPrinterButton tagQr={!!data?.tagQr} />
         </div>
       )}
+      <LabelPrintStatus />
       {!stringer && data && (
         <TurnaroundBar t={data.turnaround} queued={data.counts.to_receive + data.counts.waiting + data.counts.in_progress}
           onAuthError={onAuthError} onSaved={load} />

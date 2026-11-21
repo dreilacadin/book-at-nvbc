@@ -1613,3 +1613,26 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .staff-role-picker .check-row { margin: 0; padding: 2px 0; align-items: center; }
 .staff-role-picker .hint { margin: -4px 0 0; line-height: 1.5; }
 .actions.staff-form-actions { margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--border); gap: 10px 12px; flex-wrap: wrap; }
+
+/* Label printer (Marklife P12): settings window and the printing status */
+.modal.label-printer { max-width: 520px; display: flex; flex-direction: column; gap: 14px; }
+.modal.label-printer .hint { margin: 0; line-height: 1.5; }
+.modal.label-printer .field, .modal.label-printer .row.field { margin: 0; }
+.lp-printer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.lp-preview { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.lp-preview img { width: min(100%, 320px); height: auto; image-rendering: pixelated; background: #fff;
+  border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow); }
+.lp-use { align-items: flex-start; padding-top: 14px; border-top: 1px solid var(--border); margin: 0; }
+.lp-use input { margin-top: 3px; }
+.label-status { position: fixed; left: 16px; bottom: 16px; z-index: 91; display: flex; gap: 10px; align-items: center;
+  max-width: min(360px, calc(100vw - 32px)); padding: 12px 14px; border-radius: 12px; font-size: 14px; font-weight: 600;
+  background: var(--surface); color: var(--text); border: 1px solid var(--brand); box-shadow: var(--shadow); animation: toast-in .2s ease-out; }
+.label-status.done { border-color: var(--open-border); }
+.label-status.error { border-color: var(--danger); color: var(--danger); }
+@media (max-width: 600px) { .label-status { bottom: auto; top: 12px; left: 16px; right: 16px; max-width: none; } }
+.badge.lp-ok { background: var(--open-bg); color: var(--open-text); }
+.lp-shift { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-top: 8px; }
+.lp-shift-row { display: flex; align-items: center; gap: 8px; }
+.lp-shift-row output { min-width: 96px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+.lp-shift-row .btn { min-width: 44px; }
