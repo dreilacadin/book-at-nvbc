@@ -24,6 +24,7 @@ import {
   stringingOrder,
   stringingProof,
   stringingQueue,
+  saveTurnaround,
   stockMoves,
 } from "@/lib/stringings";
 import { getSettings } from "@/lib/db";
@@ -79,6 +80,7 @@ export async function GET(req: NextRequest) {
 // { action: "create", …check-in, receive?, paidMethod? }   { action: "edit", id, …racket }
 // { action: "customer", id, name, mobile, email }   { action: "payment", id, status, method?, reference?, note? }
 // { action: "remarks", id, remarks } (stringers too, like "step")
+// { action: "turnaround", standardDays: [from, to], rushDays: [from, to] } (any desk staff, Scholars too)
 // { action: "sms", id }   { action: "string-save", … }   { action: "string-stock", id, mode: "add" | "set", counts: {colour: sets}, note? }
 // owner/manager: { action: "delete", id } | "string-delete" | "prices"
 export async function POST(req: NextRequest) {
@@ -97,6 +99,7 @@ export async function POST(req: NextRequest) {
     if (b.action === "sms") return respond(await smsTemplates(String(b.id ?? "")));
     if (b.action === "string-save") return respond(await saveString(b, me.name));
     if (b.action === "string-stock") return respond(await adjustStock(b.id, b, me.name));
+    if (b.action === "turnaround") return respond(await saveTurnaround(b, me.name));
     if (!canManage(me)) return forbidden();
     if (b.action === "delete") return respond(await deleteStringingOrder(String(b.id ?? ""), me.name));
     if (b.action === "string-delete") return respond(await deleteString(b.id));

@@ -12,6 +12,7 @@ import {
   racketStatusLabel,
   setupLabel,
   colorStock,
+  daysText,
   stockLines,
   stringName,
   tagLabel,
@@ -19,7 +20,7 @@ import {
   type StringingPrices,
   type StringItem,
 } from "@/lib/stringing";
-import type { OrderDetail, QueueRacket, QueueView, RacketRow, StringerReport, FeedbackRow, StockMove } from "@/lib/stringings";
+import type { OrderDetail, QueueRacket, QueueTurnaround, QueueView, RacketRow, StringerReport, FeedbackRow, StockMove } from "@/lib/stringings";
 import Receipt from "@/components/Receipt";
 import { addDays } from "@/lib/time";
 import ProofViewer from "./ProofViewer";
@@ -76,6 +77,8 @@ const payChip = (r: Pick<QueueRacket, "payment_status" | "balance">) =>
   : r.balance <= 0 ? <span className="badge">✓ Paid</span>
   : <span className="badge grey">Not paid</span>;
 
+type QueueData = { rackets: QueueRacket[]; counts: Record<QueueView, number>; tagQr: boolean; turnaround: QueueTurnaround };
+
 export default function StringingTab({
   onAuthError,
   stringer = false,
@@ -99,7 +102,7 @@ export default function StringingTab({
   }, [stringer]);
   const [smsFor, setSmsFor] = useState<QueueRacket | null>(null);
   const [q, setQ] = useState(stringer && openTag ? String(openTag) : "");
-  const [data, setData] = useState<{ rackets: QueueRacket[]; counts: Record<QueueView, number>; tagQr: boolean } | null>(null);
+  const [data, setData] = useState<QueueData | null>(null);
   const [openOrder, setOpenOrder] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scanning, setScanning] = useState(false);
@@ -113,7 +116,7 @@ export default function StringingTab({
   const load = useCallback(async () => {
     const n = ++latest.current;
     try {
-      const d = await api<{ rackets: QueueRacket[]; counts: Record<QueueView, number>; tagQr: boolean }>(`/api/admin/stringing?view=${view}&q=${encodeURIComponent(q.trim())}`);
+      const d = await api<QueueData>(`/api/admin/stringing?view=${view}&q=${encodeURIComponent(q.trim())}`);
       if (n !== latest.current) return;
       setData(d);
       setError("");
@@ -214,6 +217,10 @@ export default function StringingTab({
           {manage && <button type="button" className="btn small secondary" onClick={() => setPage("report")}>📊 Stringer report</button>}
           <a className="btn small secondary" href="/string" target="_blank" rel="noopener">🔗 Customer page</a>
         </div>
+      )}
+      {!stringer && data && (
+        <TurnaroundBar t={data.turnaround} queued={data.counts.to_receive + data.counts.waiting + data.counts.in_progress}
+          onAuthError={onAuthError} onSaved={load} />
       )}
       {scanning && (
         <QrScanner onClose={() => setScanning(false)} onCode={(t) => {
@@ -317,6 +324,93 @@ export default function StringingTab({
 }
 
 /** Asks for a racket's remarks (null: cancelled; "" removes them). */
+// ---- The turnaround customers see, changed at the desk as the queue grows or shrinks ------------
+
+function TurnaroundBar({ t, queued, onAuthError, onSaved }: {
+  t: QueueTurnaround; queued: number; onAuthError: (e: unknown) => void; onSaved: () => Promise<void>;
+}) {
+  const [v, setV] = useState<string[] | null>(null); // standard from, to, rush from, to, while editing
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const edit = () => {
+    setV([...t.standardDays, ...t.rushDays].map(String));
+    setError("");
+    setSaved(false);
+  };
+  // Busier or quieter: move every number by a day (not below 0).
+  const shift = (d: number) => setV((x) => x && x.map((n) => String(Math.max(0, (Number(n) || 0) + d))));
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!v) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api("/api/admin/stringing", { action: "turnaround", standardDays: v.slice(0, 2), rushDays: v.slice(2) });
+      await onSaved();
+      setV(null);
+      setSaved(true);
+    } catch (err) {
+      onAuthError(err);
+      setError(err instanceof Error ? err.message : "Couldn't save the turnaround.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  const num = (i: number, label: string) => (
+    <input type="number" inputMode="numeric" min={0} max={60} step={1} required aria-label={label} value={v?.[i] ?? ""}
+      onChange={(e) => setV((x) => x && x.map((n, j) => (j === i ? e.target.value : n)))} />
+  );
+  const changed = t.turnaroundChanged;
+
+  if (!v)
+    return (
+      <div className="sf-turnaround">
+        <div className="sf-ta-now">
+          <span className="sf-ta-title">⏱ Turnaround</span>
+          <span><span className="muted">Standard</span> <strong>{daysText(t.standardDays)}</strong></span>
+          <span><span className="muted">⚡ Rush</span> <strong>{daysText(t.rushDays)}</strong></span>
+          <button type="button" className="btn small secondary" onClick={edit}>Change</button>
+        </div>
+        <p className="hint">
+          {saved ? "Saved. New check-ins use it now. " : ""}
+          {queued} racket{queued === 1 ? "" : "s"} in the queue
+          {changed ? ` · changed by ${changed.by}, ${when(changed.at)}` : ""}
+        </p>
+      </div>
+    );
+  return (
+    <form className="sf-turnaround editing" onSubmit={save}>
+      <strong>⏱ Change the turnaround</strong>
+      <p className="hint">
+        {queued} racket{queued === 1 ? "" : "s"} in the queue. Customers see this on the check-in page, and the first number is
+        the earliest collection date they can choose. Rackets already checked in keep their date.
+      </p>
+      <div className="sf-ta-fields">
+        <div>
+          <label>Standard (days)</label>
+          <div className="sf-custom">{num(0, "Standard: from")}<span>to</span>{num(1, "Standard: to")}</div>
+        </div>
+        <div>
+          <label>⚡ Rush (days)</label>
+          <div className="sf-custom">{num(2, "Rush: from")}<span>to</span>{num(3, "Rush: to")}</div>
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="sf-ta-actions">
+        <div>
+          <button type="button" className="btn small secondary" onClick={() => shift(-1)}>− 1 day</button>
+          <button type="button" className="btn small secondary" onClick={() => shift(1)}>+ 1 day</button>
+        </div>
+        <div>
+          <button type="button" className="btn secondary" disabled={busy} onClick={() => setV(null)}>Cancel</button>
+          <button className="btn" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
 function editRemarks(tag: string, current: string): Promise<string | null> {
   return promptDialog("What did you notice about this racket? The customer sees this on their racket's page.", {
     title: `Remarks on ${tag}`,
@@ -826,7 +920,6 @@ function StringsPage({ manage, onAuthError, onBack }: { manage: boolean; onAuthE
       const p = o.prices;
       setPrices({
         labor: String(p.labor), rush: String(p.rush), grommetSingle: String(p.grommetSingle), grommetDouble: String(p.grommetDouble),
-        std1: String(p.standardDays[0]), std2: String(p.standardDays[1]), rush1: String(p.rushDays[0]), rush2: String(p.rushDays[1]),
       });
       setTagQr(p.tagQr);
     } catch (e) {
@@ -1033,11 +1126,11 @@ function StringsPage({ manage, onAuthError, onBack }: { manage: boolean; onAuthE
         <form className="card stack" onSubmit={(e) => {
           e.preventDefault();
           run({ action: "prices", prices: {
-            labor: prices.labor, rush: prices.rush, grommetSingle: prices.grommetSingle, grommetDouble: prices.grommetDouble,
-            standardDays: [prices.std1, prices.std2], rushDays: [prices.rush1, prices.rush2], tagQr,
+            labor: prices.labor, rush: prices.rush, grommetSingle: prices.grommetSingle, grommetDouble: prices.grommetDouble, tagQr,
           } }, "Settings saved.");
         }}>
-          <strong>Prices, turnaround &amp; tags <span className="hint">· owner and managers</span></strong>
+          <strong>Prices &amp; tags <span className="hint">· owner and managers</span></strong>
+          <p className="hint">The turnaround is at the top of the Stringing queue, so the desk can change it as it gets busy.</p>
           <div className="row field">
             <div><label htmlFor="sp-l">Stringing labour (₱ per racket)</label><input id="sp-l" type="number" min={0} step="any" value={prices.labor} onChange={(e) => setPrices({ ...prices, labor: e.target.value })} /></div>
             <div><label htmlFor="sp-r">Rush (₱ added)</label><input id="sp-r" type="number" min={0} step="any" value={prices.rush} onChange={(e) => setPrices({ ...prices, rush: e.target.value })} /></div>
@@ -1046,19 +1139,6 @@ function StringsPage({ manage, onAuthError, onBack }: { manage: boolean; onAuthE
             <div><label htmlFor="sp-gs">Single grommet (₱ each)</label><input id="sp-gs" type="number" min={0} step="any" value={prices.grommetSingle} onChange={(e) => setPrices({ ...prices, grommetSingle: e.target.value })} /></div>
             <div><label htmlFor="sp-gd">Double grommet (₱ each)</label><input id="sp-gd" type="number" min={0} step="any" value={prices.grommetDouble} onChange={(e) => setPrices({ ...prices, grommetDouble: e.target.value })} /></div>
           </div>
-          <div className="row field">
-            <div>
-              <label>Standard turnaround (days)</label>
-              <div className="sf-custom"><input aria-label="From" type="number" min={0} value={prices.std1} onChange={(e) => setPrices({ ...prices, std1: e.target.value })} /><span>to</span>
-                <input aria-label="To" type="number" min={0} value={prices.std2} onChange={(e) => setPrices({ ...prices, std2: e.target.value })} /></div>
-            </div>
-            <div>
-              <label>Rush turnaround (days)</label>
-              <div className="sf-custom"><input aria-label="From" type="number" min={0} value={prices.rush1} onChange={(e) => setPrices({ ...prices, rush1: e.target.value })} /><span>to</span>
-                <input aria-label="To" type="number" min={0} value={prices.rush2} onChange={(e) => setPrices({ ...prices, rush2: e.target.value })} /></div>
-            </div>
-          </div>
-          <p className="hint">The earliest collection date a customer can choose is the first number of days from check-in.</p>
           <label className="check-row">
             <input type="checkbox" checked={tagQr} onChange={(e) => setTagQr(e.target.checked)} />
             <span>
