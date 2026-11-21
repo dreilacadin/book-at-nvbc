@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import webpush from "web-push";
 import { db } from "./db";
-import { ALL_KINDS, isNotifyKind, pushSummary, type AdminEvent, type NotifyKind } from "./notify-kinds";
+import { ALL_KINDS, isNotifyKind, kindsForRole, pushSummary, type AdminEvent, type NotifyKind } from "./notify-kinds";
 
 // Staff notifications: events are stored for the admin panel's bell, and pushed to the phones /
 // computers of staff who turned push notifications on. Server only.
@@ -67,17 +67,21 @@ async function sendPushes(eventIds: number[]): Promise<void> {
     `SELECT kind, push_title, body, booking_code, membership_id::text FROM admin_events WHERE id = ANY($1::bigint[]) ORDER BY id`,
     [eventIds]
   );
-  // Devices of staff who are still allowed in (owner, or an active account), with their kinds.
-  const { rows: subs } = await db().query<{ endpoint: string; p256dh: string; auth: string; kinds: string[] }>(
-    `SELECT s.endpoint, s.p256dh, s.auth, COALESCE(n.kinds, $1::text[]) AS kinds
+  // Devices of staff who are still allowed in (owner, or an active account), with their kinds and
+  // role (a Scholar only gets what their tabs can open).
+  const { rows: subs } = await db().query<{ endpoint: string; p256dh: string; auth: string; kinds: string[]; role: string }>(
+    `SELECT s.endpoint, s.p256dh, s.auth, COALESCE(n.kinds, $1::text[]) AS kinds,
+            CASE WHEN s.who = 'owner' THEN 'owner' ELSE u.role END AS role
        FROM push_subscriptions s
        LEFT JOIN admin_notify_state n ON n.who = s.who
-      WHERE s.who = 'owner' OR s.who IN (SELECT id::text FROM admin_users WHERE is_active)`,
+       LEFT JOIN admin_users u ON u.id::text = s.who
+      WHERE s.who = 'owner' OR u.is_active`,
     [ALL_KINDS]
   );
   await Promise.all(
     subs.map(async (s) => {
-      const wanted = events.filter((e) => s.kinds.includes(e.kind));
+      const allowed = kindsForRole(s.role);
+      const wanted = events.filter((e) => s.kinds.includes(e.kind) && allowed.includes(e.kind as NotifyKind));
       const msg = pushSummary(wanted);
       if (!msg) return;
       try {
@@ -93,7 +97,7 @@ async function sendPushes(eventIds: number[]): Promise<void> {
 }
 
 /** Latest notifications for one staff member, and their settings. A first visit starts "all read". */
-export async function getNotifications(who: string) {
+export async function getNotifications(who: string, role: string) {
   await db().query(
     `INSERT INTO admin_notify_state (who, last_seen_id)
      SELECT $1, COALESCE((SELECT max(id) FROM admin_events), 0)
@@ -105,7 +109,8 @@ export async function getNotifications(who: string) {
     [who]
   );
   const lastSeen = Number(state[0].last_seen_id);
-  const kinds = state[0].kinds.filter(isNotifyKind);
+  const available = kindsForRole(role);
+  const kinds = state[0].kinds.filter((k): k is NotifyKind => isNotifyKind(k) && available.includes(k));
   const { rows } = await db().query<AdminEvent & { id: string }>(
     `SELECT id, kind, title, body, booking_code, membership_id, created_at FROM admin_events
       WHERE kind = ANY($1::text[]) ORDER BY id DESC LIMIT 30`,
@@ -116,7 +121,7 @@ export async function getNotifications(who: string) {
     await db().query<{ n: number }>(`SELECT count(*)::int AS n FROM admin_events WHERE id > $1 AND kind = ANY($2::text[])`, [lastSeen, kinds])
   ).rows[0].n;
   const devices = (await db().query<{ n: number }>(`SELECT count(*)::int AS n FROM push_subscriptions WHERE who = $1`, [who])).rows[0].n;
-  return { events, unread, lastSeen, kinds, devices, push: pushConfig() };
+  return { events, unread, lastSeen, kinds, available, devices, push: pushConfig() };
 }
 
 export async function markSeen(who: string, upTo: unknown) {

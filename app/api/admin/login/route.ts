@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   try {
     const me = await getStringingStaff(req);
     if (me?.role === "stringer") return NextResponse.json({ loggedIn: false, stringer: { name: me.name, id: me.id } });
-    return NextResponse.json(me ? { loggedIn: true, name: me.name, username: me.username, id: me.id, role: me.role } : { loggedIn: false });
+    return NextResponse.json(me ? { loggedIn: true, name: me.name, username: me.username, id: me.id, role: me.role, strings: me.strings } : { loggedIn: false });
   } catch (e) {
     return serverError(e);
   }
@@ -46,6 +46,14 @@ export async function POST(req: NextRequest) {
       if (checkPassword(password)) who = { id: null, version: 0, name: OWNER.name };
     } else {
       const user = await verifyLogin(u, password);
+      // The right password for a sign-up that isn't approved yet: say so (only after the password matched).
+      if (user === "pending") {
+        await clearHits("login-user-ip", keyOf("login-user-ip"));
+        return NextResponse.json(
+          { error: "Your account is waiting for approval by NVBC's owner or a manager. You can log in once it's approved." },
+          { status: 403 }
+        );
+      }
       if (user) who = { id: user.id, version: user.token_version, name: user.display_name };
     }
     if (!who) {

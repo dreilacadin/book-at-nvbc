@@ -7,6 +7,7 @@ import FullScreenLoader from "@/components/FullScreenLoader";
 import { setCustomActivities } from "@/lib/sports";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import PasswordInput from "@/components/PasswordInput";
 
 /** Coaches sign up with NVBC's shared link (/coach/join?key=…); NVBC approves them before their code works. */
 export default function CoachJoinPage() {
@@ -102,9 +103,8 @@ export default function CoachJoinPage() {
             <label htmlFor="pw">
               Password <span className="hint">(at least 8 characters)</span>
             </label>
-            <input
+            <PasswordInput
               id="pw"
-              type="password"
               required
               minLength={8}
               maxLength={200}
@@ -115,9 +115,8 @@ export default function CoachJoinPage() {
           </div>
           <div>
             <label htmlFor="pw2">Type it again</label>
-            <input
+            <PasswordInput
               id="pw2"
-              type="password"
               required
               minLength={8}
               maxLength={200}

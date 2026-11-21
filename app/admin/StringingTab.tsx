@@ -79,11 +79,14 @@ const payChip = (r: Pick<QueueRacket, "payment_status" | "balance">) =>
 export default function StringingTab({
   onAuthError,
   stringer = false,
+  strings = true,
   me,
   openTag,
 }: {
   onAuthError: (e: unknown) => void;
   stringer?: boolean;
+  /** May start and finish stringing (not a Scholar who only does the desk side). */
+  strings?: boolean;
   me: string; // the logged-in person's name
   openTag?: number | null; // from a scanned tag (/admin?tag=127)
 }) {
@@ -251,7 +254,8 @@ export default function StringingTab({
           {rows.map((r) => {
             const due = dueText(r.due_on, today);
             const next = NEXT_ACTION[r.status];
-            const canNext = next && (!stringer || next.action === "start" || next.action === "done");
+            const stringing = next?.action === "start" || next?.action === "done";
+            const canNext = next && (stringer ? stringing : strings || !stringing);
             return (
               <div key={r.id} className={`sf-row${r.rush ? " rush" : ""}${r.status === "cancelled" ? " cancelled" : ""}`}>
                 {!stringer && (
@@ -294,7 +298,8 @@ export default function StringingTab({
                   {r.status !== "cancelled" && (
                     <button type="button" className="link-btn" disabled={busy === r.id} onClick={() => remark(r)}>📝 {r.remarks ? "Edit remarks" : "Remarks"}</button>
                   )}
-                  {(stringer ? r.status === "in_progress" || r.status === "done" : r.status !== "checked_in" && r.status !== "cancelled") && (
+                  {(stringer ? r.status === "in_progress" || r.status === "done"
+                    : r.status !== "checked_in" && r.status !== "cancelled" && (strings || (r.status !== "in_progress" && r.status !== "done"))) && (
                     <button type="button" className="link-btn" disabled={busy === r.id} onClick={() => step(r, "undo")}>Undo</button>
                   )}
                 </span>
@@ -305,7 +310,7 @@ export default function StringingTab({
       )}
       {smsFor && <SmsModal orderId={smsFor.order_id} name={smsFor.name} onAuthError={onAuthError} onClose={() => setSmsFor(null)} />}
       {openOrder && (
-        <OrderModal id={openOrder} me={me} tagQr={!!data?.tagQr} onAuthError={onAuthError} onClose={() => { setOpenOrder(null); load(); }} />
+        <OrderModal id={openOrder} me={me} strings={strings} tagQr={!!data?.tagQr} onAuthError={onAuthError} onClose={() => { setOpenOrder(null); load(); }} />
       )}
     </div>
   );
@@ -411,7 +416,7 @@ function SmsModal({ orderId, name, onAuthError, onClose }: { orderId: string; na
 
 // ---- One check-in -------------------------------------------------------------------------------
 
-function OrderModal({ id, me, tagQr, onAuthError, onClose }: { id: string; me: string; tagQr: boolean; onAuthError: (e: unknown) => void; onClose: () => void }) {
+function OrderModal({ id, me, strings, tagQr, onAuthError, onClose }: { id: string; me: string; strings: boolean; tagQr: boolean; onAuthError: (e: unknown) => void; onClose: () => void }) {
   const manage = useCanManage();
   const [d, setD] = useState<OrderDetail | null>(null);
   const [error, setError] = useState("");
@@ -570,8 +575,8 @@ function OrderModal({ id, me, tagQr, onAuthError, onClose }: { id: string; me: s
                         r.cancelled_at && `cancelled by ${r.cancelled_by}, ${when(r.cancelled_at)}`].filter(Boolean).join(" · ")}
                     </span>
                     <div className="actions start" style={{ marginTop: 10 }}>
-                      {r.status === "received" && <button type="button" className="btn small" disabled={busy} onClick={() => step([r.id], "start", `${tagLabel(r.tag)} — stringing started.`)}>▶ Start</button>}
-                      {(r.status === "received" || r.status === "in_progress") && <button type="button" className="btn small" disabled={busy} onClick={() => step([r.id], "done", `${tagLabel(r.tag)} is ready — the customer has been told.`)}>✓ Done</button>}
+                      {strings && r.status === "received" && <button type="button" className="btn small" disabled={busy} onClick={() => step([r.id], "start", `${tagLabel(r.tag)} — stringing started.`)}>▶ Start</button>}
+                      {strings && (r.status === "received" || r.status === "in_progress") && <button type="button" className="btn small" disabled={busy} onClick={() => step([r.id], "done", `${tagLabel(r.tag)} is ready — the customer has been told.`)}>✓ Done</button>}
                       {r.status === "done" && <button type="button" className="btn small" disabled={busy} onClick={async () => {
                         if (o.balance > 0 && !(await confirmDialog(`${formatPeso(o.balance)} is still unpaid. Collect it, then mark ${tagLabel(r.tag)} picked up?`))) return;
                         step([r.id], "pickup", `${tagLabel(r.tag)} picked up.`);
@@ -581,7 +586,7 @@ function OrderModal({ id, me, tagQr, onAuthError, onClose }: { id: string; me: s
                         const text = await editRemarks(tagLabel(r.tag), r.remarks);
                         if (text !== null) run({ action: "remarks", id: r.id, remarks: text }, text ? `${tagLabel(r.tag)} — remarks saved.` : `${tagLabel(r.tag)} — remarks removed.`);
                       }}>📝 Remarks</button>}
-                      {r.status !== "checked_in" && <button type="button" className="btn small secondary" disabled={busy} onClick={async () => (await confirmDialog(`Undo the last step for ${tagLabel(r.tag)}?`, { confirmLabel: "Undo" })) && step([r.id], "undo", `${tagLabel(r.tag)} moved back a step.`)}>↩ Undo</button>}
+                      {r.status !== "checked_in" && (strings || (r.status !== "in_progress" && r.status !== "done")) && <button type="button" className="btn small secondary" disabled={busy} onClick={async () => (await confirmDialog(`Undo the last step for ${tagLabel(r.tag)}?`, { confirmLabel: "Undo" })) && step([r.id], "undo", `${tagLabel(r.tag)} moved back a step.`)}>↩ Undo</button>}
                       {r.status !== "picked_up" && r.status !== "cancelled" && <button type="button" className="btn small secondary danger-text" disabled={busy} onClick={async () => (await confirmDialog(`Cancel ${tagLabel(r.tag)}? It comes off the total.`, { confirmLabel: "Yes, cancel", cancelLabel: "Keep", danger: true })) && step([r.id], "cancel", `${tagLabel(r.tag)} cancelled.`)}>Cancel</button>}
                     </div>
                   </div>

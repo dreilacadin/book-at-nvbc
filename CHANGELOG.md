@@ -24,6 +24,30 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- Password boxes have a **Show / Hide** button (the eye), so you can check
+  what you typed: staff and coach logins, coach sign-up and password resets.
+- **Staff:** **Registration links** for new staff, Scholars and Stringers
+  (Staff → Registration links, owner and managers). Choose who a link is for
+  and how long it works (1, 7 or 30 days, or until you turn it off), copy it
+  and send it. People fill in their first and last name, birthday, mobile,
+  email, username and password, and choose their role: Staff, Scholar or
+  Stringer (a Scholar can also tick **I also string rackets**). Their account
+  waits for approval under **Staff → Team**, with a notification to the owner
+  and managers. Turn a link off any time; it stops working at once.
+- **Staff:** **Scholar** accounts: day-to-day access like Staff, but only the
+  **Bookings**, **Members** and **Stringing** tabs (the server refuses the
+  rest), and only those notifications. A Scholar who also strings rackets can
+  start and finish stringing; the others do the desk side (check-ins,
+  receiving, payments and pickups). Scholars and Stringers change their own
+  password from the **Password** button at the top.
+- **Staff:** Staff accounts keep a first and last name, birthday, mobile and
+  email (added under **Manage**; filled in by the person when they sign up with
+  a link).
+- **Database:** the `scholar` staff role and `is_stringer` (a Scholar who
+  strings); staff details (`first_name`, `last_name`, `birthdate`, `mobile`,
+  `email`); sign-ups waiting for approval (`pending`, `invite_id`,
+  `approved_by`, `approved_at`); the `staff_invites` table; the
+  `staff_signup` notification kind.
 - **Internal:** A GitHub Action (`.github/workflows/neon-cleanup.yml`) deletes
   a pull request's Neon preview database branch when the PR is merged or
   closed. Needs the `NEON_PROJECT_ID` variable and `NEON_API_KEY` secret.
@@ -297,6 +321,11 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Changed
 
+- **Staff:** A tidier **Staff** tab: **Team**, **Registration links** and
+  **Activity log** are now separate views. Team has a search box (name,
+  username, mobile or email), filters by role, sign-ups waiting for approval
+  at the top, and one **Manage** button per person (details, role, password,
+  disable, delete) instead of a row of buttons.
 - **Staff:** Stringing: a picked-up racket shows who released it at the desk
   and when, in the **Picked up** list and on the order ("released by …").
 - Tidier links at the top of the page: **Book a court**, **My booking**,
@@ -336,6 +365,9 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Fixed
 
+- **Staff:** Racket stringing notifications were off for staff who had
+  already set up notifications; they're now on (turn them off under 🔔 if you
+  like).
 - **Staff:** Strings & stock: **Edit** on a string looked like it did nothing,
   because its form is below the list. It now scrolls to the form and marks
   the string as "Editing…".

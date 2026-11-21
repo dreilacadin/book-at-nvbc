@@ -281,6 +281,16 @@ input[type="number"], select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); outline-offset: 1px; border-color: var(--brand); }
 textarea { resize: vertical; min-height: 64px; }
+/* Password boxes with a Show/Hide button (components/PasswordInput) */
+.pw-field { position: relative; display: block; }
+.pw-field input { padding-right: 48px; }
+.pw-toggle {
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.pw-toggle:hover { color: var(--text); background: var(--brand-soft); }
+.pw-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
 .field + .field { margin-top: 14px; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
@@ -359,6 +369,9 @@ tr.cancelled td:last-child { text-decoration: none; }
    shows at once (no tabs cut off at the edge). */
 .admin-head { display: flex; justify-content: space-between; align-items: center; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 20px; }
 .admin-head h1 { margin: 0; }
+/* Who's logged in, Password, notifications and Log out: wrap as a group on phones, never mid-button. */
+.admin-head > span { flex-wrap: wrap; justify-content: flex-end; }
+.admin-head .btn { white-space: nowrap; }
 .admin-tabs { flex-wrap: wrap; overflow: visible; margin-bottom: 24px; }
 .admin-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 10px 12px; }
 .tab-icon { display: none; font-size: 18px; line-height: 1; } /* icons only on the phone tiles; 11 tabs fill a desktop row */
@@ -1542,3 +1555,43 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 }
 .sf-inline { display: flex; gap: 8px; }
 .sf-inline input { flex: 1; min-width: 0; }
+
+/* Admin → Staff */
+.segmented.staff-views { grid-template-columns: repeat(3, 1fr); }
+.staff-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.staff-filters .chip { padding: 5px 12px; font-size: 14px; }
+.staff-filters .chip[aria-checked="true"] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand-dark); font-weight: 600; }
+.staff-list { overflow: hidden; }
+.staff-empty { margin: 0; padding: 16px; }
+.staff-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 170px auto; gap: 8px 16px; align-items: center;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+}
+.staff-row:first-child { border-top: 0; }
+.staff-row.disabled { opacity: .65; }
+.staff-who { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.staff-who > .staff-meta, .staff-who > .hint { flex-basis: 100%; }
+.staff-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.staff-last { display: flex; flex-direction: column; font-size: 13px; }
+.staff-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .staff-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .staff-last { grid-column: 1; grid-row: 2; flex-direction: row; gap: 6px; }
+  .staff-actions { grid-column: 2; grid-row: 1 / span 2; }
+}
+.staff-pending { border-color: #e0a800; gap: 0; }
+.staff-pending h3 { display: flex; align-items: center; gap: 8px; }
+.staff-pending > .hint { margin-bottom: 4px !important; }
+.staff-pending-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; padding: 12px 0; border-top: 1px solid var(--border); }
+.staff-pending-row > div:first-child { min-width: 0; flex: 1 1 280px; }
+.modal.staff-account { max-width: 560px; display: grid; gap: 14px; }
+.staff-account-more { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 12px; border-top: 1px solid var(--border); }
+.staff-link-roles { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.staff-link-roles legend { font-size: 14px; font-weight: 600; margin-bottom: 10px; padding: 0; }
+.segmented.staff-roles button { padding: 8px 6px; }
+/* The role picker (components/StaffRolePicker): room between the role buttons, the "also strings
+   rackets" box and the description, and before the buttons that follow a form. */
+.staff-role-picker { display: flex; flex-direction: column; gap: 16px; }
+.staff-role-picker .check-row { margin: 0; padding: 2px 0; align-items: center; }
+.staff-role-picker .hint { margin: -4px 0 0; line-height: 1.5; }
+.actions.staff-form-actions { margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--border); gap: 10px 12px; flex-wrap: wrap; }

@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
   const stringer = me.role === "stringer";
   try {
     const b = await readJson(req);
-    if (b.action === "step") return respond(await stepRackets(b.ids, b.step, { name: me.name, stringer }, b));
+    if (b.action === "step") return respond(await stepRackets(b.ids, b.step, { name: me.name, stringer, strings: me.strings }, b));
     if (b.action === "remarks") return respond(await setRemarks(String(b.id ?? ""), b.remarks, me.name));
     if (stringer) return forbidden();
     if (b.action === "create") return respond(await createStringingOrder(b as Parameters<typeof createStringingOrder>[0], me.name), 201);

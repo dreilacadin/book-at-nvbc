@@ -9,6 +9,7 @@
 // <DialogHost /> (in the root layout) shows them, one at a time, above any other pop-up.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import PasswordInput from "./PasswordInput";
 
 type Common = {
   /** Bold heading above the message. */
@@ -125,10 +126,12 @@ function Dialog({ req }: { req: Request }) {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !blocked) ok();
               }} />
+          ) : req.password ? (
+            <PasswordInput ref={inputRef} value={text} placeholder={req.placeholder} maxLength={req.maxLength}
+              aria-labelledby="dialog-message" autoComplete="new-password" onChange={(e) => setText(e.target.value)} />
           ) : (
             <input ref={inputRef} value={text} placeholder={req.placeholder} maxLength={req.maxLength} readOnly={req.readOnly}
-              aria-labelledby="dialog-message" type={req.password ? "password" : "text"}
-              autoComplete={req.password ? "new-password" : "off"} onChange={(e) => setText(e.target.value)} />
+              aria-labelledby="dialog-message" type="text" autoComplete="off" onChange={(e) => setText(e.target.value)} />
           ))}
         <div className="actions dialog-actions">
           {req.kind !== "alert" && !(req.kind === "prompt" && req.readOnly) && (

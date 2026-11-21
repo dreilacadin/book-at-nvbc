@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function CoachResetPage() {
   const [password, setPassword] = useState("");
@@ -28,11 +29,11 @@ export default function CoachResetPage() {
       <h1 style={{ marginTop: 0 }}>Set a new password</h1>
       <div className="field">
         <label htmlFor="np">New password <span className="hint">(at least 8 characters)</span></label>
-        <input id="np" type="password" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <PasswordInput id="np" required minLength={8} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </div>
       <div className="field">
         <label htmlFor="np2">Type it again</label>
-        <input id="np2" type="password" required minLength={8} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <PasswordInput id="np2" required minLength={8} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
       </div>
       {error && <div className="error">{error}</div>}
       <div className="actions"><button className="btn block" disabled={busy}>{busy ? "Saving…" : "Save and log in"}</button></div>

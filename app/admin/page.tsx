@@ -28,7 +28,6 @@ import { AdminBookingCard } from "./BookingLookup";
 import BookingsTab from "./BookingsTab";
 import Notifications from "./Notifications";
 import StaffTab from "./StaffTab";
-import ActivityLog from "./ActivityLog";
 import Reports from "./Reports";
 import CoachesTab from "./CoachesTab";
 import MembersTab from "./MembersTab";
@@ -40,25 +39,27 @@ import StringingTab from "./StringingTab";
 import { readTag } from "@/lib/stringing";
 import { api, AuthError, todayManila, type AdminBooking, type Court, type Settings } from "./shared";
 import { setCustomActivities, SPORTS, sportEmoji, sportLabel, type Sport } from "@/lib/sports";
-import { RoleContext, type AdminRole } from "./role";
+import { canManageRole, RoleContext, type AdminRole } from "./role";
+import { roleName } from "@/lib/staff";
 import FullScreenLoader from "@/components/FullScreenLoader";
-import { alertDialog, confirmDialog } from "@/components/Dialogs";
+import { alertDialog, confirmDialog, promptDialog } from "@/components/Dialogs";
+import PasswordInput from "@/components/PasswordInput";
 
 // The dashboard's tabs, in order. `manage`: owners and managers only (staff accounts don't see setup,
-// reports or scholars' details).
+// reports or scholars' details). `scholar`: the only tabs Scholar accounts see.
 const TABS = [
   { id: "overview", label: "Overview", icon: "🏠" },
-  { id: "bookings", label: "Bookings", icon: "📅" },
-  { id: "members", label: "Members", icon: "🪪" },
+  { id: "bookings", label: "Bookings", icon: "📅", scholar: true },
+  { id: "members", label: "Members", icon: "🪪", scholar: true },
   { id: "scholars", label: "Scholars", icon: "🎓", manage: true },
   { id: "vouchers", label: "Vouchers", icon: "🎟️" },
-  { id: "stringing", label: "Stringing", icon: "🏸" },
+  { id: "stringing", label: "Stringing", icon: "🏸", scholar: true },
   { id: "coaches", label: "Coaches", icon: "🧑‍🏫", manage: true },
   { id: "reports", label: "Reports", icon: "📊", manage: true },
   { id: "courts", label: "Courts", icon: "🏟️", manage: true },
   { id: "staff", label: "Staff", icon: "👥" },
   { id: "settings", label: "Settings", icon: "⚙️", manage: true },
-] as const satisfies readonly { id: string; label: string; icon: string; manage?: boolean }[];
+] as const satisfies readonly { id: string; label: string; icon: string; manage?: boolean; scholar?: boolean }[];
 type TabId = (typeof TABS)[number]["id"];
 const isTab = (v: string | null): v is TabId => TABS.some((t) => t.id === v);
 
@@ -67,10 +68,10 @@ const shortDate = (d: string | null) =>
 
 export default function AdminPage() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole } | null>(null);
+  const [me, setMe] = useState<{ name: string; id: number | null; role: AdminRole; strings: boolean } | null>(null);
   const [tab, setTab] = useState<TabId>("overview");
   const tabRead = useRef(false); // the tab in the address has been read (so it can now be kept there)
-  const [stringer, setStringer] = useState<{ name: string } | null>(null); // a stringer account: only the stringing queue
+  const [stringer, setStringer] = useState<{ name: string; id: number | null } | null>(null); // a stringer account: only the stringing queue
   const [openTag, setOpenTag] = useState<number | null>(null); // /admin?tag=127 (a racket tag's QR code)
   const [openVoucher, setOpenVoucher] = useState<string | null>(null); // /admin?voucher=<id>
   const [bookingsDate, setBookingsDate] = useState(todayManila);
@@ -121,11 +122,11 @@ export default function AdminPage() {
   }, [loggedIn, reloadOpenBooking]);
 
   useEffect(() => {
-    api<{ loggedIn: boolean; name?: string; id?: number | null; role?: AdminRole; stringer?: { name: string } }>("/api/admin/login")
+    api<{ loggedIn: boolean; name?: string; id?: number | null; role?: AdminRole; strings?: boolean; stringer?: { name: string; id: number | null } }>("/api/admin/login")
       .then((r) => {
         setStringer(r.stringer ?? null);
         setLoggedIn(r.loggedIn);
-        setMe(r.loggedIn ? { name: r.name ?? "", id: r.id ?? null, role: r.role ?? "staff" } : null);
+        setMe(r.loggedIn ? { name: r.name ?? "", id: r.id ?? null, role: r.role ?? "staff", strings: r.strings !== false } : null);
       })
       .catch(() => setLoggedIn(false));
   }, [loggedIn]);
@@ -154,6 +155,7 @@ export default function AdminPage() {
           <h1>🏸 Stringing</h1>
           <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span className="muted" style={{ fontSize: 14 }}>Logged in as <strong>{stringer.name}</strong> <span className="badge grey">Stringer</span></span>
+            <ChangeMyPassword id={stringer.id} onAuthError={(e) => { if (e instanceof AuthError) { setStringer(null); setLoggedIn(false); } }} />
             <button className="btn small secondary" onClick={async () => { await api("/api/admin/logout", {}); setStringer(null); setLoggedIn(false); }}>Log out</button>
           </span>
         </div>
@@ -163,11 +165,12 @@ export default function AdminPage() {
   if (!loggedIn) return <Login onDone={() => setLoggedIn(true)} />;
 
   const role: AdminRole = me?.role ?? "staff";
-  const manage = role !== "staff";
-  // Staff accounts don't see Courts (setup), Settings or Scholars (minors' details).
-  const tabs = TABS.filter((t) => manage || !("manage" in t));
-  // A tab this account can't open (e.g. ?tab=settings for a staff account) shows the overview.
-  const shown: TabId = tabs.some((t) => t.id === tab) ? tab : "overview";
+  const manage = canManageRole(role);
+  // Staff accounts don't see Courts (setup), Settings or Scholars (minors' details); Scholar accounts
+  // see only Bookings, Members and Stringing.
+  const tabs = TABS.filter((t) => (role === "scholar" ? "scholar" in t : manage || !("manage" in t)));
+  // A tab this account can't open (e.g. ?tab=settings for a staff account) shows the first tab.
+  const shown: TabId = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
     <RoleContext.Provider value={role}>
@@ -177,9 +180,11 @@ export default function AdminPage() {
         {me && (
           <span className="muted" style={{ fontSize: 14 }}>
             Logged in as <strong>{me.name}</strong>
-            {me.role !== "owner" && <span className={`badge ${me.role === "staff" ? "grey" : ""}`} style={{ marginLeft: 6 }}>{me.role === "manager" ? "Manager" : "Staff"}</span>}
+            {me.role !== "owner" && <span className={`badge ${me.role === "manager" ? "" : "grey"}`} style={{ marginLeft: 6 }}>{roleName(me.role, me.strings)}</span>}
           </span>
         )}
+        {/* Scholars don't get the Staff tab, where everyone else changes their password. */}
+        {me?.role === "scholar" && <ChangeMyPassword id={me.id} onAuthError={onAuthError} />}
         <Notifications onOpenBooking={setOpenCode} onOpenMembers={() => setTab("members")} onAuthError={onAuthError} />
         <button
           className="btn small secondary"
@@ -216,16 +221,11 @@ export default function AdminPage() {
       {shown === "members" && <MembersTab onAuthError={onAuthError} />}
       {shown === "scholars" && manage && <ScholarsTab onAuthError={onAuthError} />}
       {shown === "vouchers" && <VouchersTab key={openVoucher ?? "list"} onAuthError={onAuthError} openId={openVoucher} onOpenBooking={setOpenCode} />}
-      {shown === "stringing" && <StringingTab me={me?.name ?? "Staff"} openTag={openTag} onAuthError={onAuthError} />}
+      {shown === "stringing" && <StringingTab me={me?.name ?? "Staff"} strings={me?.strings !== false} openTag={openTag} onAuthError={onAuthError} />}
       {shown === "reports" && manage && <Reports onAuthError={onAuthError} />}
       {shown === "coaches" && manage && <CoachesTab onAuthError={onAuthError} />}
       {shown === "courts" && manage && <CourtsTab onAuthError={onAuthError} />}
-      {shown === "staff" && (
-        <>
-          <StaffTab onAuthError={onAuthError} />
-          {manage && <ActivityLog onOpenBooking={setOpenCode} onAuthError={onAuthError} />}
-        </>
-      )}
+      {shown === "staff" && <StaffTab onAuthError={onAuthError} onOpenBooking={setOpenCode} />}
       {openCode && openBooking && (
         <div className="backdrop" onClick={() => setOpenCode(null)}>
           <div className="card modal staff-modal" role="dialog" aria-modal="true" aria-label={`Booking ${openBooking.code}`}
@@ -275,7 +275,7 @@ function Login({ onDone }: { onDone: () => void }) {
       </div>
       <div className="field">
         <label htmlFor="pw">Password</label>
-        <input id="pw" type="password" autoComplete="current-password" required value={password}
+        <PasswordInput id="pw" autoComplete="current-password" required value={password}
           onChange={(e) => setPassword(e.target.value)} />
       </div>
       {error && <div className="error" style={{ marginTop: 12 }}>{error}</div>}
@@ -283,6 +283,25 @@ function Login({ onDone }: { onDone: () => void }) {
         <button className="btn block" disabled={busy}>{busy ? "Checking…" : "Log in"}</button>
       </div>
     </form>
+  );
+}
+
+/** For Scholars and Stringers, who don't get the Staff tab: change their own password. */
+function ChangeMyPassword({ id, onAuthError }: { id: number | null; onAuthError: (e: unknown) => void }) {
+  if (id === null) return null;
+  return (
+    <button type="button" className="btn small secondary" onClick={async () => {
+      const pw = await promptDialog("Your new password (at least 8 characters):",
+        { title: "Change my password", password: true, required: true, confirmLabel: "Save password" });
+      if (!pw) return;
+      try {
+        await api("/api/admin/users", { action: "password", id, password: pw });
+        await alertDialog("Password changed. Use it the next time you log in.", { title: "Saved" });
+      } catch (e) {
+        onAuthError(e);
+        await alertDialog(e instanceof Error ? e.message : "Couldn't change the password.", { title: "Not saved" });
+      }
+    }}>Password</button>
   );
 }
 

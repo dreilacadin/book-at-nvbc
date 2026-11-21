@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { findActiveAdmin } from "./admin-users";
+import { scholarMayUse } from "./staff";
 
 export const ADMIN_COOKIE = "nvbc_admin";
 const MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
@@ -9,12 +10,14 @@ const MAX_AGE_SECONDS = 60 * 60 * 12; // 12 hours
 /**
  * Who is logged in: a staff account, or the owner (ADMIN_PASSWORD, for recovery). role: the owner
  * and managers have full access; "staff" accounts do day-to-day work only (see canManage);
+ * "scholar" accounts do day-to-day work in Bookings, Members and Stringing only (see getAdmin);
  * "stringer" accounts only see the racket stringing queue (see getStringingStaff).
+ * strings: may start and finish stringing (everyone but a Scholar who isn't also a stringer).
  */
-export type AdminRole = "owner" | "manager" | "staff" | "stringer";
-export type AdminSession = { id: number | null; username: string; name: string; role: AdminRole };
+export type AdminRole = "owner" | "manager" | "staff" | "scholar" | "stringer";
+export type AdminSession = { id: number | null; username: string; name: string; role: AdminRole; strings: boolean };
 
-export const OWNER: AdminSession = { id: null, username: "owner", name: "Owner", role: "owner" };
+export const OWNER: AdminSession = { id: null, username: "owner", name: "Owner", role: "owner", strings: true };
 
 /** Settings, court setup, staff accounts, deleting bookings/members, imports, bulk emails, activity log. */
 export const canManage = (me: AdminSession) => me.role === "owner" || me.role === "manager";
@@ -58,12 +61,15 @@ export function issueToken(who: number | null, version: number): string {
 }
 
 /**
- * The logged-in owner, manager or staff member, or null. Stringer accounts get null here: they may
- * only use the stringing pages (getStringingStaff).
+ * The logged-in owner, manager, staff member or Scholar, or null. Stringer accounts get null here:
+ * they may only use the stringing pages (getStringingStaff). Scholars get null outside the admin
+ * areas their tabs use (lib/staff.ts, SCHOLAR_API), whatever the route checks after this.
  */
 export async function getAdmin(req: NextRequest): Promise<AdminSession | null> {
   const me = await getSession(req);
-  return me && me.role !== "stringer" ? me : null;
+  if (!me || me.role === "stringer") return null;
+  if (me.role === "scholar" && !scholarMayUse(req.nextUrl.pathname)) return null;
+  return me;
 }
 
 /** Anyone logged in, stringers included: for the stringing pages only. */
@@ -79,7 +85,7 @@ async function getSession(req: NextRequest): Promise<AdminSession | null> {
   if (id === "owner") return OWNER;
   const user = await findActiveAdmin(Number(id));
   if (!user || user.token_version !== Number(version)) return null;
-  return { id: user.id, username: user.username, name: user.display_name, role: user.role };
+  return { id: user.id, username: user.username, name: user.display_name, role: user.role, strings: user.role !== "scholar" || user.is_stringer };
 }
 
 export async function isAdmin(req: NextRequest): Promise<boolean> {

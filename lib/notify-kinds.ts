@@ -10,10 +10,21 @@ export const NOTIFY_KINDS = [
   { id: "coach_applied", label: "New coach applications", icon: "🧑‍🏫" },
   { id: "coach_session", label: "Coaches: arrived, or not paid after their session", icon: "🎓" },
   { id: "stringing", label: "Racket stringing: check-ins, payments and feedback", icon: "🏸" },
+  { id: "staff_signup", label: "New staff sign-ups (registration links)", icon: "👥" },
 ] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number]["id"];
 export const ALL_KINDS: NotifyKind[] = NOTIFY_KINDS.map((k) => k.id);
 export const isNotifyKind = (v: unknown): v is NotifyKind => NOTIFY_KINDS.some((k) => k.id === v);
+/**
+ * The kinds each role gets: Scholars only what their tabs (Bookings, Members, Stringing) can open;
+ * sign-ups only go to those who can approve them (the owner and managers).
+ */
+const SCHOLAR_KINDS: readonly NotifyKind[] = ["booking_new", "payment_sent", "booking_gone", "member_applied", "message", "booking_moved", "stringing"];
+export function kindsForRole(role: string): NotifyKind[] {
+  if (role === "owner" || role === "manager") return ALL_KINDS;
+  if (role === "scholar") return ALL_KINDS.filter((k) => SCHOLAR_KINDS.includes(k));
+  return ALL_KINDS.filter((k) => k !== "staff_signup");
+}
 export const kindIcon = (k: string) => NOTIFY_KINDS.find((x) => x.id === k)?.icon ?? "🔔";
 
 export type AdminEvent = {
@@ -32,6 +43,7 @@ export function eventLink(e: Pick<AdminEvent, "booking_code" | "membership_id" |
   if (e.kind === "member_applied") return "/admin?tab=members";
   if (e.kind === "coach_applied") return "/admin?tab=coaches";
   if (e.kind === "stringing") return "/admin?tab=stringing";
+  if (e.kind === "staff_signup") return "/admin?tab=staff";
   return "/admin";
 }
 
