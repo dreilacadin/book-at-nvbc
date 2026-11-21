@@ -10,6 +10,7 @@ type Data = {
   unread: number;
   lastSeen: number;
   kinds: NotifyKind[];
+  available?: NotifyKind[]; // the kinds this account can get
   devices: number;
   push: { publicKey: string } | null;
 };
@@ -265,7 +266,7 @@ export default function Notifications({
           {settings ? (
             <div className="notify-settings">
               <p className="hint" style={{ margin: 0 }}>Notify me about:</p>
-              {NOTIFY_KINDS.map((k) => (
+              {NOTIFY_KINDS.filter((k) => !data.available || data.available.includes(k.id)).map((k) => (
                 <label key={k.id} className="check">
                   <input type="checkbox" checked={data.kinds.includes(k.id)} onChange={(e) => setKinds(k.id, e.target.checked)} />
                   {k.icon} {k.label}

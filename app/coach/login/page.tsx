@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function CoachLoginPage() {
   const [email, setEmail] = useState("");
@@ -31,7 +32,7 @@ export default function CoachLoginPage() {
       </div>
       <div className="field">
         <label htmlFor="cp">Password</label>
-        <input id="cp" type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <PasswordInput id="cp" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </div>
       {error && <div className="error">{error}</div>}
       <div className="actions"><button className="btn block" disabled={busy}>{busy ? "Logging in…" : "Log in"}</button></div>

@@ -750,7 +750,7 @@ const ACTION_LABEL: Record<StepAction, string> = {
 export async function stepRackets(
   ids: unknown,
   action: unknown,
-  me: { name: string; stringer: boolean },
+  me: { name: string; stringer: boolean; strings?: boolean },
   extra: { paidMethod?: unknown } = {}
 ): Promise<Result<{ tags: number[] }>> {
   const list = (Array.isArray(ids) ? ids : [ids]).filter(isId);
@@ -758,6 +758,9 @@ export async function stepRackets(
   if (!["receive", "start", "done", "pickup", "undo", "cancel"].includes(action as string)) return fail(400, "Unknown action.");
   const a = action as StepAction;
   if (me.stringer && !["start", "done", "undo"].includes(a)) return fail(403, "Only the front desk can do this.");
+  // A Scholar who isn't also a stringer does the desk side only.
+  const strings = me.strings !== false;
+  if (!strings && (a === "start" || a === "done")) return fail(403, "Only stringers can start or finish stringing.");
   const receivedBy = me.name; // always whoever is logged in
   const paidMethod = a === "receive" && isPaymentMethod(extra.paidMethod) ? extra.paidMethod : null;
   const touched = new Map<string, number[]>(); // order → tags
@@ -769,6 +772,7 @@ export async function stepRackets(
         const u = UNDO[x.status];
         if (!u) return fail(400, `${tagLabel(x.tag)} has nothing to undo.`);
         if (me.stringer && !["in_progress", "done"].includes(x.status)) return fail(403, "Only the front desk can undo this.");
+        if (!strings && ["in_progress", "done"].includes(x.status)) return fail(403, "Only stringers can undo stringing.");
         await c.query(`UPDATE stringing_rackets SET status = $2, ${u.clear} WHERE id = $1`, [x.id, x.status === "cancelled" ? beforeCancel(x) : u.to]);
         const sid = boughtString(x);
         if (x.status === "cancelled" && sid) await moveStock(c, sid, -1, me.name, `Cancel undone · ${tagLabel(x.tag)}`);

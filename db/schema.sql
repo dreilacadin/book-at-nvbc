@@ -481,10 +481,10 @@ CREATE INDEX IF NOT EXISTS throttle_hits_idx ON throttle_hits (bucket, key, at);
 -- Staff account roles: 'manager' = full access (like the owner login); 'staff' = day-to-day work
 -- (no settings, court setup, staff accounts, deleting bookings/members, imports or bulk emails).
 ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'staff';
--- (The full list of roles, as in v42: this runs again on every setup, so it must allow every role
+-- (The full list of roles, as in v42 and v44: this runs again on every setup, so it must allow every role
 -- that can exist, or a Stringer account would make the setup fail.)
 ALTER TABLE admin_users DROP CONSTRAINT IF EXISTS admin_users_role_check;
-ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff', 'stringer'));
+ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff', 'scholar', 'stringer'));
 -- Payment screenshots are kept only until staff confirm or reject the payment (or the booking is
 -- cancelled). The fingerprint stays, so reuse of the same screenshot is still spotted: it becomes
 -- a plain column, set when a screenshot is sent.
@@ -962,7 +962,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS voucher_uses_ref_idx ON voucher_uses (voucher_
 
 -- Stringer accounts see only the stringing queue (see getStringingStaff in lib/admin-auth.ts).
 ALTER TABLE admin_users DROP CONSTRAINT IF EXISTS admin_users_role_check;
-ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff', 'stringer'));
+ALTER TABLE admin_users ADD CONSTRAINT admin_users_role_check CHECK (role IN ('manager', 'staff', 'scholar', 'stringer'));
 
 -- Prices and turnaround: {"labor": 200, "rush": 150, "grommetSingle": 10, "grommetDouble": 20,
 -- "standardDays": [3, 5], "rushDays": [1, 2]}. NULL = those defaults (see lib/stringing.ts).
@@ -1111,3 +1111,48 @@ ALTER TABLE stringing_rackets ADD COLUMN IF NOT EXISTS prestretch SMALLINT;
 DO $$ BEGIN
   ALTER TABLE stringing_rackets ADD CONSTRAINT stringing_rackets_prestretch_check CHECK (prestretch IS NULL OR prestretch IN (5, 10, 15, 20));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- v44: Scholar accounts, staff details, registration links ------------------------------------------
+-- A 'scholar' account (role, allowed above) sees only Bookings, Members and Stringing. A Scholar can
+-- also string rackets (is_stringer); no other role combines with another.
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS is_stringer BOOLEAN NOT NULL DEFAULT FALSE;
+DO $$ BEGIN
+  ALTER TABLE admin_users ADD CONSTRAINT admin_users_stringer_check CHECK (NOT is_stringer OR role = 'scholar');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Their details (display_name stays the name shown everywhere, e.g. "Received by"). Blank on
+-- accounts made before v44.
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS birthdate DATE;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS mobile TEXT NOT NULL DEFAULT '';
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT '';
+-- Registration links (/team/join#<token>), made by the owner or a manager and turned off by them.
+-- Anyone with a working link can sign up as one of its roles; the account waits for approval.
+CREATE TABLE IF NOT EXISTS staff_invites (
+  id          SERIAL PRIMARY KEY,
+  token       TEXT NOT NULL UNIQUE,
+  label       TEXT NOT NULL DEFAULT '',
+  roles       TEXT[] NOT NULL DEFAULT ARRAY['staff', 'scholar', 'stringer'],
+  created_by  TEXT NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at  TIMESTAMPTZ,              -- NULL: until turned off
+  revoked_at  TIMESTAMPTZ,
+  revoked_by  TEXT
+);
+-- Signed up with a link and waiting for the owner or a manager to approve (is_active stays false
+-- until then, so they can't log in).
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS invite_id INT REFERENCES staff_invites(id) ON DELETE SET NULL;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS approved_by TEXT;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+-- New staff notification kinds, on for everyone once: "staff_signup" (shown only to the owner and
+-- managers), and "stringing" (v42 added it without turning it on for staff who already had settings).
+UPDATE admin_notify_state SET kinds = array_append(kinds, 'stringing')
+ WHERE kinds_version < 6 AND NOT ('stringing' = ANY(kinds));
+UPDATE admin_notify_state SET kinds = array_append(kinds, 'staff_signup')
+ WHERE kinds_version < 6 AND NOT ('staff_signup' = ANY(kinds));
+UPDATE admin_notify_state SET kinds_version = 6 WHERE kinds_version < 6;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds_version SET DEFAULT 6;
+ALTER TABLE admin_notify_state ALTER COLUMN kinds
+  SET DEFAULT ARRAY['booking_new', 'payment_sent', 'booking_gone', 'member_applied', 'message', 'booking_moved', 'coach_applied',
+                    'coach_session', 'stringing', 'staff_signup'];

@@ -40,6 +40,7 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { confirmDialog } from "@/components/Dialogs";
+import PasswordInput from "@/components/PasswordInput";
 
 type Coach = {
   id: string;
@@ -1073,8 +1074,7 @@ function Profile({ me, reload }: { me: Me; reload: () => void }) {
       >
         <h2 style={{ margin: 0 }}>Change password</h2>
         <div className="row">
-          <input
-            type="password"
+          <PasswordInput
             aria-label="Current password"
             placeholder="Current password"
             required
@@ -1082,8 +1082,7 @@ function Profile({ me, reload }: { me: Me; reload: () => void }) {
             value={pw.current}
             onChange={(e) => setPw({ ...pw, current: e.target.value })}
           />
-          <input
-            type="password"
+          <PasswordInput
             aria-label="New password"
             placeholder="New password (8+ characters)"
             required

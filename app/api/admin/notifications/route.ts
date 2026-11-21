@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   if (!me) return unauthorized();
   try {
     scheduleReminders(); // staff panels poll often: a good moment to send customers' reminders
-    return NextResponse.json(await getNotifications(whoOf(me)), { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(await getNotifications(whoOf(me), me.role), { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return serverError(e);
   }
