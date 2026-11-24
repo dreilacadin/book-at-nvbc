@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { cache } from "react";
 import AddToCalendar from "@/components/AddToCalendar";
+import { SharedBookingOwner, SharedBookingQr } from "@/components/SharedBookingExtras";
 import { sharedBooking } from "@/lib/bookings";
 import { formatDateLong, formatRange } from "@/lib/format";
 
@@ -26,9 +27,14 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
   return { title, description, robots: { index: false, follow: false }, openGraph: { title, description } };
 }
 
-/** A view-only booking link (from "Share this booking" on My booking): when and where, nothing else. */
+/**
+ * A view-only booking link (from "Share this booking" on My booking): when and where, and a QR code
+ * of the link for the front desk. The person who booked (their code is on this phone, or they type
+ * it) gets a button to manage it in My booking.
+ */
 export default async function SharedBookingPage({ params }: { params: Promise<{ token: string }> }) {
-  const b = await load((await params).token);
+  const { token } = await params;
+  const b = await load(token);
   if (!b)
     return (
       <div className="card shared-booking">
@@ -38,6 +44,8 @@ export default async function SharedBookingPage({ params }: { params: Promise<{ 
       </div>
     );
   const s = STATE[b.state];
+  const active = b.state === "confirmed" || b.state === "unconfirmed";
+  const when = `${formatDateLong(b.date)} · ${formatRange(b.startHour, b.endHour)}`;
   return (
     <div className="card shared-booking">
       <span className={`badge ${s.tone}`}>{s.label}</span>
@@ -47,15 +55,15 @@ export default async function SharedBookingPage({ params }: { params: Promise<{ 
       <p className="muted">NV Badminton Center · Booked by {b.bookedBy}</p>
       <p className="bk-head-line">{s.line}</p>
       {b.state !== "cancelled" && b.notes.map((n) => <div key={n} className="court-note">ⓘ {n}</div>)}
-      {(b.state === "confirmed" || b.state === "unconfirmed") && (
+      {active && <SharedBookingQr token={token} />}
+      {active && (
         <div className="folds">
           <AddToCalendar code={b.calendarId} sport={b.sport} courts={b.courts.join(" + ")} date={b.date} startHour={b.startHour} endHour={b.endHour}
             details="NVBC court booking shared with you. Check the link you were sent for any changes." />
         </div>
       )}
-      <p className="hint" style={{ margin: 0 }}>
-        This page always shows the latest time and court. It&apos;s view-only: only the person who booked can change, cancel or pay for it.
-      </p>
+      <SharedBookingOwner token={token} active={active} date={b.date}
+        label={`${b.label} · ${b.courts.join(" + ")} · ${when}`} />
     </div>
   );
 }
