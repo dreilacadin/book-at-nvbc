@@ -240,6 +240,17 @@ export type MessageRacket = { tag: number; racket: string };
 
 const racketsText = (rs: MessageRacket[]) => rs.map((r) => `${tagLabel(r.tag)} ${r.racket}`).join(", ");
 
+/**
+ * The text staff send with the customer's page link (Stringing → a check-in → Send link). It suits
+ * any step, so it can go out at check-in or later. `dueOn`: the collection date of the rackets still
+ * with us (null when none are).
+ */
+export function trackingMessage(o: { name: string; rackets: MessageRacket[]; dueOn: string | null; link: string }): string {
+  const one = o.rackets.length === 1;
+  const ready = o.dueOn ? ` ${one ? "It'll" : "They'll"} be ready by ${formatDateLong(o.dueOn)}, and we'll tell you when ${one ? "it's" : "they're"} done.` : "";
+  return `Hi ${firstName(o.name)}! Follow your ${one ? "racket" : "rackets"} ${racketsText(o.rackets)} at NVBC here: ${o.link}${ready}`;
+}
+
 /** "Your racket is ready" (push title/body, email, and an SMS staff can copy). */
 export function readyMessage(o: { name: string; rackets: MessageRacket[]; waiting: number; balance: number; link: string }) {
   const one = o.rackets.length === 1;

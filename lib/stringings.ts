@@ -28,6 +28,7 @@ import {
   tagLabel,
   tensionLabel,
   thankYouMessage,
+  trackingMessage,
   toStringingPrices,
   type RacketStatus,
   type StringingPrices,
@@ -590,7 +591,7 @@ async function sendThankYou(orderId: string) {
 }
 
 /** The "ready" and "thank you" texts for staff to send by SMS themselves. */
-export async function smsTemplates(orderId: string): Promise<Result<{ mobile: string; ready: string; thanks: string }>> {
+export async function smsTemplates(orderId: string): Promise<Result<{ mobile: string; link: string; track: string; ready: string; thanks: string }>> {
   const x = isId(orderId) ? await orderForNotice(orderId) : null;
   if (!x) return fail(404, "Check-in not found.");
   const done = x.rackets.filter((r) => r.status === "done" || r.status === "picked_up");
@@ -600,6 +601,13 @@ export async function smsTemplates(orderId: string): Promise<Result<{ mobile: st
     ok: true,
     data: {
       mobile: x.o.mobile,
+      link,
+      track: trackingMessage({
+        name: x.o.name,
+        rackets: x.rackets.filter((r) => r.status !== "cancelled"),
+        dueOn: x.rackets.filter((r) => ["checked_in", "received", "in_progress"].includes(r.status)).map((r) => r.due_on).sort().at(-1) ?? null,
+        link,
+      }),
       ready: readyMessage({ name: x.o.name, rackets: done.length ? done : x.rackets.filter((r) => r.status !== "cancelled"), waiting, balance: orderBalance(x.o), link }).sms,
       thanks: thankYouMessage({ name: x.o.name, link: link + "#feedback" }).sms,
     },

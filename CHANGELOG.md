@@ -24,6 +24,14 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Keep your racket's page handy.** The page that shows your racket's
+  progress has a **Share link** and **Copy link** button, and **Add to Home
+  Screen**. Adding it to your Home Screen opens your racket's page in one tap,
+  like an app (on a computer, bookmark it).
+- **Staff:** **📲 Send link** on a stringing check-in shows the customer's
+  page as a QR code to scan at the desk, with **Share…** (Messenger, Viber,
+  SMS), **Copy link**, **Copy text message** and **Open in Messages**. Handy
+  for walk-ins you checked in, or customers who lost their page.
 - **Shared booking links** show a **QR code**. Show it at the front desk so staff
   can find the booking, or let your friends scan it to open the page.
 - If you made the booking, its shared link now has **✎ Manage booking**, so

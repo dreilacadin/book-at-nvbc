@@ -1,5 +1,6 @@
 "use client";
 
+import QRCode from "qrcode";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import StringingForm, { type CheckInBody, type FormOptions } from "@/components/StringingForm";
 import { formatDateLong } from "@/lib/format";
@@ -57,7 +58,7 @@ function savedView(stringer: boolean): QueueView | null {
   }
 }
 
-type Sms = { mobile: string; ready: string; thanks: string };
+type Sms = { mobile: string; link: string; track: string; ready: string; thanks: string };
 
 /**
  * Racket tags ("ids=a,b" or "order=<id>"): on this device's label printer when that's on, otherwise
@@ -491,6 +492,51 @@ function SmsPanel({ sms }: { sms: Sms }) {
   );
 }
 
+/**
+ * "Send link": the customer's page as a QR code to scan at the desk, and the link (or a text with
+ * it) to send from the desk phone, for customers who were checked in by staff or lost the page.
+ */
+function SendLinkPanel({ sms, name }: { sms: Sms; name: string }) {
+  const [qr, setQr] = useState("");
+  const [copied, setCopied] = useState("");
+  const [canShare, setCanShare] = useState(false);
+  useEffect(() => {
+    setCanShare(typeof navigator.share === "function");
+    QRCode.toDataURL(sms.link, { errorCorrectionLevel: "M", margin: 2, width: 280 }).then(setQr).catch(() => setQr(""));
+  }, [sms.link]);
+  async function copy(label: string, t: string) {
+    try { await navigator.clipboard.writeText(t); setCopied(label); setTimeout(() => setCopied(""), 2500); } catch { void copyDialog("Copy this:", t); }
+  }
+  const first = name.trim().split(/\s+/)[0] || "the customer";
+  return (
+    <div className="card stack sf-send">
+      <div>
+        <strong>📲 Send {first} the link</strong>
+        <div className="hint">So {first} can follow the stringing and get a notification when it&apos;s ready.</div>
+      </div>
+      {qr && (
+        <div className="booking-qr" style={{ margin: 0 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={qr} alt={`QR code of ${first}'s racket page`} />
+          <p className="hint" style={{ margin: 0 }}>At the desk: {first} scans this with their phone camera to open the page. Or send it below (Share… opens Messenger, Viber or SMS).</p>
+        </div>
+      )}
+      <div className="sf-keep-actions">
+        {canShare && (
+          <button type="button" className="btn" title="Messenger, Viber, SMS…" onClick={() => navigator.share({ text: sms.track }).catch(() => {})}>Share…</button>
+        )}
+        <button type="button" className="btn secondary" onClick={() => copy("link", sms.link)}>{copied === "link" ? "✓ Copied" : "Copy link"}</button>
+        <button type="button" className="btn secondary" onClick={() => copy("text", sms.track)}>{copied === "text" ? "✓ Copied" : "Copy text message"}</button>
+        <a className="btn secondary" href={`sms:${sms.mobile}?body=${encodeURIComponent(sms.track)}`}>Open in Messages</a>
+      </div>
+      <div>
+        <span className="hint">The text message</span>
+        <p className="sf-send-text">{sms.track}</p>
+      </div>
+    </div>
+  );
+}
+
 /** From the queue (a racket that's ready): just the SMS texts for that customer. */
 function SmsModal({ orderId, name, onAuthError, onClose }: { orderId: string; name: string; onAuthError: (e: unknown) => void; onClose: () => void }) {
   const [sms, setSms] = useState<Sms | null>(null);
@@ -534,6 +580,7 @@ function OrderModal({ id, me, strings, tagQr, onAuthError, onClose }: { id: stri
   const [receivePaid, setReceivePaid] = useState<PaymentMethod | "">("");
   const [receiveIds, setReceiveIds] = useState<Set<string>>(new Set());
   const [sms, setSms] = useState<Sms | null>(null);
+  const [sendLink, setSendLink] = useState<Sms | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -606,9 +653,14 @@ function OrderModal({ id, me, strings, tagQr, onAuthError, onClose }: { id: stri
                 <button type="button" className="btn small secondary" onClick={async () => {
                   try { setSms(await api(`/api/admin/stringing`, { action: "sms", id })); } catch (e) { setError(e instanceof Error ? e.message : "Couldn't load."); }
                 }}>💬 SMS texts</button>
+                <button type="button" className="btn small secondary" aria-expanded={!!sendLink} onClick={async () => {
+                  if (sendLink) return setSendLink(null);
+                  try { setSendLink(await api(`/api/admin/stringing`, { action: "sms", id })); } catch (e) { setError(e instanceof Error ? e.message : "Couldn't load."); }
+                }}>📲 Send link</button>
                 <a className="btn small secondary" href={`/string/${o.token}`} target="_blank" rel="noopener">Customer&apos;s page</a>
               </div>
             )}
+            {sendLink && <SendLinkPanel sms={sendLink} name={o.name} />}
             {sms && <SmsPanel sms={sms} />}
 
             {toReceive.length > 0 && (

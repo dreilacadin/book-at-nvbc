@@ -1508,6 +1508,11 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 }
 .sf-mine { margin: 6px 0 0; padding-left: 18px; }
 .sf-ready { font-size: 15px; }
+.sf-keep { border: 2px solid var(--accent); }
+.sf-send { border: 2px solid var(--accent); }
+.sf-send-text { margin: 4px 0 0; padding: 10px 12px; background: var(--bg); border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-keep-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.sf-keep-home { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--bg); border-radius: 10px; padding: 10px 12px; }
 .sf-status.cancelled, .sf-racket-card.cancelled, .sf-row.cancelled { opacity: .55; }
 .sf-status { display: grid; gap: 16px; }
 .sf-status-head { display: flex; gap: 14px; align-items: center; }
