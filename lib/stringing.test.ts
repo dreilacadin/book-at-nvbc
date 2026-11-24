@@ -23,6 +23,7 @@ import {
   setupLabel,
   tensionLabel,
   thankYouMessage,
+  trackingMessage,
   toStringingPrices,
 } from "./stringing.ts";
 
@@ -111,6 +112,13 @@ test("messages: ready (one or several, balance), received, thank you", () => {
   assert.match(two.sms, /balance of ₱420/);
   assert.match(receivedMessage({ name: "Ana", rackets: [{ tag: 1, racket: "A" }], dueOn: "2026-11-22", link: "L" }).body, /ready by Sunday, November 22, 2026/);
   assert.match(thankYouMessage({ name: "Ana", link: "https://x/string/t#feedback" }).sms, /https:\/\/x\/string\/t#feedback/);
+});
+
+test("messages: the link text staff send", () => {
+  assert.equal(trackingMessage({ name: "Juan Dela Cruz", rackets: [{ tag: 127, racket: "Astrox 88D" }], dueOn: "2026-11-26", link: "https://x/string/t" }),
+    "Hi Juan! Follow your racket #127 Astrox 88D at NVBC here: https://x/string/t It'll be ready by Thursday, November 26, 2026, and we'll tell you when it's done.");
+  const done = trackingMessage({ name: "Ana", rackets: [{ tag: 1, racket: "A" }, { tag: 2, racket: "B" }], dueOn: null, link: "L" });
+  assert.equal(done, "Hi Ana! Follow your rackets #1 A, #2 B at NVBC here: L");
 });
 
 test("pre-stretch: none, 5–20%, and the label", () => {

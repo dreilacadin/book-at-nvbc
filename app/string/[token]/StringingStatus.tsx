@@ -159,6 +159,7 @@ export default function StringingStatus({ token }: { token: string }) {
       })}
 
       {live.length > 0 && <PayBox v={v} token={token} paid={paid} onDone={load} />}
+      {live.length > 0 && <KeepPage token={token} />}
       {live.some((r) => r.status !== "picked_up") && <Updates token={token} email={v.email} onChanged={load} />}
       {v.canGiveFeedback && <Feedback token={token} given={v.feedback} />}
 
@@ -236,6 +237,98 @@ function PayBox({ v, token, paid, onDone }: { v: StringingView; token: string; p
         </form>
       )}
       {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
+    </div>
+  );
+}
+
+// Chrome (Android, computers) offers to install the page as an app; keep that offer for our button.
+type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+let installPrompt: InstallPrompt | null = null;
+const installListeners = new Set<() => void>();
+if (typeof window !== "undefined")
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    installPrompt = e as InstallPrompt;
+    installListeners.forEach((f) => f());
+  });
+
+/** "Keep this page handy": the page's link to share or copy, and Add to Home Screen (it opens this page). */
+function KeepPage({ token }: { token: string }) {
+  const [url, setUrl] = useState("");
+  const [canShare, setCanShare] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [home, setHome] = useState<"hidden" | "prompt" | "ios" | "android" | "computer">("hidden");
+  const [howTo, setHowTo] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setUrl(`${window.location.origin}/string/${token}`);
+    setCanShare(typeof navigator.share === "function");
+    const pick = () =>
+      setHome(isStandalone() ? "hidden" // opened from the Home Screen already
+        : installPrompt ? "prompt"
+        : isIos() ? "ios"
+        : /android/i.test(navigator.userAgent) ? "android"
+        : "computer");
+    pick();
+    installListeners.add(pick);
+    return () => { installListeners.delete(pick); };
+  }, [token]);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      input.current?.select(); // they can copy it from the box
+    }
+  }
+  async function addToHome() {
+    if (!installPrompt) return setHowTo((x) => !x);
+    await installPrompt.prompt().catch(() => {});
+    installPrompt = null;
+    setHome("hidden");
+  }
+  if (!url) return null;
+
+  return (
+    <div className="card stack sf-keep">
+      <div>
+        <strong>📌 Keep this page handy</strong>
+        <div className="hint">It&apos;s your racket&apos;s own link. Save it to check on your racket any time, from any phone.</div>
+      </div>
+      <input ref={input} className="share-url" readOnly aria-label="Your link" value={url} onFocus={(e) => e.target.select()} />
+      <div className="sf-keep-actions">
+        {canShare && (
+          <button type="button" className="btn" onClick={() => navigator.share({ title: "My racket stringing — NVBC", url }).catch(() => {})}>
+            Share link
+          </button>
+        )}
+        <button type="button" className={`btn${canShare ? " secondary" : ""}`} onClick={copy}>{copied ? "✓ Copied" : "Copy link"}</button>
+      </div>
+      {home !== "hidden" && (
+        <div className="sf-keep-home">
+          <div>
+            <strong>{home === "computer" ? "Bookmark it" : "Add to Home Screen"}</strong>
+            <div className="hint">
+              {home === "computer" ? "Press Ctrl+D (⌘D on a Mac) to find it again in one click." : "One tap to your racket, like an app."}
+            </div>
+          </div>
+          {home !== "computer" && (
+            <button type="button" className="btn small secondary" aria-expanded={home === "prompt" ? undefined : howTo} onClick={addToHome}>
+              {home === "prompt" ? "Add" : "How?"}
+            </button>
+          )}
+        </div>
+      )}
+      {howTo && home === "ios" && (
+        <p className="hint" style={{ margin: 0 }}>Tap the Share button (the square with an arrow) in your browser, then <strong>Add to Home Screen</strong>.</p>
+      )}
+      {howTo && home === "android" && (
+        <p className="hint" style={{ margin: 0 }}>Open your browser&apos;s menu (⋮), then <strong>Add to Home screen</strong> or <strong>Install app</strong>.</p>
+      )}
+      <p className="hint" style={{ margin: 0 }}>Anyone with the link can see your racket&apos;s progress, so share it only with people you trust.</p>
     </div>
   );
 }
