@@ -357,6 +357,12 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Changed
 
+- **Racket stringing:** your **email** is now needed when you check in a racket
+  (your mobile number already was). We use them to send you updates on your
+  racket: when we receive it and when it's ready, with the link to follow it.
+  You can change your email on your racket's page, but not remove it.
+- **Staff:** Checking in a walk-in also needs their email now, and editing a
+  customer can't remove it.
 - **Staff:** A tidier **Staff** tab: **Team**, **Registration links** and
   **Activity log** are now separate views. Team has a search box (name,
   username, mobile or email), filters by role, sign-ups waiting for approval

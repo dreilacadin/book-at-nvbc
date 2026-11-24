@@ -416,7 +416,7 @@ function Updates({ token, email, onChanged }: { token: string; email: string; on
       {push === "denied" && <p className="hint">Notifications are blocked for this site in your browser settings.</p>}
       {editing || !email ? (
         <form className="sf-inline" onSubmit={saveEmail}>
-          <input type="email" inputMode="email" placeholder="Email (optional)" aria-label="Email" value={mail} onChange={(e) => setMail(e.target.value)} />
+          <input type="email" inputMode="email" required placeholder="Your email" aria-label="Email for updates" value={mail} onChange={(e) => setMail(e.target.value)} />
           <button className="btn secondary" disabled={busy}>Save</button>
         </form>
       ) : (

@@ -854,7 +854,7 @@ function CustomerEdit({ o, busy, onSave, onCancel }: { o: OrderDetail["order"]; 
         <div><label htmlFor="ce-n">Name</label><input id="ce-n" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></div>
         <div><label htmlFor="ce-m">Mobile</label><input id="ce-m" type="tel" value={v.mobile} onChange={(e) => setV({ ...v, mobile: e.target.value })} /></div>
       </div>
-      <div className="field"><label htmlFor="ce-e">Email</label><input id="ce-e" type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} /></div>
+      <div className="field"><label htmlFor="ce-e">Email</label><input id="ce-e" type="email" required value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} /></div>
       <div className="actions">
         <button type="button" className="btn secondary" onClick={onCancel}>Cancel</button>
         <button className="btn" disabled={busy}>Save</button>
