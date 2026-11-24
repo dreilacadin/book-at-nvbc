@@ -1391,6 +1391,12 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .shared-booking .shared-where { font-size: 16px; font-weight: 600; }
 .shared-booking .folds, .shared-booking .court-note, .shared-booking .bk-head-line { justify-self: stretch; }
 .shared-booking .bk-head-line { margin: 6px 0; }
+.shared-booking .booking-qr { justify-self: stretch; }
+.shared-owner { justify-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 6px; padding: 12px 14px; border: 1px solid var(--open-border); border-radius: var(--radius); background: var(--open-bg); }
+.shared-owner > div { flex: 1 1 240px; }
+.shared-owner strong { color: var(--open-text); }
+.shared-claim { display: grid; gap: 8px; }
 .share-url { width: 100%; font-size: 14px; }
 .staff-share { margin-top: 10px; }
 

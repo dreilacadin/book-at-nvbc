@@ -28,6 +28,7 @@ import {
   type RateType,
 } from "./pricing";
 import { blockedSlots, findBlockConflict } from "./blocks";
+import { SHARE_TOKEN } from "./share-link";
 import { activeCashHours, awaitingPayment, bookingPhase, extendedPayBy, minutesUntilStart, PAY_WINDOW_MINUTES, paymentDeadline, phaseLabel, cashAllowed, cashHoursNote, refundOnCancel, RELEASE_MINUTES, type Phase } from "./booking-policy";
 import { formatDateLong, formatRange, halfHours, isHalfHour, publicName, SLOT_HOURS } from "./format";
 import { normalizeMemberCode } from "./membership";
@@ -888,6 +889,34 @@ export async function shareLink(rawCode: unknown): Promise<Result<{ path: string
   return { ok: true, data: { path: `/b/${rows[0].share_token}` } };
 }
 
+/**
+ * Whether the person on a view-only link is the one who booked it: `rawCodes` are the booking codes
+ * saved on their phone (or one they typed). Returns the one that holds this booking, so the page
+ * can offer to manage it. It only ever returns a code they sent, so it gives nothing away.
+ */
+export async function shareLinkOwner(token: unknown, rawCodes: unknown): Promise<Result<{ code: string }>> {
+  if (typeof token !== "string" || !SHARE_TOKEN.test(token)) return fail(400, "That link isn't valid.");
+  const list = Array.isArray(rawCodes) ? rawCodes.slice(0, 20) : [rawCodes];
+  const codes = [...new Set(list.map(normalizeCode).filter((c): c is string => !!c))];
+  if (!codes.length) return fail(400, "Booking codes look like NV-ABC123.");
+  const { rows } = await db().query<{ code: string }>(
+    `SELECT b.cancel_code AS code
+       FROM bookings r JOIN bookings b ON COALESCE(b.group_id, b.id) = r.id
+      WHERE r.share_token = $1 AND b.cancel_code = ANY($2::text[])
+      ORDER BY (b.group_id IS NULL) DESC
+      LIMIT 1`,
+    [token, codes]
+  );
+  if (!rows[0]) return fail(404, "That booking code isn't for this booking.");
+  return { ok: true, data: { code: rows[0].code } };
+}
+
+/** Staff scanning a view-only link's QR: the booking code it belongs to. */
+export async function codeForShareToken(token: string): Promise<string | null> {
+  const { rows } = await db().query<{ cancel_code: string }>(`SELECT cancel_code FROM bookings WHERE share_token = $1`, [token]);
+  return rows[0]?.cancel_code ?? null;
+}
+
 /** What a view-only link shows: when and where. Never the code, contact details, price or payment. */
 export type SharedBooking = {
   sport: string;
@@ -905,7 +934,7 @@ export type SharedBooking = {
 
 /** The booking behind a view-only link, or null. It always shows the booking as it is now. */
 export async function sharedBooking(token: string): Promise<SharedBooking | null> {
-  if (!/^[A-Za-z0-9_-]{22}$/.test(token)) return null;
+  if (!SHARE_TOKEN.test(token)) return null;
   await releaseUnpaidBookings();
   await getSettings(); // registers custom activities, for their names
   const { rows } = await db().query<{

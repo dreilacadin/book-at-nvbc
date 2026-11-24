@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canManage, forbidden, getAdmin, isAdmin, unauthorized } from "@/lib/admin-auth";
-import { savePaymentChecks, sendPaymentReminder, setCoachMisuse, setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
+import { savePaymentChecks, sendPaymentReminder, setCoachMisuse, setNoShow, setRefund, cancelById, createBooking, restoreBooking, setBookingPhase, normalizeCode, codeForShareToken, releaseUnpaidBookings, deleteCancelledBooking, setPaymentStatus, updateBooking } from "@/lib/bookings";
 import { staff } from "@/lib/booking-history";
+import { shareTokenIn } from "@/lib/share-link";
 import { restoreCoaching } from "@/lib/coaches";
 import { applyVoucherToBooking, removeVoucherFromBooking } from "@/lib/vouchers";
 import { voucherInfoSql } from "@/lib/voucher";
@@ -19,7 +20,10 @@ export async function GET(req: NextRequest) {
   if (!(await isAdmin(req))) return unauthorized();
   const q = req.nextUrl.searchParams;
   const rawCode = q.get("code");
-  const code = rawCode === null ? null : normalizeCode(rawCode);
+  // A scanned view-only link (…/b/<token>, the QR on a shared booking) finds its booking too.
+  const token = rawCode === null ? null : shareTokenIn(rawCode);
+  const code = rawCode === null ? null : token ? await codeForShareToken(token) : normalizeCode(rawCode);
+  if (token && !code) return NextResponse.json({ error: "No booking found for that link." }, { status: 404 });
   if (rawCode !== null && !code)
     return NextResponse.json(
       { error: /NVBC/i.test(rawCode) ? "That's a member code — check it in the Members tab." : "Booking codes look like NV-ABC123." },

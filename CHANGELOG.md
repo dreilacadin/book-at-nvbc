@@ -24,6 +24,14 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Shared booking links** show a **QR code**. Show it at the front desk so staff
+  can find the booking, or let your friends scan it to open the page.
+- If you made the booking, its shared link now has **✎ Manage booking**, so
+  you can change, pay for or cancel it from there. It works on the phone you
+  booked with. On another phone, type your booking code under **Did you make
+  this booking?**. Everyone else still only sees when and where.
+- **Staff:** The booking scanner (Bookings) also reads the QR code on a shared
+  booking link.
 - **Staff:** Print racket tags on a **Marklife P12** label printer straight from
   the staff page, over Bluetooth (Chrome on Android, or Chrome or Edge on a
   computer). Set it up under Stringing → **🏷 Label printer**: connect, choose
