@@ -1576,6 +1576,30 @@ button.proof-open.pay-shot { width: 100%; color: var(--brand); }
 .rtag-box { display: inline-flex; align-items: center; justify-content: center; width: 3.6mm; height: 3.6mm; border: 0.35mm solid #000;
   border-radius: 0.6mm; font-size: 3mm; line-height: 1; }
 .rtag-qr { width: 18mm; height: 18mm; flex: none; }
+.dialog-stepper { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 4px 0 8px; }
+.dialog-stepper .btn { min-width: 52px; min-height: 48px; font-size: 22px; }
+.dialog-stepper output { min-width: 2ch; text-align: center; font-size: 30px; font-weight: 800; }
+/* Labels for a label printer on USB (one per page, at the label's size). */
+.segmented.lp-kinds { grid-template-columns: repeat(3, 1fr); }
+.segmented.lp-kinds button { display: flex; flex-direction: column; align-items: center; gap: 2px; line-height: 1.2; }
+.segmented.lp-kinds small { font-size: 11px; font-weight: 500; opacity: 0.8; }
+.lp-usb { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: 14px; }
+.lp-details dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 6px 0 0; font-size: 13px; }
+.lp-details dt { color: var(--muted); }
+.lp-details dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.label-sheet { display: flex; flex-wrap: wrap; gap: 8px; }
+.label-page { box-sizing: border-box; overflow: hidden; background: #fff; outline: 1px dashed var(--border); }
+.label-page img { display: block; image-rendering: pixelated; }
+@media print {
+  body:has(.label-sheet) { background: #fff !important; margin: 0 !important; }
+  body:has(.label-sheet) .site-header, body:has(.label-sheet) .site-footer, body:has(.label-sheet) .no-print { display: none !important; }
+  body:has(.label-sheet) main, body:has(.label-sheet) .container { padding: 0 !important; margin: 0 !important; max-width: none !important; }
+  body:has(.label-sheet) main > .container > .stack { display: block; }
+  /* Nothing above the first label: a margin here would push it onto a second, blank label. */
+  .label-sheet { display: block; margin: 0 !important; }
+  .label-page { outline: none; break-after: page; page-break-after: always; }
+  .label-page:last-child { break-after: auto; page-break-after: auto; }
+}
 @media print {
   body:has(.tag-sheet) { background: #fff !important; margin: 0 !important; }
   body:has(.tag-sheet) .site-header, body:has(.tag-sheet) .site-footer { display: none !important; }
