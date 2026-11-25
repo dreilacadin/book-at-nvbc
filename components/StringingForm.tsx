@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { isEmail } from "@/lib/customer-messages";
 import { formatDateLong } from "@/lib/format";
 import { formatPeso, paymentLabel, type PaymentMethod } from "@/lib/pricing";
 import { loadStringing, type SavedRacket } from "@/lib/saved-stringing";
@@ -194,6 +195,9 @@ export default function StringingForm({
   const body = (): CheckInBody | string => {
     if (name.trim().length < 2) return "Enter your name.";
     if (!mobileOk) return "Enter a mobile number like 0917 123 4567.";
+    // Their email gets the updates and their racket's link.
+    if (!email.trim()) return staff ? "Enter the customer's email: updates and their racket's link go there." : "Enter your email. We'll send updates on your racket there.";
+    if (email.trim() && !isEmail(email.trim().toLowerCase())) return "Please check the email address.";
     const out: CheckInBody["rackets"] = [];
     for (const [i, r] of rackets.entries()) {
       const which = rackets.length > 1 ? `Racket ${i + 1}: ` : "";
@@ -252,9 +256,16 @@ export default function StringingForm({
           </div>
         </div>
         <div className="field">
-          <label htmlFor="sf-email">Email <span className="hint">optional — we&apos;ll email you when it&apos;s ready</span></label>
-          <input id="sf-email" type="email" inputMode="email" autoComplete="email" maxLength={120} value={email} onChange={(e) => setEmail(e.target.value)} />
+          <label htmlFor="sf-email">Email{staff && <span className="hint"> · updates and their racket&apos;s link go there</span>}</label>
+          <input id="sf-email" type="email" inputMode="email" autoComplete="email" maxLength={120} required
+            value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
+        {!staff && (
+          <p className="hint" style={{ margin: 0 }}>
+            We&apos;ll use your mobile number and email to send you updates on your racket: when we receive it and when it&apos;s ready
+            for pickup, with a link to follow it.
+          </p>
+        )}
         {staff && past && past.rackets.length > 0 && (
           <div className="sf-past">
             <span className="hint">Returning customer — tap to add a racket they brought before:</span>

@@ -261,7 +261,9 @@ export async function createStringingOrder(input: CheckIn, staffName: string | n
   const mobile = normalizeMobile(input.mobile);
   if (!mobile) return fail(400, "Enter a mobile number like 0917 123 4567.");
   const email = text(input.email, 120).toLowerCase();
-  if (email && !isEmail(email)) return fail(400, "Please check the email address (or leave it blank).");
+  // Required: updates and the page link go there.
+  if (!email) return fail(400, staffName === null ? "Enter your email. We'll send updates on your racket there." : "Enter the customer's email: updates and their racket's link go there.");
+  if (!isEmail(email)) return fail(400, "Please check the email address.");
   const list = Array.isArray(input.rackets) ? input.rackets : [];
   if (!list.length) return fail(400, "Add at least one racket.");
   if (list.length > MAX_RACKETS) return fail(400, `Up to ${MAX_RACKETS} rackets per check-in.`);
@@ -485,7 +487,9 @@ export async function setStringingEmail(token: unknown, email: unknown): Promise
   const o = await orderByToken(token);
   if (!o) return fail(404, "This stringing check-in wasn't found.");
   const e = text(email, 120).toLowerCase();
-  if (e && !isEmail(e)) return fail(400, "Please check the email address.");
+  // It can be changed, not removed: it's where the updates go.
+  if (!e) return fail(400, "Enter your email. We'll send updates on your racket there.");
+  if (!isEmail(e)) return fail(400, "Please check the email address.");
   await db().query(`UPDATE stringing_orders SET email = $2 WHERE id = $1`, [o.id, e]);
   return { ok: true, data: { email: e } };
 }
@@ -909,7 +913,8 @@ export async function editCustomer(id: string, input: Record<string, unknown>, b
   const email = text(input.email, 120).toLowerCase();
   if (name.length < 2) return fail(400, "Enter the customer's name.");
   if (!mobile) return fail(400, "Enter a mobile number like 0917 123 4567.");
-  if (email && !isEmail(email)) return fail(400, "Please check the email address (or leave it blank).");
+  if (!email) return fail(400, "Enter the customer's email: updates and their racket's link go there.");
+  if (!isEmail(email)) return fail(400, "Please check the email address.");
   const { rowCount } = await db().query(`UPDATE stringing_orders SET name = $2, mobile = $3, email = $4 WHERE id = $1`, [id, name, mobile, email]);
   if (!rowCount) return fail(404, "Check-in not found.");
   await logEvent(db(), id, by, "Customer details edited", `${name} · ${mobile}${email ? ` · ${email}` : ""}`);
