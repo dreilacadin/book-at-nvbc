@@ -24,6 +24,26 @@ Earlier changes (before this file existed) are in the git history.
 
 ### Added
 
+- **Staff:** Print racket tags on a **Clabel 221B** label printer (or another
+  2-inch label printer), with bigger labels: 40 × 30 mm unless you change it,
+  up to 50 mm wide. The QR code is on the left; beside it, the tag number lines
+  up with its top, RUSH / PAID with its bottom, and the name sits in between.
+  **Print size** (90% unless you change it) makes the print smaller if the
+  printer cuts off the edges. Under Stringing → **🏷 Label printer**, choose the printer:
+  - **Clabel 221B over Bluetooth**, from the desk phone like the P12 (Chrome on
+    Android, or Chrome or Edge on a computer). If a test label doesn't print,
+    switch **Printer language** between TSPL and ESC/POS; **Printer details**
+    shows what the printer reported.
+  - **On this computer (USB)**, through the printer's driver: 🖨 Print tags
+    opens the labels, one per label, and the print dialog (choose the printer,
+    margins None, scale 100%). Works in any browser.
+- **Staff:** Labels for a racket that **isn't paid yet** have tick boxes,
+  ☐ RUSH ☐ PAID, to tick by hand when it's paid (RUSH is already ticked for a
+  rush job). Paid rackets still show RUSH and PAID marked.
+- **Staff:** Choose **how many labels** to print for each racket every time
+  you press 🖨 Print tags (or Receive & print), from 1 to 10: for example one
+  for the racket and one for its bag or cover. It starts at the number you
+  chose last. Works on the P12, the Clabel and printers on USB.
 - **Keep your racket's page handy.** The page that shows your racket's
   progress has a **Share link** and **Copy link** button, and **Add to Home
   Screen**. Adding it to your Home Screen opens your racket's page in one tap,

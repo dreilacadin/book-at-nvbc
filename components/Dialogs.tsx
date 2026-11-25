@@ -5,6 +5,7 @@
 // promise:
 //   if (!(await confirmDialog("Cancel #127?", { confirmLabel: "Cancel racket", danger: true }))) return;
 //   const note = await promptDialog("Why?", { required: true });   // null when they cancel
+//   const n = await numberDialog("How many?", { min: 1, max: 10 });  // null when they cancel
 //   await alertDialog("Saved.");
 // <DialogHost /> (in the root layout) shows them, one at a time, above any other pop-up.
 
@@ -34,7 +35,10 @@ export type PromptOptions = Common & {
   password?: boolean;
 };
 
+export type NumberOptions = Common & { min: number; max: number; defaultValue?: number };
+
 type Request =
+  | ({ kind: "number"; message: string; resolve: (v: number | null) => void } & NumberOptions)
   | ({ kind: "alert"; message: string; resolve: (v: undefined) => void } & Common)
   | ({ kind: "confirm"; message: string; resolve: (v: boolean) => void } & Common)
   | ({ kind: "prompt"; message: string; resolve: (v: string | null) => void } & PromptOptions);
@@ -58,6 +62,9 @@ export const confirmDialog = (message: string, opts: Common = {}) =>
   new Promise<boolean>((resolve) => push({ kind: "confirm", message, ...opts, resolve }));
 export const promptDialog = (message: string, opts: PromptOptions = {}) =>
   new Promise<string | null>((resolve) => push({ kind: "prompt", message, ...opts, resolve }));
+/** A whole number from min to max, with − and + buttons. */
+export const numberDialog = (message: string, opts: NumberOptions) =>
+  new Promise<number | null>((resolve) => push({ kind: "number", message, ...opts, resolve }));
 /** The text, selected, with a note to copy it (for when the clipboard can't be used). */
 export const copyDialog = (message: string, text: string) =>
   promptDialog(message, { defaultValue: text, readOnly: true, multiline: text.length > 60 || text.includes("\n"), confirmLabel: "Done" }).then(() => undefined);
@@ -75,11 +82,12 @@ function close(req: Request, value: unknown) {
 
 function Dialog({ req }: { req: Request }) {
   const [text, setText] = useState(req.kind === "prompt" ? req.defaultValue ?? "" : "");
+  const [num, setNum] = useState(req.kind === "number" ? Math.min(req.max, Math.max(req.min, req.defaultValue ?? req.min)) : 0);
   const mainRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
-  const cancelValue = req.kind === "confirm" ? false : req.kind === "prompt" ? null : undefined;
+  const cancelValue = req.kind === "confirm" ? false : req.kind === "prompt" || req.kind === "number" ? null : undefined;
   const cancel = () => close(req, cancelValue);
-  const ok = () => close(req, req.kind === "confirm" ? true : req.kind === "prompt" ? text : undefined);
+  const ok = () => close(req, req.kind === "confirm" ? true : req.kind === "prompt" ? text : req.kind === "number" ? num : undefined);
   const blocked = req.kind === "prompt" && !req.readOnly && ((req.required && !text.trim()) || (req.match !== undefined && text.trim() !== req.match));
 
   // Focus the box (or the main button), put focus back where it was afterwards, and Esc cancels.
@@ -119,6 +127,13 @@ function Dialog({ req }: { req: Request }) {
       >
         {req.title && <h2 id="dialog-title">{req.title}</h2>}
         <p id="dialog-message" className="dialog-message">{req.message}</p>
+        {req.kind === "number" && (
+          <div className="dialog-stepper" role="group" aria-labelledby="dialog-message">
+            <button type="button" className="btn secondary" aria-label="Fewer" disabled={num <= req.min} onClick={() => setNum((n) => n - 1)}>−</button>
+            <output aria-live="polite">{num}</output>
+            <button type="button" className="btn secondary" aria-label="More" disabled={num >= req.max} onClick={() => setNum((n) => n + 1)}>+</button>
+          </div>
+        )}
         {req.kind === "prompt" &&
           (req.multiline ? (
             <textarea ref={inputRef} rows={req.readOnly ? 6 : 3} value={text} placeholder={req.placeholder} maxLength={req.maxLength}

@@ -1,7 +1,7 @@
 // Run with: npm test
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { labelBitmap, labelSize, printJob, readReply, toLabelSettings } from "./label-printer.ts";
+import { escposJob, labelBitmap, labelSize, printJob, readReply, toLabelSettings, tsplJob } from "./label-printer.ts";
 
 /** A w × h RGBA image, white, with the given pixels black. */
 function image(w: number, h: number, black: [number, number][]) {
@@ -53,12 +53,51 @@ test("printer replies", () => {
 });
 
 test("settings: defaults, and only P12 sizes", () => {
-  assert.deepEqual(toLabelSettings(null), { on: false, paper: "gap", size: "30x12", density: 2, shiftX: 0, shiftY: 0 });
+  const base = { printer: "p12", language: "tspl", flip: false, scale: 100, copies: 1 };
+  assert.deepEqual(toLabelSettings(null), { on: false, paper: "gap", size: "30x12", density: 2, shiftX: 0, shiftY: 0, ...base });
   assert.deepEqual(toLabelSettings({ on: true, paper: "continuous", size: "50x15", density: 3, shiftX: -1.5, shiftY: 0.5 }),
-    { on: true, paper: "continuous", size: "50x15", density: 3, shiftX: -1.5, shiftY: 0.5 });
+    { on: true, paper: "continuous", size: "50x15", density: 3, shiftX: -1.5, shiftY: 0.5, ...base });
   assert.equal(toLabelSettings({ paper: "continuous", size: "40x14" }).size, "30x12"); // not a continuous size
   // The print moves at most 3 mm, in half millimetres.
   assert.deepEqual([3, -3, 3.5, 0.3, "1", -0].map((v) => toLabelSettings({ shiftX: v }).shiftX), [3, -3, 0, 0, 0, 0]);
   assert.equal(toLabelSettings({ size: "99x99", density: 7 }).density, 2);
   assert.deepEqual(labelSize(toLabelSettings({ size: "30x12" })), { w: 30, h: 12 });
+});
+
+test("settings: the Clabel and USB label printers take 2-inch sizes, 40 × 30 by default", () => {
+  const c = toLabelSettings({ printer: "clabel", language: "escpos", flip: true });
+  assert.deepEqual([c.printer, c.size, c.paper, c.language, c.flip], ["clabel", "40x30", "gap", "escpos", true]);
+  assert.deepEqual(labelSize(c), { w: 40, h: 30 });
+  assert.equal(toLabelSettings({ printer: "usb", size: "50x30" }).size, "50x30");
+  assert.equal(toLabelSettings({ printer: "usb", size: "30x12" }).size, "40x30"); // a P12 size
+  assert.equal(toLabelSettings({ printer: "clabel", paper: "continuous" }).paper, "gap");
+  assert.equal(toLabelSettings({ printer: "zebra" }).printer, "p12");
+  assert.equal(toLabelSettings({ language: "cpcl" }).language, "tspl");
+  // Print size: 90% on 2-inch printers unless changed, in 5% steps from 70 to 100.
+  assert.equal(c.scale, 90);
+  assert.deepEqual([85, 100, 72, 60, "90"].map((scale) => toLabelSettings({ printer: "usb", scale }).scale), [85, 100, 90, 90, 90]);
+  // Labels per racket: 1 to 10.
+  assert.deepEqual([2, 10, 0, 11, 1.5, "2"].map((copies) => toLabelSettings({ copies }).copies), [2, 10, 1, 1, 1, 1]);
+});
+
+test("label bitmap: not turned, for 2-inch printers", () => {
+  const b = labelBitmap(image(10, 3, [[0, 0], [9, 2]]), 10, 3, 160, false);
+  assert.deepEqual([b.width, b.height, b.bytesPerRow], [10, 3, 2]);
+  assert.equal(bit(b, 0, 0), 1);
+  assert.equal(bit(b, 9, 2), 1);
+});
+
+test("TSPL and ESC/POS label jobs", () => {
+  const b = labelBitmap(image(16, 2, [[0, 0]]), 16, 2, 160, false); // 2 bytes × 2 rows, top-left dot black
+  const t = tsplJob(b, { size: { w: 40, h: 30 }, density: 2, flip: false });
+  const text = Buffer.from(t).toString("latin1");
+  assert.match(text, /^SIZE 40 mm,30 mm\r\nGAP 2 mm,0 mm\r\nDIRECTION 1,0\r\nREFERENCE 0,0\r\nDENSITY 8\r\nCLS\r\nBITMAP 0,0,2,2,0,/);
+  assert.ok(text.endsWith("\r\nPRINT 1,1\r\n"));
+  const at = text.indexOf("BITMAP 0,0,2,2,0,") + "BITMAP 0,0,2,2,0,".length;
+  assert.deepEqual([...t.slice(at, at + 4)], [0x7f, 0xff, 0xff, 0xff]); // inverted: 0 prints
+  assert.match(Buffer.from(tsplJob(b, { size: { w: 40, h: 30 }, density: 3, flip: true })).toString("latin1"), /DIRECTION 0,0\r\nREFERENCE 0,0\r\nDENSITY 12/);
+  const e = escposJob(b);
+  assert.deepEqual([...e.slice(0, 10)], [0x1b, 0x40, 0x1d, 0x76, 0x30, 0, 2, 0, 2, 0]);
+  assert.deepEqual([...e.slice(10, 14)], [0x80, 0, 0, 0]);
+  assert.deepEqual([...e.slice(-2)], [0x1d, 0x0c]);
 });

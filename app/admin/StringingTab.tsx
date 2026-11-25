@@ -25,12 +25,13 @@ import type { OrderDetail, QueueRacket, QueueTurnaround, QueueView, RacketRow, S
 import Receipt from "@/components/Receipt";
 import { addDays } from "@/lib/time";
 import { LabelPrintStatus, LabelPrinterButton } from "./LabelPrinter";
-import { labelPrinterOn, printTagLabels } from "./p12";
+import { MAX_COPIES } from "@/lib/label-printer";
+import { getLabelSettings, labelPageUrl, labelPrinterOn, printsByDialog, printTagLabels, saveLabelSettings } from "./p12";
 import ProofViewer from "./ProofViewer";
 import QrScanner from "./QrScanner";
 import { useCanManage } from "./role";
 import { api, todayManila } from "./shared";
-import { confirmDialog, copyDialog, promptDialog } from "@/components/Dialogs";
+import { confirmDialog, copyDialog, numberDialog, promptDialog } from "@/components/Dialogs";
 
 // Admin → Stringing: the queue of rackets (to receive, waiting, stringing, ready, picked up), each
 // check-in (payment, rackets, history, SMS texts), checking in for walk-ins, tags, strings and their
@@ -61,12 +62,20 @@ function savedView(stringer: boolean): QueueView | null {
 type Sms = { mobile: string; link: string; track: string; ready: string; thanks: string };
 
 /**
- * Racket tags ("ids=a,b" or "order=<id>"): on this device's label printer when that's on, otherwise
- * the A4 page in a new tab. Blank tags are always A4 (the number is written by hand).
+ * Racket tags ("ids=a,b" or "order=<id>"): on this device's label printer when that's on (over
+ * Bluetooth, or the label page and print dialog for one on USB), otherwise the A4 page in a new tab.
+ * Blank tags are always A4 (the number is written by hand).
  */
-export function printTags(q: string) {
+export async function printTags(q: string, intro = "") {
   if (q !== "blank=1" && labelPrinterOn()) {
-    void printTagLabels(async () => (await api<{ rackets: TagRacket[] }>(`/api/admin/stringing?print=1&${q}`)).rackets);
+    // How many labels for each racket, every time (offering the number used last).
+    const copies = await numberDialog(`${intro}How many labels for each racket?`,
+      { title: "🖨 Print tags", min: 1, max: MAX_COPIES, defaultValue: getLabelSettings().copies, confirmLabel: "Print" });
+    if (copies === null) return;
+    const settings = { ...getLabelSettings(), copies };
+    saveLabelSettings(settings);
+    if (printsByDialog()) window.open(labelPageUrl(q), "_blank", "noopener"); // the label page uses `copies`
+    else void printTagLabels(async () => (await api<{ rackets: TagRacket[] }>(`/api/admin/stringing?print=1&${q}`)).rackets, settings);
     return;
   }
   window.open(`/admin/stringing/tags?${q}`, "_blank", "noopener");
@@ -450,8 +459,13 @@ function CheckInPage({ me, tagQr, onAuthError, onCancel, onDone }: {
     try {
       const r = await api<{ id: string; tags: number[] }>("/api/admin/stringing", { action: "create", ...b });
       // With QR tags (a label printer), offer to print them; otherwise the number is written on a blank tag.
-      if (b.receive && tagQr && (await confirmDialog(`Checked in ${r.tags.map(tagLabel).join(", ")}. Print the tag${r.tags.length === 1 ? "" : "s"} now?`, { confirmLabel: "Print", cancelLabel: "Not now" })))
-        printTags(`order=${r.id}`);
+      if (b.receive && tagQr) {
+        const tags = r.tags.map(tagLabel).join(", ");
+        // On a label printer: straight to how many labels (Cancel = not now). On A4: print now?
+        if (labelPrinterOn()) await printTags(`order=${r.id}`, `Checked in ${tags}. `);
+        else if (await confirmDialog(`Checked in ${tags}. Print the tag${r.tags.length === 1 ? "" : "s"} now?`, { confirmLabel: "Print", cancelLabel: "Not now" }))
+          void printTags(`order=${r.id}`);
+      }
       onDone(r.id);
     } catch (e) {
       onAuthError(e);

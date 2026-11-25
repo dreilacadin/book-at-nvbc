@@ -1,6 +1,8 @@
-// The Marklife P12 label printer over Web Bluetooth (Chrome on Android; Chrome or Edge on a
-// computer; not iPhone or iPad). Connects once and stays connected while the staff page is open;
-// prints racket tags as labels. The protocol itself is in lib/label-printer.ts.
+// Racket tags on a label printer: the Marklife P12 over Web Bluetooth (Chrome on Android; Chrome or
+// Edge on a computer; not iPhone or iPad), the Clabel 221B over Bluetooth (app/admin/clabel.ts), or
+// a label printer on this computer ("usb": the label page and the browser's print dialog). The
+// Bluetooth printers connect once and stay connected while the staff page is open. The protocols
+// are in lib/label-printer.ts.
 
 import QRCode from "qrcode";
 import {
@@ -16,9 +18,11 @@ import {
   type Bitmap,
   type LabelPrinterSettings,
   type LabelSize,
+  type PrinterKind,
   type PrinterReply,
 } from "@/lib/label-printer";
 import { shortName, tagLabel } from "@/lib/stringing";
+import { chooseClabel, clabelName, disconnectClabel, printOnClabel } from "./clabel";
 
 // ---- Web Bluetooth (not in TypeScript's DOM types yet) ------------------------------------------
 
@@ -63,8 +67,12 @@ export function saveLabelSettings(s: LabelPrinterSettings) {
 }
 let memory: LabelPrinterSettings | null = null;
 const current = () => memory ?? getLabelSettings();
-/** Print tags on the label printer on this device (instead of the A4 page)? */
-export const labelPrinterOn = () => labelPrinterSupported() && current().on;
+/** Print tags on the label printer on this device (instead of the A4 page)? USB needs no Bluetooth. */
+export const labelPrinterOn = () => current().on && (current().printer === "usb" || labelPrinterSupported());
+/** Printing through the computer's print dialog (a label printer on USB) rather than Bluetooth? */
+export const printsByDialog = () => current().printer === "usb";
+/** The label page (one label per page, printed through the dialog): `q` is "ids=…", "order=…" or "sample=1". */
+export const labelPageUrl = (q: string) => `/admin/stringing/tags?${q}&label=1&auto=1`;
 
 // ---- The connection -----------------------------------------------------------------------------
 
@@ -116,7 +124,8 @@ async function open(dev: Device): Promise<Link> {
 }
 
 /** Choose the printer from the browser's Bluetooth list (needs a tap) and connect. Returns its name. */
-export async function choosePrinter(): Promise<string> {
+export async function choosePrinter(kind: PrinterKind = current().printer): Promise<string> {
+  if (kind === "clabel") return chooseClabel().catch((e: unknown) => { throw new Error(friendly(e)); });
   const bt = bluetooth();
   if (!bt) throw new Error("This browser can't use Bluetooth printers. Use Chrome on Android, or Chrome or Edge on a computer.");
   const dev = await bt.requestDevice({ filters: P12.namePrefixes.map((namePrefix) => ({ namePrefix })), optionalServices: [P12.service] })
@@ -144,10 +153,13 @@ async function connected(): Promise<Link> {
   return link!;
 }
 
-export function connectedPrinterName(): string | null {
+export function connectedPrinterName(kind: PrinterKind = current().printer): string | null {
+  if (kind === "clabel") return clabelName();
+  if (kind === "usb") return null;
   return link?.dev.gatt?.connected ? link.dev.name ?? "P12" : null;
 }
-export function disconnectPrinter() {
+export function disconnectPrinter(kind: PrinterKind = current().printer) {
+  if (kind === "clabel") return disconnectClabel();
   link?.dev.gatt?.disconnect();
   link = null;
 }
@@ -214,7 +226,7 @@ export type TagLabel = { tag: number; name: string; rush: boolean; paid: boolean
  * RUSH / PAID, centred as one block. `shift` (mm) moves it all, for a printer that prints a little
  * off: x along the label, y across it.
  */
-export function drawTagLabel(t: TagLabel, size: LabelSize, origin: string, shift = { x: 0, y: 0 }): HTMLCanvasElement {
+export function drawTagLabel(t: TagLabel, size: LabelSize, origin: string, shift = { x: 0, y: 0 }, scale = 100): HTMLCanvasElement {
   const W = mmToDots(size.w), H = mmToDots(size.h);
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -224,16 +236,23 @@ export function drawTagLabel(t: TagLabel, size: LabelSize, origin: string, shift
   c.fillRect(0, 0, W, H);
   c.fillStyle = "#000";
   c.translate(mmToDots(shift.x), mmToDots(shift.y));
+  if (H >= 160) {
+    drawWideTag(c, t, W, H, origin, scale);
+    return canvas;
+  }
   const font = (px: number, weight = 800) => (c.font = `${weight} ${px}px system-ui, Roboto, Arial, sans-serif`);
 
   // QR code: the short link (/t/127), with whole dots per module so it stays sharp. Lower error
   // correction if that's what keeps the modules at 3 dots (0.375 mm) or more, for phone cameras.
+  // On taller labels (40 × 30), the QR code takes at most a little over half the width, leaving room
+  // for the text.
   const pad = 6, gap = 8;
+  const qMax = Math.min(H - 2 * pad, Math.floor(W * 0.55));
   const url = `${origin}/t/${t.tag}`;
   let qr = QRCode.create(url, { errorCorrectionLevel: "M" });
-  if (Math.floor((H - 2 * pad) / qr.modules.size) < 3) qr = QRCode.create(url, { errorCorrectionLevel: "L" });
+  if (Math.floor(qMax / qr.modules.size) < 3) qr = QRCode.create(url, { errorCorrectionLevel: "L" });
   const n = qr.modules.size;
-  const m = Math.max(1, Math.floor((H - 2 * pad) / n));
+  const m = Math.max(1, Math.floor(qMax / n));
   const q = m * n, qy = Math.floor((H - q) / 2);
 
   // The text beside it, each line as big as fits: measured first, so the whole block can be centred.
@@ -246,13 +265,11 @@ export function drawTagLabel(t: TagLabel, size: LabelSize, origin: string, shift
   const hasText = room >= 24;
   const num = hasText ? fit(tagLabel(t.tag), Math.round(H * 0.46)) : null;
   const who = hasText && shortName(t.name) ? fit(shortName(t.name), Math.round(H * 0.19), 700) : null;
-  const markPx = Math.max(10, Math.round(H * 0.15));
+  // RUSH / PAID (or tick boxes, not paid yet) on one line: only the ones that fit.
+  const markPx = Math.max(10, Math.round(Math.min(H * 0.15, 40)));
   font(markPx);
-  let marks = (hasText ? [t.rush && "RUSH", t.paid && "PAID"].filter(Boolean) as string[] : []).map((text) => ({ text, w: c.measureText(text).width + 8 }));
-  // Only the marks that fit on one line.
-  let used = 0;
-  marks = marks.filter((x) => (used += x.w + (used ? 6 : 0)) <= room);
-  const textW = Math.ceil(Math.max(num?.w ?? 0, who?.w ?? 0, marks.reduce((a, x, i) => a + x.w + (i ? 6 : 0), 0)));
+  const marks = hasText ? fitMarks(c, marksFor(t), markPx + 6, room) : [];
+  const textW = Math.ceil(Math.max(num?.w ?? 0, who?.w ?? 0, marksWidth(c, marks, markPx + 6)));
   const left = Math.max(pad, Math.floor((W - (q + (textW ? gap + textW : 0))) / 2));
 
   for (let y = 0; y < n; y++)
@@ -269,24 +286,130 @@ export function drawTagLabel(t: TagLabel, size: LabelSize, origin: string, shift
     y += Math.round(who.px * 1.15);
     c.fillText(who.text, x0, y);
   }
-  // Marks along the bottom: RUSH in a black box, PAID with a box around it.
+  // Marks along the bottom.
   font(markPx);
-  const bh = markPx + 6, by = H - pad - bh;
-  let bx = x0;
-  for (const mark of marks) {
-    if (mark.text === "RUSH") {
-      c.fillRect(bx, by, mark.w, bh);
-      c.fillStyle = "#fff";
-      c.fillText(mark.text, bx + 4, by + bh - 4);
-      c.fillStyle = "#000";
-    } else {
-      c.lineWidth = 2;
-      c.strokeRect(bx + 1, by + 1, mark.w - 2, bh - 2);
-      c.fillText(mark.text, bx + 4, by + bh - 4);
-    }
-    bx += mark.w + 6;
-  }
+  drawMarks(c, marks, x0, H - pad - (markPx + 6), markPx + 6);
   return canvas;
+}
+
+// ---- RUSH / PAID -----------------------------------------------------------------------------------
+
+/**
+ * Paid: RUSH in a black box (a rush job) and PAID with a box around it. Not paid yet: tick boxes,
+ * ☐ RUSH ☐ PAID, for staff to tick by hand (RUSH already ticked for a rush job).
+ */
+type Mark = { text: string; style: "solid" | "outline" | "box"; ticked: boolean };
+export function marksFor(t: { rush: boolean; paid: boolean }): Mark[] {
+  if (t.paid) return [...(t.rush ? [{ text: "RUSH", style: "solid" as const, ticked: true }] : []), { text: "PAID", style: "outline", ticked: true }];
+  return [{ text: "RUSH", style: "box", ticked: t.rush }, { text: "PAID", style: "box", ticked: false }];
+}
+const MARK_GAP = 6;
+/** One mark's width, `h` dots tall, in the current font. */
+const markWidth = (c: CanvasRenderingContext2D, m: Mark, h: number) => {
+  const tw = c.measureText(m.text).width;
+  return m.style === "box" ? h - 4 + 4 + tw : tw + 2 * Math.round(h * 0.2);
+};
+const marksWidth = (c: CanvasRenderingContext2D, ms: Mark[], h: number) =>
+  ms.reduce((a, m, i) => a + markWidth(c, m, h) + (i ? MARK_GAP : 0), 0);
+/** The marks that fit in `room`: an unticked RUSH box goes first, then from the end. */
+function fitMarks(c: CanvasRenderingContext2D, ms: Mark[], h: number, room: number): Mark[] {
+  let out = ms;
+  if (marksWidth(c, out, h) > room) out = out.filter((m) => !(m.style === "box" && m.text === "RUSH" && !m.ticked));
+  while (out.length && marksWidth(c, out, h) > room) out = out.slice(0, -1);
+  return out;
+}
+/** Draws the marks in a row from (x, y), `h` dots tall, in the current font. */
+function drawMarks(c: CanvasRenderingContext2D, ms: Mark[], x: number, y: number, h: number) {
+  const ins = Math.round(h * 0.2), base = y + h - Math.max(4, Math.round(h * 0.18));
+  c.lineWidth = 2;
+  for (const m of ms) {
+    const w = markWidth(c, m, h);
+    if (m.style === "solid") {
+      c.fillRect(x, y, w, h);
+      c.fillStyle = "#fff";
+      c.fillText(m.text, x + ins, base);
+      c.fillStyle = "#000";
+    } else if (m.style === "outline") {
+      c.strokeRect(x + 1, y + 1, w - 2, h - 2);
+      c.fillText(m.text, x + ins, base);
+    } else {
+      // A square to tick, then the word.
+      const s = h - 4;
+      c.strokeRect(x + 1, y + 2, s - 2, s - 2);
+      if (m.ticked) {
+        c.beginPath();
+        c.moveTo(x + s * 0.22, y + 2 + s * 0.52);
+        c.lineTo(x + s * 0.42, y + 2 + s * 0.74);
+        c.lineTo(x + s * 0.8, y + 2 + s * 0.26);
+        c.lineWidth = Math.max(2, Math.round(s / 8));
+        c.stroke();
+        c.lineWidth = 2;
+      }
+      c.fillText(m.text, x + s + 4, base);
+    }
+    x += w + MARK_GAP;
+  }
+}
+
+/**
+ * A tag on a 2-inch label (20 mm tall or more, e.g. 40 × 30): drawn in a box `scale`% of the label
+ * (for printers that print less than the whole label), with a margin. The QR code on the left; beside
+ * it, the tag number's top level with the QR code's top, RUSH / PAID's bottom level with its bottom,
+ * and the name in between. The whole block is centred.
+ */
+function drawWideTag(c: CanvasRenderingContext2D, t: TagLabel, W: number, H: number, origin: string, scale: number) {
+  const font = (px: number, weight = 800) => (c.font = `${weight} ${px}px system-ui, Roboto, Arial, sans-serif`);
+  const bw = Math.round((W * scale) / 100), bh = Math.round((H * scale) / 100);
+  const pad = 12, gap = 12; // 1.5 mm margin
+  const qMax = Math.min(bh - 2 * pad, Math.floor((bw - 2 * pad) * 0.5));
+  const url = `${origin}/t/${t.tag}`;
+  let qr = QRCode.create(url, { errorCorrectionLevel: "M" });
+  if (Math.floor(qMax / qr.modules.size) < 3) qr = QRCode.create(url, { errorCorrectionLevel: "L" });
+  const n = qr.modules.size;
+  const m = Math.max(1, Math.floor(qMax / n));
+  const q = m * n;
+  const room = bw - 2 * pad - q - gap;
+
+  // Each line as big as fits the room beside the QR code.
+  const fit = (text: string, max: number, weight: number) => {
+    let px = max;
+    do font(px, weight); while (c.measureText(text).width > room && --px > 10);
+    const mt = c.measureText(text);
+    return { text, px, weight, w: mt.width, ascent: mt.actualBoundingBoxAscent, descent: mt.actualBoundingBoxDescent };
+  };
+  const num = fit(tagLabel(t.tag), Math.round(q * 0.36), 800);
+  const who = shortName(t.name) ? fit(shortName(t.name), Math.round(q * 0.22), 700) : null;
+  // RUSH / PAID (or tick boxes, not paid yet): smaller until they all fit (not under 14 px), then
+  // only the ones that fit.
+  const all = marksFor(t);
+  let markPx = Math.round(q * 0.14);
+  const widthAt = (px: number) => { font(px); return marksWidth(c, all, px + 8); };
+  while (markPx > 14 && widthAt(markPx) > room) markPx--;
+  font(markPx);
+  const markH = markPx + 8;
+  const marks = fitMarks(c, all, markH, room);
+
+  const textW = Math.ceil(Math.max(num.w, who?.w ?? 0, marksWidth(c, marks, markH)));
+  const left = Math.round((W - (q + gap + textW)) / 2);
+  const top = Math.round((H - q) / 2);
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) if (qr.modules.data[y * n + x]) c.fillRect(left + x * m, top + y * m, m, m);
+
+  const x0 = left + q + gap;
+  c.textBaseline = "alphabetic";
+  // The number's top level with the QR code's top.
+  font(num.px, num.weight);
+  c.fillText(num.text, x0, top + num.ascent);
+  // RUSH / PAID's bottom level with the QR code's bottom.
+  const marksTop = top + q - markH;
+  font(markPx);
+  drawMarks(c, marks, x0, marksTop, markH);
+  // The name in the middle of the space between them.
+  if (who) {
+    font(who.px, who.weight);
+    const below = top + num.ascent + num.descent, above = marks.length ? marksTop : top + q;
+    c.fillText(who.text, x0, Math.round((below + above) / 2 + (who.ascent - who.descent) / 2));
+  }
 }
 
 function toBitmap(canvas: HTMLCanvasElement): Bitmap {
@@ -330,13 +453,24 @@ export function printTagLabels(
       if (!tags.length) throw new Error("No tags to print.");
       const what = tags.length === 1 ? tagLabel(tags[0].tag) : `${tags.length} tags`;
       setStatus({ state: "printing", text: `Printing ${what}…` });
-      const l = await connected();
       const size = labelSize(settings);
-      for (const [i, t] of tags.entries()) {
-        if (tags.length > 1) setStatus({ state: "printing", text: `Printing ${tagLabel(t.tag)} (${i + 1} of ${tags.length})…` });
-        await printOne(l, toBitmap(drawTagLabel(t, size, window.location.origin, { x: settings.shiftX, y: settings.shiftY })), settings);
+      const clabel = settings.printer === "clabel";
+      const l = clabel ? null : await connected();
+      // Each tag `copies` times, one after another (#127, #127, #128, #128…).
+      const copies = settings.copies;
+      const total = tags.length * copies;
+      let done = 0;
+      for (const t of tags) {
+        const canvas = drawTagLabel(t, size, window.location.origin, { x: settings.shiftX, y: settings.shiftY }, settings.scale);
+        const bitmap = clabel ? null : toBitmap(canvas);
+        for (let k = 0; k < copies; k++) {
+          if (total > 1) setStatus({ state: "printing", text: `Printing ${tagLabel(t.tag)} (${++done} of ${total})…` });
+          if (clabel) await printOnClabel(canvas, size, settings);
+          else await printOne(l!, bitmap!, settings);
+        }
       }
-      setStatus({ state: "done", text: `Printed ${tags.length === 1 ? what : tags.map((t) => tagLabel(t.tag)).join(", ")}.` });
+      const times = copies > 1 ? ` (${copies} of each)` : "";
+      setStatus({ state: "done", text: `Printed ${tags.length === 1 ? what : tags.map((t) => tagLabel(t.tag)).join(", ")}${times}.` });
       return true;
     } catch (e) {
       setStatus({ state: "error", text: friendly(e) });

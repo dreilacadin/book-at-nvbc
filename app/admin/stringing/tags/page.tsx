@@ -4,8 +4,10 @@ import Link from "next/link";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import FullScreenLoader from "@/components/FullScreenLoader";
+import { labelSize, sizeLabel } from "@/lib/label-printer";
 import { shortName, tagLabel } from "@/lib/stringing";
 import type { TagRacket } from "@/lib/stringings";
+import { drawTagLabel, getLabelSettings } from "../../p12";
 import { api, AuthError } from "../../shared";
 
 const PER_PAGE = 18; // 3 × 6 on A4
@@ -16,8 +18,90 @@ const PER_PAGE = 18; // 3 × 6 on A4
  * Paid / Not yet paid / Rush boxes; everything else is found by searching the number in Admin →
  * Stringing. Blank tags get the number written on by hand. With "Print tags with QR codes" on (for
  * a label printer), printed tags also get a QR code that opens the racket.
+ *
+ * With ?label=1 (a label printer on this computer, over USB): one label per page at this device's
+ * label size, drawn like the Bluetooth labels, for the browser's print dialog (?auto=1 opens it).
+ * ?sample=1 is a test label.
  */
 export default function PrintTags() {
+  const [label, setLabel] = useState<boolean | null>(null);
+  useEffect(() => setLabel(new URLSearchParams(window.location.search).get("label") === "1"), []);
+  if (label === null) return <FullScreenLoader label="Getting the tags ready…" />;
+  return label ? <LabelPages /> : <A4Tags />;
+}
+
+const SAMPLE = { id: "sample", tag: 123, name: "Ana Santos", rush: true, paid: true } as TagRacket;
+
+/** One label per page, at the label printer's size. */
+function LabelPages() {
+  const [labels, setLabels] = useState<{ key: string; tag: number; src: string }[] | null>(null);
+  const [error, setError] = useState("");
+  const settings = getLabelSettings();
+  const size = labelSize(settings);
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    // Each racket's label `copies` times (the test label once).
+    const draw = (rs: TagRacket[], copies = settings.copies) =>
+      setLabels(rs.flatMap((r) => {
+        const src = drawTagLabel({ tag: r.tag, name: r.name, rush: r.rush, paid: r.paid }, size, window.location.origin,
+          { x: settings.shiftX, y: settings.shiftY }, settings.scale).toDataURL();
+        return Array.from({ length: copies }, (_, k) => ({ key: `${r.tag}-${k}`, tag: r.tag, src }));
+      }));
+    if (q.get("sample")) return draw([SAMPLE], 1);
+    const ids = q.get("ids") ?? "", order = q.get("order") ?? "";
+    if (!ids && !order) return setError("No rackets chosen. Open a racket in Admin → Stringing and tap Print tags.");
+    api<{ rackets: TagRacket[] }>(`/api/admin/stringing?print=1&ids=${encodeURIComponent(ids)}&order=${encodeURIComponent(order)}`)
+      .then((r) => (r.rackets.length ? draw(r.rackets) : setError("Those rackets weren't found.")))
+      .catch((e) => setError(e instanceof AuthError ? "Please log in to the staff dashboard first." : e.message));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Straight to the print dialog once the labels are drawn.
+  useEffect(() => {
+    if (!labels?.length || new URLSearchParams(window.location.search).get("auto") !== "1") return;
+    const t = setTimeout(() => window.print(), 400);
+    return () => clearTimeout(t);
+  }, [labels]);
+
+  if (error)
+    return (
+      <div className="stack" style={{ maxWidth: 520 }}>
+        <div className="error">{error}</div>
+        <Link href="/admin?tab=stringing" className="btn secondary">Back to Stringing</Link>
+      </div>
+    );
+  if (!labels) return <FullScreenLoader label="Getting the labels ready…" />;
+  const dims = { width: `${size.w}mm`, height: `${size.h}mm` };
+  return (
+    <div className="stack">
+      <style>{`@page { size: ${size.w}mm ${size.h}mm; margin: 0; }`}</style>
+      <div className="card no-print stack" style={{ maxWidth: 760 }}>
+        <h1>{labels.length === 1 ? `Label ${tagLabel(labels[0].tag)}` : `${labels.length} labels`}</h1>
+        {settings.copies > 1 && !new URLSearchParams(window.location.search).get("sample") && (
+          <p className="hint" style={{ margin: 0 }}>{settings.copies} of each racket&apos;s tag.</p>
+        )}
+        <p className="muted" style={{ margin: 0 }}>
+          {sizeLabel(size)}, one per label. In the print dialog, choose the <strong>Clabel</strong> (or your label printer), paper
+          size {sizeLabel(size)}, margins <strong>None</strong> and scale <strong>100%</strong>. Chrome remembers them for next time.
+        </p>
+        <div className="actions">
+          <button type="button" className="btn" onClick={() => window.print()}>🖨 Print</button>
+          <button type="button" className="btn secondary" onClick={() => window.close()}>Close</button>
+        </div>
+      </div>
+      <div className="label-sheet">
+        {labels.map((l) => (
+          <div key={l.key} className="label-page" style={dims}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- drawn label */}
+            <img src={l.src} alt={`Racket tag ${tagLabel(l.tag)}`} style={dims} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The A4 sheet of tags. */
+function A4Tags() {
   const [rackets, setRackets] = useState<TagRacket[] | null>(null);
   const [blank, setBlank] = useState(false);
   const [withQr, setWithQr] = useState(false);
